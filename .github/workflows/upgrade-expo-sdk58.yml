@@ -152,6 +152,19 @@ jobs:
               deps.pop(name, None)
           package_path.write_text(json.dumps(package, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
           print("Aligned base SDK versions; Expo CLI will align managed native modules.")
+
+          app_json_path = root / "app.json"
+          app_config = json.loads(app_json_path.read_text(encoding="utf-8"))
+          plugins = app_config["expo"].setdefault("plugins", [])
+          for plugin in ["expo-asset", "expo-audio", "expo-font", "expo-sharing"]:
+              if plugin not in plugins:
+                  plugins.append(plugin)
+          app_json_path.write_text(json.dumps(app_config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+          print("Added SDK 58 required config plugins for dynamic app.config.js.")
+
+          transform("babel.config.js", lambda s: replace_exact(
+              s, '      "react-native-reanimated/plugin",\n', ""
+          ))
           PY
 
       - name: Resolve SDK 58 dependency tree and lockfile
