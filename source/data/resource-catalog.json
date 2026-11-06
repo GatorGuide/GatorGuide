@@ -104,6 +104,62 @@
     ]
   },
   {
+    "id": "stem-clubs-grc",
+    "title": "STEM Clubs @ GRC",
+    "icon": "science",
+    "items": [
+      {
+        "title": "Women in STEM",
+        "description": "See the official Green River College clubs and organizations directory for this club.",
+        "url": "https://www.greenriver.edu/students/get-involved/clubs-and-organizations.html",
+        "actionLabel": "Open GRC club listing",
+        "tags": ["STEM Clubs @ GRC", "Green River College", "clubs", "women in stem"]
+      },
+      {
+        "title": "Engineering Club",
+        "description": "See the official Green River College clubs and organizations directory for this club.",
+        "url": "https://www.greenriver.edu/students/get-involved/clubs-and-organizations.html",
+        "actionLabel": "Open GRC club listing",
+        "tags": ["STEM Clubs @ GRC", "Green River College", "clubs", "engineering"]
+      },
+      {
+        "title": "Artificial Intelligence (AI) Club",
+        "description": "See the official Green River College clubs and organizations directory for this club.",
+        "url": "https://www.greenriver.edu/students/get-involved/clubs-and-organizations.html",
+        "actionLabel": "Open GRC club listing",
+        "tags": ["STEM Clubs @ GRC", "Green River College", "clubs", "artificial intelligence", "AI"]
+      },
+      {
+        "title": "CyberOps Club",
+        "description": "See the official Green River College clubs and organizations directory for this club.",
+        "url": "https://www.greenriver.edu/students/get-involved/clubs-and-organizations.html",
+        "actionLabel": "Open GRC club listing",
+        "tags": ["STEM Clubs @ GRC", "Green River College", "clubs", "cyberops", "cybersecurity"]
+      },
+      {
+        "title": "Math Club",
+        "description": "See the official Green River College clubs and organizations directory for this club.",
+        "url": "https://www.greenriver.edu/students/get-involved/clubs-and-organizations.html",
+        "actionLabel": "Open GRC club listing",
+        "tags": ["STEM Clubs @ GRC", "Green River College", "clubs", "math", "mathematics"]
+      },
+      {
+        "title": "Physics Club",
+        "description": "See the official Green River College clubs and organizations directory for this club.",
+        "url": "https://www.greenriver.edu/students/get-involved/clubs-and-organizations.html",
+        "actionLabel": "Open GRC club listing",
+        "tags": ["STEM Clubs @ GRC", "Green River College", "clubs", "physics"]
+      },
+      {
+        "title": "Chemistry Club",
+        "description": "See the official Green River College clubs and organizations directory for this club.",
+        "url": "https://www.greenriver.edu/students/get-involved/clubs-and-organizations.html",
+        "actionLabel": "Open GRC club listing",
+        "tags": ["STEM Clubs @ GRC", "Green River College", "clubs", "chemistry"]
+      }
+    ]
+  },
+  {
     "id": "student-tools",
     "titleKey": "resources.studentTools",
     "icon": "account-circle",
