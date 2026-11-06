@@ -168,6 +168,88 @@ jobs:
           transform("babel.config.js", lambda s: replace_exact(
               s, '      "react-native-reanimated/plugin",\n', ""
           ))
+
+          # TypeScript 6 + RN 0.88 use explicit instance refs and readonly style types.
+          transform("nativewind-env.d.ts", lambda s: s + '\ndeclare module "*.css";\n')
+
+          def migrate_tabs(s):
+              s = replace_exact(s, "import { Text } from \"react-native\";", "import { Text, type ColorValue } from \"react-native\";")
+              s = replace_exact(s, "color: string, focused: boolean", "color: ColorValue | null, focused: boolean")
+              s = replace_exact(s, "        color,\n        fontSize: tabBarLabelFontSize,", "        color: color ?? '#6B7280',\n        fontSize: tabBarLabelFontSize,")
+              s = replace_exact(s, "{ color, focused }: { color: string; focused: boolean }", "{ color, focused }: { color: ColorValue | null; focused: boolean }")
+              s = replace_exact(s, "{ color }: { color: string }", "{ color }: { color: ColorValue | null }")
+              s = replace_exact(s, "size={tabBarIconSize} color={color}", "size={tabBarIconSize} color={color ?? '#6B7280'}")
+              return s
+          transform("app/(tabs)/_layout.tsx", migrate_tabs)
+
+          def migrate_glass(s):
+              s = replace_exact(s, 'import type { BottomTabBarProps } from "expo-router/js-tabs";',
+                                'import type { BottomTabBarProps } from "expo-router/js-tabs";\nimport { useNavigation } from "expo-router";')
+              s = replace_exact(s, 'export function GlassTabBar({ state, descriptors, navigation }: BottomTabBarProps) {',
+                                'export function GlassTabBar({ state, descriptors }: BottomTabBarProps) {\n  const navigation = useNavigation() as unknown as TabBarNavigation;')
+              s = replace_exact(s, '  navigation: BottomTabBarProps["navigation"];', '  navigation: TabBarNavigation;')
+              s = replace_exact(s, '...StyleSheet.absoluteFillObject,', '...StyleSheet.absoluteFill,')
+              s = replace_exact(s, 'const BORDER_RADIUS = 28;', '''type TabBarNavigation = {
+            emit: (event: { type: string; target: string; canPreventDefault?: boolean }) => { defaultPrevented?: boolean };
+            navigate: (route: string) => void;
+          };
+          const BORDER_RADIUS = 28;'''.replace('\n          ', '\n'))
+              return s
+          transform("components/GlassTabBar.tsx", migrate_glass)
+
+          def migrate_resource_bar(s):
+              start = s.index('  const visibleRouteNames = modifiedState.routeNames.filter(')
+              end = s.index('  const filteredDescriptors = Object.fromEntries(', start)
+              s = s[:start] + s[end:]
+              s = replace_exact(s, '    routeNames: visibleRouteNames,\n    history: modifiedState.history?.filter(\n      (entry) => entry.type !== "route" || visibleRouteKeys.has(entry.key)\n    ),\n', '')
+              return s
+          transform("components/ResourcesAwareTabBar.tsx", migrate_resource_bar)
+
+          def migrate_haptic(s):
+              s = replace_exact(s, 'export function HapticTab(props: BottomTabBarButtonProps) {\n  return (',
+                  'export function HapticTab({ ref, ...props }: BottomTabBarButtonProps) {\n  return (')
+              s = replace_exact(s, '    <Pressable\n      {...props}', '    <Pressable\n      {...props}\n      ref={ref as React.ComponentProps<typeof Pressable>["ref"]}')
+              return s
+          transform("components/haptic-tab.tsx", migrate_haptic)
+
+          def migrate_questionnaire(s):
+              s = replace_exact(s, 'ScrollView, useWindowDimensions } from "react-native";',
+                                'ScrollView, useWindowDimensions, type ScrollViewInstance } from "react-native";')
+              s = replace_exact(s, 'useRef<ScrollView>(null)', 'useRef<ScrollViewInstance>(null)')
+              return s
+          transform("components/pages/QuestionnairePage.tsx", migrate_questionnaire)
+
+          def migrate_searchable(s):
+              s = replace_exact(s, '  TextInput,\n  View,\n', '  TextInput,\n  View,\n  type ViewInstance,\n  type TextInputInstance,\n')
+              s = replace_exact(s, 'useRef<TextInput | null>(null)', 'useRef<TextInputInstance | null>(null)')
+              s = replace_exact(s, 'useRef<View | null>(null)', 'useRef<ViewInstance | null>(null)')
+              return s
+          transform("components/ui/SearchableSelect.tsx", migrate_searchable)
+
+          transform("components/pages/settings/useAccountDeletion.ts",
+                    lambda s: replace_exact(s, 'import type { Router } from "expo-router";',
+                                    'import type { useRouter } from "expo-router";').replace('router: Router;', 'router: ReturnType<typeof useRouter>;'))
+
+          def migrate_animated(s):
+              s = replace_exact(s, '  const enforcedStyle: ViewStyle = {};',
+                                '  const enforcedStyle: { minWidth?: ViewStyle["minWidth"]; minHeight?: ViewStyle["minHeight"] } = {};')
+              return s
+          transform("components/ui/AnimatedPressables.tsx", migrate_animated)
+
+          def migrate_liquid(s):
+              s = replace_exact(s, 'const Wrapper = animate ? Animated.View : View;', 'const Wrapper = Animated.View;')
+              s = replace_exact(s, '...StyleSheet.absoluteFillObject,', '...StyleSheet.absoluteFill,')
+              return s
+          transform("components/ui/LiquidGlassView.tsx", migrate_liquid)
+
+          package = json.loads(package_path.read_text(encoding="utf-8"))
+          package.setdefault("devDependencies", {})["@types/node"] = "^22.15.0"
+          package_path.write_text(json.dumps(package, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+          tsconfig_path = root / "tsconfig.json"
+          tsconfig = json.loads(tsconfig_path.read_text(encoding="utf-8"))
+          tsconfig["compilerOptions"]["types"] = ["node", "react", "react-native"]
+          tsconfig_path.write_text(json.dumps(tsconfig, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
           PY
 
       - name: Resolve SDK 58 dependency tree and lockfile
