@@ -1,0 +1,193 @@
+name: Upgrade GatorGuide to Expo SDK 58
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/upgrade-expo-sdk58.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gatorguide-expo-sdk58-migration
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      CI: "1"
+      npm_config_legacy_peer_deps: "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.16.0"
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+
+      - name: Apply SDK 58 source migrations
+        working-directory: source
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path(".")
+          def transform(name, fn):
+              path = root / name
+              original = path.read_text(encoding="utf-8")
+              updated = fn(original)
+              if updated == original:
+                  raise RuntimeError(f"No changes applied to expected migration file: {name}")
+              path.write_text(updated, encoding="utf-8")
+              print("Migrated", name)
+
+          def replace_exact(s, old, new):
+              if old not in s:
+                  raise RuntimeError(f"Expected source code missing: {old[:100]!r}")
+              return s.replace(old, new)
+
+          utility = root / "utils/run-when-idle.ts"
+          utility.parent.mkdir(parents=True, exist_ok=True)
+          utility.write_text('''/**
+           * Cancellable idle scheduling in place of React Native's removed
+           * InteractionManager.runAfterInteractions (RN 0.87+).
+           */
+          export function runWhenIdle(callback: () => void) {
+            let active = true;
+            if (typeof requestIdleCallback === "function") {
+              const handle = requestIdleCallback(() => {
+                if (active) callback();
+              });
+              return {
+                cancel() {
+                  active = false;
+                  if (typeof cancelIdleCallback === "function") cancelIdleCallback(handle);
+                },
+              };
+            }
+            const handle = setTimeout(() => {
+              if (active) callback();
+            }, 0);
+            return {
+              cancel() {
+                active = false;
+                clearTimeout(handle);
+              },
+            };
+          }
+          '''.replace("\n          ", "\n"), encoding="utf-8")
+
+          idle_files = [
+              "app/_layout.tsx",
+              "app/(tabs)/transfer-equivalencies.tsx",
+              "components/transfer-planner/usePlannerComputation.ts",
+              "components/transfer-planner/usePlannerSelectionState.ts",
+          ]
+          for name in idle_files:
+              def migrate_idle(s):
+                  s = replace_exact(s, "InteractionManager.runAfterInteractions", "runWhenIdle")
+                  if 'import { InteractionManager } from "react-native";\n' in s:
+                      s = replace_exact(s, 'import { InteractionManager } from "react-native";\n', '')
+                  else:
+                      s = replace_exact(s, 'InteractionManager, ', '')
+                  return 'import { runWhenIdle } from "@/utils/run-when-idle";\n' + s
+              transform(name, migrate_idle)
+
+          nav_files = {
+              "hooks/use-back.ts": [("@react-navigation/native", "expo-router/react-navigation")],
+              "components/ResourcesAwareTabBar.tsx": [("@react-navigation/bottom-tabs", "expo-router/js-tabs")],
+              "components/GlassTabBar.tsx": [("@react-navigation/bottom-tabs", "expo-router/js-tabs")],
+              "components/pages/DeadlineCalendarPage.tsx": [("@react-navigation/bottom-tabs", "expo-router/js-tabs")],
+              "components/haptic-tab.tsx": [
+                  ("@react-navigation/bottom-tabs", "expo-router/js-tabs"),
+                  ("import { PlatformPressable } from '@react-navigation/elements';", "import { Pressable } from 'react-native';"),
+                  ("<PlatformPressable", "<Pressable"),
+              ],
+          }
+          for name, changes in nav_files.items():
+              def migrate_nav(s):
+                  for before, after in changes:
+                      s = replace_exact(s, before, after)
+                  return s
+              transform(name, migrate_nav)
+
+          transform("components/layouts/ScreenBackground.tsx", lambda s: replace_exact(
+              s, '        backgroundColor="transparent"\n        translucent\n', ''
+          ))
+
+          def migrate_html(s):
+              s = replace_exact(
+                  s,
+                  'import { ScrollViewStyleReset } from "expo-router/html";',
+                  'import { ScrollViewStyleReset, useServerDocumentContext } from "expo-router/html";'
+              )
+              s = replace_exact(
+                  s,
+                  'export default function Html({ children }: HtmlProps) {\n  return (\n    <html lang="en">',
+                  'export default function Html({ children }: HtmlProps) {\n  const { htmlAttributes, bodyAttributes, headNodes, bodyNodes } = useServerDocumentContext();\n  return (\n    <html {...htmlAttributes} lang="en">'
+              )
+              s = replace_exact(s, '        <ScrollViewStyleReset />', '        <ScrollViewStyleReset />\n        {headNodes}')
+              s = replace_exact(s, '      <body>\n        <main>{children}</main>', '      <body {...bodyAttributes}>\n        <main>{children}</main>\n        {bodyNodes}')
+              return s
+          transform("app/+html.tsx", migrate_html)
+
+          package_path = root / "package.json"
+          package = json.loads(package_path.read_text(encoding="utf-8"))
+          deps = package["dependencies"]
+          deps.update({
+              "expo": "~58.0.23",
+              "expo-router": "~58.0.30",
+              "react": "19.3.0",
+              "react-dom": "19.3.0",
+              "react-native": "0.88.1",
+          })
+          for name in ["@react-navigation/native", "@react-navigation/elements", "@react-navigation/bottom-tabs"]:
+              deps.pop(name, None)
+          package_path.write_text(json.dumps(package, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+          print("Aligned base SDK versions; Expo CLI will align managed native modules.")
+          PY
+
+      - name: Resolve SDK 58 dependency tree and lockfile
+        working-directory: source
+        run: |
+          npm install --no-audit --no-fund
+          npx expo install --fix --npm
+
+      - name: Validate dependency alignment
+        working-directory: source
+        run: |
+          npx expo-doctor@latest
+
+      - name: Typecheck
+        working-directory: source
+        run: npm run typecheck
+
+      - name: Lint
+        working-directory: source
+        run: npm run lint
+
+      - name: Application tests
+        working-directory: source
+        run: npm run test:app
+
+      - name: Production web export
+        working-directory: source
+        run: npm run web:export
+
+      - name: Commit validated SDK 58 migration to main
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add source
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: upgrade GatorGuide to Expo SDK 58 and migrate removed APIs"
+            git push origin HEAD:main
+          fi
