@@ -178,7 +178,7 @@ jobs:
               s = replace_exact(s, "        color,\n        fontSize: tabBarLabelFontSize,", "        color: color ?? '#6B7280',\n        fontSize: tabBarLabelFontSize,")
               s = replace_exact(s, "{ color, focused }: { color: string; focused: boolean }", "{ color, focused }: { color: ColorValue | null; focused: boolean }")
               s = replace_exact(s, "{ color }: { color: string }", "{ color }: { color: ColorValue | null }")
-              s = replace_exact(s, "size={tabBarIconSize} color={color}", "size={tabBarIconSize} color={color ?? '#6B7280'}")
+              s = replace_exact(s, "size={tabBarIconSize} color={color}", "size={tabBarIconSize} color={typeof color === 'number' ? '#6B7280' : (color ?? '#6B7280')}")
               return s
           transform("app/(tabs)/_layout.tsx", migrate_tabs)
 
@@ -258,26 +258,25 @@ jobs:
           npm install --no-audit --no-fund
           npx expo install --fix --npm
 
-      - name: Typecheck
+      - name: Validate SDK 58 with typecheck, doctor, lint, tests and web export
         working-directory: source
-        run: npm run typecheck
-
-      - name: Validate dependency alignment
-        working-directory: source
+        shell: bash
         run: |
+          set +e
+          npm run typecheck
+          type_status=$?
           npx expo-doctor@latest
-
-      - name: Lint
-        working-directory: source
-        run: npm run lint
-
-      - name: Application tests
-        working-directory: source
-        run: npm run test:app
-
-      - name: Production web export
-        working-directory: source
-        run: npm run web:export
+          doctor_status=$?
+          npm run lint
+          lint_status=$?
+          npm run test:app
+          test_status=$?
+          NODE_OPTIONS="--max-old-space-size=6144" npm run web:export
+          web_status=$?
+          echo "SDK58 validation: typecheck=$type_status doctor=$doctor_status lint=$lint_status tests=$test_status web=$web_status"
+          if [ "$type_status" -ne 0 ] || [ "$doctor_status" -ne 0 ] || [ "$lint_status" -ne 0 ] || [ "$test_status" -ne 0 ] || [ "$web_status" -ne 0 ]; then
+            exit 1
+          fi
 
       - name: Commit validated SDK 58 migration to main
         shell: bash
