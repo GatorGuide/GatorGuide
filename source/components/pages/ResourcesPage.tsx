@@ -12,6 +12,7 @@ import {
   countResourceSectionItems,
   isTransferPlannerResourceUrl,
   preloadTransferPlannerPage,
+  splitResourceDescriptionAtLink,
   useResourcesPageModel,
   type OpportunitySection,
   type OpportunitySubsection,
@@ -67,6 +68,36 @@ export default function ResourcesPage() {
   const panelClass = `${cardClass} border rounded-[28px] p-5`;
   const mutedCardClass = `${inactiveButtonClass} border ${borderClass} rounded-3xl`;
   const emeraldBadgeClass = "px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20";
+  const renderResourceDescription = (item: ResourceItem) => {
+    const linkLabel = item.descriptionLinkLabel;
+    const linkParts = linkLabel
+      ? splitResourceDescriptionAtLink(item.description, linkLabel)
+      : null;
+
+    if (!linkLabel || !item.descriptionLinkUrl || !linkParts) {
+      return (
+        <Text className={`${secondaryTextClass} text-sm`}>
+          {item.description}
+        </Text>
+      );
+    }
+
+    return (
+      <Text className={`${secondaryTextClass} text-sm`}>
+        {linkParts.before}
+        <Text
+          accessibilityRole="link"
+          className="text-emerald-500 underline"
+          onPress={() => {
+            void openLink(item.descriptionLinkUrl ?? "");
+          }}
+        >
+          {linkLabel}
+        </Text>
+        {linkParts.after}
+      </Text>
+    );
+  };
   const renderReferenceLinkItems = (
     items: ResourceItem[],
     keyPrefix: string,
@@ -95,7 +126,7 @@ export default function ResourcesPage() {
             }
           >
             <Text className={`${textClass} font-medium mb-1`}>{item.title}</Text>
-            <Text className={`${secondaryTextClass} text-sm`}>{item.description}</Text>
+            {renderResourceDescription(item)}
             {item.sourceLabel && item.sourceUrl ? (
               <Text
                 accessibilityRole="link"

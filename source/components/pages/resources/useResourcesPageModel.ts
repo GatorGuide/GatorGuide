@@ -11,11 +11,7 @@ import {
 } from "@/constants/resource-catalog";
 import { OPPORTUNITY_LISTING_KINDS, OPPORTUNITY_TYPES } from "@/constants/opportunities";
 import { ROUTES, routeWithDefaultReturnTo } from "@/constants/routes";
-import {
-  getTransferEquivalencyTagDisplayLabel,
-  TRANSFER_EQUIVALENCY_ALL_TRACKED_TAGS_PARAM,
-  TRANSFER_EQUIVALENCY_TRACKED_TAGS,
-} from "@/constants/transfer-equivalency-tags";
+import { TRANSFER_EQUIVALENCY_ALL_TRACKED_TAGS_PARAM } from "@/constants/transfer-equivalency-tags";
 import { useAppData } from "@/hooks/use-app-data";
 import { useAppLanguage } from "@/hooks/use-app-language";
 import { useOpportunities } from "@/hooks/use-opportunities";
@@ -25,6 +21,8 @@ import { getLocaleForLanguage } from "@/utils/locale-format";
 export type ResourceItem = {
   title: string;
   description: string;
+  descriptionLinkLabel?: string;
+  descriptionLinkUrl?: string;
   url: string;
   actionLabel?: string;
   sourceLabel?: string;
@@ -98,12 +96,20 @@ function mapCatalogItem(item: ResourceCatalogItem, t: Translate): ResourceItem {
   };
 }
 
-function joinResourceLabelList(values: string[]) {
-  if (values.length <= 1) return values[0] ?? "";
-  if (values.length === 2) {
-    return `${values[0]} and ${values[1]}`;
-  }
-  return `${values.slice(0, -1).join(", ")}, and ${values[values.length - 1]}`;
+export const TRANSFER_CATEGORY_EQUIVALENCY_GUIDE_URL =
+  "https://admit.washington.edu/apply/transfer/equivalency-guide/green-river/";
+
+export function splitResourceDescriptionAtLink(
+  description: string,
+  linkLabel: string
+) {
+  const linkIndex = description.indexOf(linkLabel);
+  if (!linkLabel || linkIndex < 0) return null;
+
+  return {
+    before: description.slice(0, linkIndex),
+    after: description.slice(linkIndex + linkLabel.length),
+  };
 }
 
 function buildInternalAppUrl(
@@ -564,16 +570,12 @@ export function useResourcesPageModel() {
     }, [refreshOpportunitiesIfNeeded])
   );
 
-  const transferCategoryEquivalenciesResource = useMemo<ResourceItem>(() => {
-    const trackedTagLabels = TRANSFER_EQUIVALENCY_TRACKED_TAGS.map((tag) =>
-      getTransferEquivalencyTagDisplayLabel(tag)
-    );
-
-    return {
+  const transferCategoryEquivalenciesResource = useMemo<ResourceItem>(
+    () => ({
       title: t("resources.transferCategoryEquivalencies"),
-      description: t("resources.transferCategoryEquivalenciesDescription", {
-        categories: joinResourceLabelList(trackedTagLabels),
-      }),
+      description: t("resources.transferCategoryEquivalenciesDescription"),
+      descriptionLinkLabel: t("resources.transferCategoryEquivalenciesGuideLabel"),
+      descriptionLinkUrl: TRANSFER_CATEGORY_EQUIVALENCY_GUIDE_URL,
       url: buildInternalAppUrl(String(ROUTES.transferEquivalencies), {
         collegeId: "uw",
         tag: TRANSFER_EQUIVALENCY_ALL_TRACKED_TAGS_PARAM,
@@ -591,8 +593,9 @@ export function useResourcesPageModel() {
         "i&s",
         "tools",
       ],
-    };
-  }, [t]);
+    }),
+    [t]
+  );
 
   const opportunityAdminResource = useMemo<ResourceItem>(
     () => ({
