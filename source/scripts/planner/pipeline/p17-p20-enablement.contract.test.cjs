@@ -21,6 +21,7 @@ const {
 } = require("./a11y/a11y-contract.cjs");
 const {
   validatePlannerRefreshWorkflow,
+  validateDormantCategoryWorkflow,
   validateNoDiffSuccess,
 } = require("./automation/refresh-workflow-contract.cjs");
 
@@ -117,19 +118,22 @@ test("P19 a11y reduced-motion, touch target, text scale", () => {
   );
 });
 
-test("P20 refresh workflow shape + no-diff must not publish", () => {
-  const ok = validatePlannerRefreshWorkflow({
-    on: { schedule: [{ cron: "0 12 * * 1" }], workflow_dispatch: null },
+test("P20 Rust planner refresh publishes data and creates a release", () => {
+  const workflow = {
+    on: { schedule: [{ cron: "0 12 * * 1" }], workflow_dispatch: {} },
+    permissions: { contents: "write" },
     jobs: {
       refresh: {
         steps: [
           { run: "npm ci" },
-          { run: "node scripts/planner/pipeline/refresh-planner-data.cjs" },
+          { run: "cargo run --locked --manifest-path automation/Cargo.toml -- refresh-planner" },
+          { run: "git add source/data/starter-opportunities.json && git push origin HEAD:main" },
+          { run: "gh release create planner-refresh-${GITHUB_RUN_ID}" },
         ],
       },
     },
-  });
-  assert.equal(ok.ok, true);
+  };
+  assert.equal(validatePlannerRefreshWorkflow(workflow).ok, true);
   assert.equal(
     validateNoDiffSuccess({ beforeHash: "a", afterHash: "a", published: false }).ok,
     true
@@ -138,4 +142,55 @@ test("P20 refresh workflow shape + no-diff must not publish", () => {
     validateNoDiffSuccess({ beforeHash: "a", afterHash: "a", published: true }).ok,
     false
   );
+});
+
+test("P20 scholarship and internship collectors are deterministic and non-publishing", () => {
+  for (const category of ["scholarships", "internships"]) {
+    const result = validateDormantCategoryWorkflow(
+      {
+        on: { schedule: [{ cron: "0 13 * * 1" }], workflow_dispatch: {} },
+        permissions: { contents: "read" },
+        jobs: {
+          review: {
+            steps: [
+              { run: `cargo run --locked --manifest-path automation/Cargo.toml -- collect-opportunities --category ${category}` },
+            ],
+          },
+        },
+      },
+      category
+    );
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+  }
+});
+
+test("P20 repository keeps only the planner workflow active and two dormant category workflows", () => {
+  const repositoryRoot = path.resolve(ROOT, "..");
+  const workflowDir = path.join(repositoryRoot, ".github", "workflows");
+  assert.deepEqual(fs.readdirSync(workflowDir).sort(), [
+    "internship-refresh.yml",
+    "planner-refresh.yml",
+    "scholarship-refresh.yml",
+  ]);
+  assert.equal(fs.existsSync(path.join(repositoryRoot, ".github", "dependabot.yml")), false);
+
+  const planner = fs.readFileSync(path.join(workflowDir, "planner-refresh.yml"), "utf8");
+  assert.match(planner, /cron: "0 12 \* \* 1"/);
+  assert.match(planner, /cargo run[\s\S]*refresh-planner/);
+  assert.match(planner, /git push origin HEAD:main/);
+  assert.match(planner, /gh release create/);
+  assert.match(planner, /actions\/deploy-pages@v4/);
+
+  for (const [file, category] of [
+    ["scholarship-refresh.yml", "scholarships"],
+    ["internship-refresh.yml", "internships"],
+  ]) {
+    const workflow = fs.readFileSync(path.join(workflowDir, file), "utf8");
+    assert.match(workflow, /cron:/);
+    assert.match(workflow, /workflow_dispatch:/);
+    assert.match(workflow, new RegExp(`collect-opportunities[\\s\\S]*--category ${category}`));
+    assert.match(workflow, /contents: read/);
+    assert.match(workflow, /actions\/upload-artifact@v4/);
+    assert.doesNotMatch(workflow, /git push|gh release create|openai|gemini|anthropic|llm/i);
+  }
 });

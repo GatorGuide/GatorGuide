@@ -1,0 +1,37 @@
+name: Internship Source Review (Dormant)
+
+on:
+  schedule:
+    - cron: "0 14 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    name: Collect deterministic internship source candidates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Build deterministic source report
+        run: >-
+          cargo run --locked --release --manifest-path automation/Cargo.toml --
+          collect-opportunities --category internships
+          --output "${RUNNER_TEMP}/internship-candidates.json"
+
+      - name: Upload review-only candidates
+        uses: actions/upload-artifact@v4
+        with:
+          name: internship-source-candidates
+          path: ${{ runner.temp }}/internship-candidates.json
+          if-no-files-found: error
+          retention-days: 14
