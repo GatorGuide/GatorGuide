@@ -1,6 +1,8 @@
 # Deterministic scheduled automations
 
-A read-only Windows Task Scheduler query found no matching GatorGuide/planner task. The repository's weekly GitHub Actions planner workflow is the existing scheduled job and remains the only enabled project automation.
+A read-only Windows Task Scheduler query found no matching GatorGuide/planner task. The repository's weekly GitHub Actions planner workflow is the existing scheduled job and the only active repository-authored workflow.
+
+GitHub may still list platform-managed dynamic workflows in Actions. Dependabot update configuration was removed, Dependabot security auto-updates were disabled, and CodeQL default setup is now not configured. GitHub's Dependency Graph entry is platform-managed (`dynamic/dependabot/update-graph`) and has no repository workflow file; its workflow-disable API request returned HTTP 422.
 
 ## Planner refresh
 
