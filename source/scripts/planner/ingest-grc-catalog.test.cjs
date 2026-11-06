@@ -53,10 +53,55 @@ test("catalog ingestion accepts a non-empty completed catalog page", () => {
 
 test("course catalog entries extract enrollment prerequisite codes", () => {
   const html =
-    "<h3>MATH& 152 - Calculus II</h3>Credits: 5<br><br><strong>Enrollment Requirement:</strong> MATH& 151 with a grade of 2.0 or higher.";
+    "<h3>MATH& 152 - Calculus II</h3>Credits: 5<br><br><strong>Enrollment Prerequisite:</strong> MATH& 151 with a grade of 2.0 or higher.";
   const [course] = buildCourseEntries(html, "2026-2027", courseDescriptionsUrl);
 
   assert.equal(course.code, "MATH& 152");
+  assert.equal(course.catalogDescription, null);
   assert.deepEqual(course.prerequisiteCourseCodes, ["MATH& 151"]);
   assert.match(course.prerequisiteNotes[0], /Official Green River enrollment requirement text/);
+});
+
+test("course entries preserve clickable course-code evidence only from enrollment requirements", () => {
+  const html = [
+    "<h3>MATH& 153 - Calculus III</h3>",
+    "Credits: 5",
+    '<br>See <a href="preview_course_nopop.php?coid=199">MATH&amp; 199</a> for placement information.',
+    "<br><br><strong>Enrollment Requirement:</strong>",
+    '<a href="preview_course_nopop.php?coid=151">MATH&amp; 151</a> or',
+    '<a href="preview_course_nopop.php?coid=152">MATH&amp; 152</a>.',
+  ].join(" ");
+  const [course] = buildCourseEntries(html, "2026-2027", courseDescriptionsUrl);
+  const clickableEvidence = course.prerequisiteNotes.find((note) =>
+    note.startsWith("Clickable catalog course-code references")
+  );
+
+  assert.deepEqual(course.prerequisiteAlternativeCourseCodeSets, [
+    ["MATH& 151"],
+    ["MATH& 152"],
+  ]);
+  assert.equal(
+    clickableEvidence,
+    "Clickable catalog course-code references within the enrollment requirement: MATH& 151, MATH& 152."
+  );
+  assert.doesNotMatch(clickableEvidence, /MATH& 199/);
+});
+
+test("unlinked text candidates are retained and flagged when course links are present", () => {
+  const html = [
+    "<h3>MATH& 153 - Calculus III</h3>",
+    "Credits: 5<br><br><strong>Enrollment Requirement:</strong>",
+    '<a href="preview_course_nopop.php?coid=151">MATH&amp; 151</a> or MATH&amp; 152.',
+  ].join(" ");
+  const [course] = buildCourseEntries(html, "2026-2027", courseDescriptionsUrl);
+
+  assert.deepEqual(course.prerequisiteAlternativeCourseCodeSets, [
+    ["MATH& 151"],
+    ["MATH& 152"],
+  ]);
+  assert.ok(
+    course.prerequisiteNotes.some((note) =>
+      note.includes("course codes not linked in this section (retained from official text; review): MATH& 152")
+    )
+  );
 });

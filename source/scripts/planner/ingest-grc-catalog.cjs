@@ -920,13 +920,32 @@ function detectCatalogPageNumbers(html) {
   return [...pageNumbers].filter(Number.isFinite).sort((left, right) => left - right);
 }
 
-function extractLabeledSectionText(rawBody, label) {
+function extractLabeledSectionHtml(rawBody, label) {
   const pattern = new RegExp(
     `<strong>\\s*${label}\\s*:<\\/strong>([\\s\\S]*?)(?=<br\\s*\\/?>\\s*<br\\s*\\/?>\\s*<strong>|<strong>\\s*(?:Course Fee|Course Outcomes|Program Outcomes|College-wide Outcomes)\\s*:<\\/strong>|$)`,
     "i"
   );
   const match = rawBody.match(pattern);
-  return match ? stripHtml(match[1]) : null;
+  return match ? match[1] : null;
+}
+
+function extractLabeledSectionText(rawBody, label) {
+  const sectionHtml = extractLabeledSectionHtml(rawBody, label);
+  return sectionHtml === null ? null : stripHtml(sectionHtml);
+}
+
+function extractLinkedCourseCodes(sectionHtml) {
+  const codes = [];
+  for (const match of String(sectionHtml ?? "").matchAll(
+    /<a\b([^>]*)>([\s\S]*?)<\/a>/gi
+  )) {
+    if (!/(?:^|\s)href\s*=/i.test(match[1])) {
+      continue;
+    }
+    const anchorText = stripHtml(match[2]);
+    codes.push(...getSafeCourseCodeMatches(anchorText).map((courseMatch) => courseMatch.code));
+  }
+  return uniqueStrings(codes.map(normalizeCourseCode));
 }
 
 function extractCredits(rawBody) {
@@ -941,7 +960,7 @@ function extractCredits(rawBody) {
 
 function extractCourseDescription(rawBody) {
   const withoutCredits = rawBody.replace(/^\s*Credits:\s*[^<\r\n]+/i, "");
-  const beforeRequirement = withoutCredits.split(/<br\s*\/?>\s*<br\s*\/?>\s*<strong>\s*(?:Enrollment Requirement|Satisfies Requirement|Course Fee|Course Outcomes|Program Outcomes|College-wide Outcomes)\s*:/i)[0];
+  const beforeRequirement = withoutCredits.split(/<br\s*\/?>\s*<br\s*\/?>\s*<strong>\s*(?:Enrollment Requirement|Enrollment Prerequisite|Satisfies Requirement|Course Fee|Course Outcomes|Program Outcomes|College-wide Outcomes)\s*:/i)[0];
   const description = stripHtml(beforeRequirement);
   return description || null;
 }
@@ -1000,11 +1019,27 @@ function buildCourseEntries(html, catalogYearLabel, courseDescriptionsSourceUrl)
     const bodyEnd = nextHeading?.index ?? html.length;
     const rawBody = html.slice(bodyStart, bodyEnd);
     const credits = extractCredits(rawBody);
-    const enrollmentRequirement = extractLabeledSectionText(rawBody, "Enrollment Requirement");
+    const enrollmentRequirementHtml = extractLabeledSectionHtml(
+      rawBody,
+      "(?:Enrollment Requirement|Enrollment Prerequisite)"
+    );
+    const enrollmentRequirement =
+      enrollmentRequirementHtml === null ? null : stripHtml(enrollmentRequirementHtml);
+    const linkedEnrollmentCourseCodes = extractLinkedCourseCodes(enrollmentRequirementHtml);
     const corequisiteRequirement = extractLabeledSectionText(rawBody, "Corequisite");
     const satisfiesRequirement = extractLabeledSectionText(rawBody, "Satisfies Requirement");
     const description = extractCourseDescription(rawBody);
     const parsedEnrollmentRequirement = parseGrcEnrollmentRequirementText(enrollmentRequirement);
+    // Links corroborate text candidates; absence of a link alone cannot disprove a prerequisite.
+    const parsedEnrollmentCourseCodes = uniqueStrings([
+      ...(parsedEnrollmentRequirement.prerequisiteCourseCodes ?? []),
+      ...(parsedEnrollmentRequirement.prerequisiteAlternativeCourseCodeSets ?? []).flat(),
+      ...(parsedEnrollmentRequirement.corequisiteCourseCodes ?? []),
+      ...(parsedEnrollmentRequirement.corequisiteAlternativeCourseCodeSets ?? []).flat(),
+    ]);
+    const unlinkedEnrollmentCourseCodes = linkedEnrollmentCourseCodes.length
+      ? parsedEnrollmentCourseCodes.filter((code) => !linkedEnrollmentCourseCodes.includes(code))
+      : [];
     const parsedCorequisiteRequirement = parseGrcCorequisiteText(corequisiteRequirement);
     const grcGeneralEducationTags =
       classifyGrcGeneralEducationRequirementTags(satisfiesRequirement);
@@ -1044,6 +1079,16 @@ function buildCourseEntries(html, catalogYearLabel, courseDescriptionsSourceUrl)
       prerequisiteNotes: enrollmentRequirement
         ? [
             `Official Green River enrollment requirement text: ${enrollmentRequirement}`,
+            ...(linkedEnrollmentCourseCodes.length
+              ? [
+                  `Clickable catalog course-code references within the enrollment requirement: ${linkedEnrollmentCourseCodes.join(", ")}.`,
+                ]
+              : []),
+            ...(unlinkedEnrollmentCourseCodes.length
+              ? [
+                  `Text-parsed enrollment requirement course codes not linked in this section (retained from official text; review): ${unlinkedEnrollmentCourseCodes.join(", ")}.`,
+                ]
+              : []),
             ...(!hasStructuredRequirementFields
               ? [
                   "requirement text is preserved as a note until a parser can safely normalize AND/OR/instructor-consent semantics into graph prerequisites.",
