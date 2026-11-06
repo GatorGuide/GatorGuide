@@ -159,7 +159,10 @@ jobs:
           for plugin in ["expo-asset", "expo-audio", "expo-font", "expo-sharing"]:
               if plugin not in plugins:
                   plugins.append(plugin)
+          app_config["expo"].get("android", {}).pop("edgeToEdgeEnabled", None)
           app_json_path.write_text(json.dumps(app_config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+          (root / "app.config.js").unlink()
+          print("Removed redundant dynamic Expo config and deprecated Android field.")
           print("Added SDK 58 required config plugins for dynamic app.config.js.")
 
           transform("babel.config.js", lambda s: replace_exact(
@@ -173,14 +176,14 @@ jobs:
           npm install --no-audit --no-fund
           npx expo install --fix --npm
 
+      - name: Typecheck
+        working-directory: source
+        run: npm run typecheck
+
       - name: Validate dependency alignment
         working-directory: source
         run: |
           npx expo-doctor@latest
-
-      - name: Typecheck
-        working-directory: source
-        run: npm run typecheck
 
       - name: Lint
         working-directory: source
