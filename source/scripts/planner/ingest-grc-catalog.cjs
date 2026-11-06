@@ -674,6 +674,25 @@ function createFetchError(url, message, status = null, retryAfterMs = null) {
   return error;
 }
 
+function validateCatalogResponseBody(url, status, body) {
+  const text = String(body ?? "");
+  if (status === 202) {
+    throw createFetchError(
+      url,
+      "Received HTTP 202 Accepted instead of a completed Green River catalog page.",
+      status
+    );
+  }
+  if (!text.trim()) {
+    throw createFetchError(
+      url,
+      `Received an empty Green River catalog response (HTTP ${status}).`,
+      status
+    );
+  }
+  return text;
+}
+
 function shouldRetryFetch(error) {
   if (!error) {
     return false;
@@ -755,11 +774,13 @@ async function fetchTextOnce(url, timeoutMs) {
     );
   }
 
+  let body;
   try {
-    return await response.text();
+    body = await response.text();
   } catch (error) {
     throw createFetchError(url, error.message ?? `Failed to read response body for ${url}`, null, retryAfterMs);
   }
+  return validateCatalogResponseBody(url, response.status, body);
 }
 
 async function fetchText(url, options = {}) {
@@ -803,8 +824,12 @@ function readSnapshotFallback(snapshotPath, error) {
   );
   console.log(`Fetch error: ${error.message}`);
 
+  const html = fs.readFileSync(snapshotPath, "utf8");
+  if (!html.trim()) {
+    throw new Error(`Cached Green River catalog snapshot is empty: ${snapshotPath}`);
+  }
   return {
-    html: fs.readFileSync(snapshotPath, "utf8"),
+    html,
     usedSnapshotFallback: true,
     snapshotFallbackReason: error.message,
   };
@@ -818,6 +843,9 @@ function readCatalogSnapshot(snapshotPath, fallbackReason) {
   }
 
   const html = fs.readFileSync(snapshotPath, "utf8");
+  if (!html.trim()) {
+    throw new Error(`Cached Green River catalog snapshot is empty: ${snapshotPath}`);
+  }
   return {
     html,
     pageCount: detectCatalogPageNumbers(html).length,
@@ -850,6 +878,11 @@ async function fetchCatalogHtml(courseDescriptionsExpandedUrl, snapshotPath) {
     }
 
     const html = pageHtmls.map((page) => page.html).join("\n");
+    if (!buildCourseEntries(html, "catalog-validation", courseDescriptionsExpandedUrl).length) {
+      throw new Error(
+        `No Green River course descriptions parsed from fetched pages; refusing to save snapshot ${snapshotPath}.`
+      );
+    }
     fs.writeFileSync(snapshotPath, html);
 
     return {
@@ -875,7 +908,7 @@ function buildPagedCourseDescriptionUrl(courseDescriptionsExpandedUrl, pageNumbe
 
 function detectCatalogPageNumbers(html) {
   const pageNumbers = new Set([1]);
-  for (const match of html.matchAll(/filter%5Bcpage%5D=(\d+)/g)) {
+  for (const match of html.matchAll(/filter(?:%5B|\[)cpage(?:%5D|\])=(\d+)/gi)) {
     pageNumbers.add(Number.parseInt(match[1], 10));
   }
   const maxPageNumber = Math.max(...pageNumbers);
@@ -1286,13 +1319,23 @@ async function main() {
   const catalogDefinitions = await fetchCatalogDefinitions(grcPublicMaterials, {
     cacheOnly,
   });
-  const rawEntries = catalogDefinitions.flatMap((catalogDefinition) =>
-    buildCourseEntries(
+  const rawEntries = [];
+  for (const catalogDefinition of catalogDefinitions) {
+    const catalogEntries = buildCourseEntries(
       catalogDefinition.html,
       catalogDefinition.label,
       catalogDefinition.courseDescriptionsUrl
-    )
-  );
+    );
+    if (!catalogEntries.length) {
+      throw new Error(
+        `No Green River course entries parsed for ${catalogDefinition.label}; refusing to write an empty catalog-ingest report.`
+      );
+    }
+    rawEntries.push(...catalogEntries);
+  }
+  if (!rawEntries.length) {
+    throw new Error("No Green River catalog course entries were parsed; refusing to write an empty ingest report.");
+  }
   const entries = mergeCourseEntries(rawEntries);
   const sourceFingerprint = sha256Text(
     catalogDefinitions
@@ -1371,6 +1414,9 @@ module.exports = {
   parseGrcCorequisiteText,
   classifyGrcGeneralEducationRequirementTags,
   buildCourseEntries,
+  buildPagedCourseDescriptionUrl,
+  detectCatalogPageNumbers,
+  validateCatalogResponseBody,
 };
 
 if (require.main === module) {
