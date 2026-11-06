@@ -12,7 +12,7 @@ const sections = [
     title: "Firebase client config",
     notes: [
       "Create a Firebase web app and copy these values from Project settings.",
-      "Enable Authentication and Firestore before using sign-in flows.",
+      "Enable Authentication; enable Storage only if supported uploads are needed. App profile data stays local.",
     ],
     entries: [
       ["EXPO_PUBLIC_FIREBASE_API_KEY", ""],

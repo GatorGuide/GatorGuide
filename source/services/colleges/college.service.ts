@@ -3,16 +3,10 @@
 // Currently returns stub data, will connect to College Scorecard API later
 
 import { localStorageService } from "@/services/storage/local-storage.service";
-import { deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore';
-import {
-  FIRESTORE_COLLECTIONS,
-  FIRESTORE_USER_SUBCOLLECTIONS,
-} from '@/constants/schema';
 import { TRANSFER_PLANNER_LOCAL_ONLY_QUESTIONNAIRE_FIELDS } from '@/constants/planner-storage';
 import { COLLEGE_SCORECARD_CIP4_PROGRAMS } from '@/constants/college-scorecard-cip4';
 import { hasCollegeScorecardApiKey, isStubMode } from '@/services/app/config';
 import { errorLoggingService } from '@/services/logging/error-logging.service';
-import { db, firebaseAuth } from '@/services/firebase/firebase';
 import { fetchJsonWithHandling } from '@/services/network/fetch-with-handling';
 import {
   COLLEGE_CACHE_PREFIX,
@@ -30,7 +24,6 @@ import {
   type ScorecardSchoolsResponse,
 } from './scorecard';
 import { normalizeRateValue } from '@/utils/locale-format';
-import type { QuestionnaireAnswers } from '@/services/app/questionnaire.enums';
 
 const SCORECARD_PAGE_SIZE = 100;
 const SCORECARD_PAGE_BATCH_SIZE = 4;
@@ -58,10 +51,6 @@ const SCORECARD_ENRICHED_FIELDS = [
   'latest.programs.cip_6_digit.code',
   'latest.programs.cip_6_digit.title',
 ].join(',');
-const LOCAL_ONLY_QUESTIONNAIRE_KEYS: ReadonlySet<string> = new Set(
-  TRANSFER_PLANNER_LOCAL_ONLY_QUESTIONNAIRE_FIELDS
-);
-
 const getCollegeScorecardSetupError = () =>
   new Error(
     'College Scorecard API key is missing or invalid. Update EXPO_PUBLIC_COLLEGE_SCORECARD_KEY in source/.env with a valid api.data.gov key, then restart Expo.'
@@ -88,11 +77,6 @@ const writeCache = async (key: string, data: College[] | College) => {
   const payload = JSON.stringify({ timestamp: Date.now(), data });
   await localStorageService.setItem(key, payload);
 };
-
-const sanitizeQuestionnaireAnswersForFirestore = (answers: Record<string, unknown>) =>
-  Object.fromEntries(
-    Object.entries(answers ?? {}).filter(([key]) => !LOCAL_ONLY_QUESTIONNAIRE_KEYS.has(key))
-  );
 
 let legacyCollegeCacheCleanupPromise: Promise<void> | null = null;
 
@@ -454,73 +438,6 @@ class CollegeService {
         sort: 'school.name:asc',
       },
       getCollegeCacheKey('search', `cip4:${code}`)
-    );
-  }
-
-  /**
-   * TASK: Firebase Questionnaire collection
-   * Saves user survey answers to Firestore
-   */
-  async saveQuestionnaireResult(answers: QuestionnaireAnswers | Record<string, unknown>): Promise<string> {
-    if (!db || !firebaseAuth?.currentUser) {
-      throw new Error("Authentication required");
-    }
-
-    try {
-      const user = firebaseAuth.currentUser;
-      const docRef = doc(db, FIRESTORE_COLLECTIONS.questionnaires, user.uid);
-      const sanitizedAnswers = sanitizeQuestionnaireAnswersForFirestore(answers ?? {});
-      await setDoc(docRef, {
-        userId: user.uid,
-        answers: sanitizedAnswers,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
-      return docRef.id;
-    } catch (error) {
-      void errorLoggingService.captureException(error, {
-        category: "firestore",
-        operation: "save-questionnaire-result",
-        severity: "error",
-        handled: false,
-        source: "college.service",
-        metadata: {
-          answerCount: Object.keys(answers ?? {}).length,
-          uid: firebaseAuth?.currentUser?.uid ?? null,
-        },
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * Legacy helper: save/remove a minimal favorite marker.
-   * The app now uses saved-colleges.service.ts to persist full college snapshots.
-   */
-  async toggleSavedCollege(collegeId: string, isSaved: boolean): Promise<void> {
-    if (!db || !firebaseAuth?.currentUser) return;
-
-    const user = firebaseAuth.currentUser;
-    const savedCollegeRef = doc(
-      db,
-      FIRESTORE_COLLECTIONS.users,
-      user.uid,
-      FIRESTORE_USER_SUBCOLLECTIONS.savedColleges,
-      String(collegeId)
-    );
-
-    if (!isSaved) {
-      await deleteDoc(savedCollegeRef);
-      return;
-    }
-
-    await setDoc(
-      savedCollegeRef,
-      {
-        collegeId: String(collegeId),
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
     );
   }
 

@@ -27,7 +27,7 @@ export function RouteAccessBoundary({
   allowGuest = true,
   loadingMessage,
   unauthenticatedRedirect = ROUTES.login,
-  guestRedirect = ROUTES.tabs,
+  guestRedirect = ROUTES.tabsResources,
   resolveRedirect,
 }: RouteAccessBoundaryProps) {
   const router = useRouter();

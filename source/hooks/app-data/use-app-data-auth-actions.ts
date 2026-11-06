@@ -1,20 +1,21 @@
 import { localStorageService } from "@/services/storage/local-storage.service";
-import {
-  useCallback,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction,
-} from "react";
-import { DEFAULT_USER_STATE } from "@/constants/profile-defaults";
+import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { STORAGE_KEYS } from "@/constants/schema";
-import { authService, type AuthUser } from "@/services/auth/auth.service";
-import type { College } from "@/services/colleges/college.service";
 import {
-  savedCollegesService,
-  type SyncSavedCollegesOptions,
-} from "@/services/colleges/saved-colleges.service";
+  getAvatarStorageKey,
+  getOpportunityPendingStorageKey,
+  getOpportunityStatusesStorageKey,
+  getRoadmapDocumentStorageKey,
+  getResumeStorageKey,
+  getTranscriptStorageKey,
+  getUserAppDataStorageKey,
+  getUserRoadmapStorageKey,
+} from "@/services/storage/local-storage-contracts";
+import { authService, type AuthUser } from "@/services/auth/auth.service";
+import { resolveAppDataForAccount } from "./app-data-auth-state";
 import { errorLoggingService } from "@/services/logging/error-logging.service";
 import { notificationsService } from "@/services/notifications/notifications.service";
+import { storageService } from "@/services/storage/storage.service";
 import {
   initialState,
   resolveUserState,
@@ -22,140 +23,88 @@ import {
   type AppDataState,
   type User,
 } from "./app-data-state";
-import type { LoadedServerProfile } from "./use-app-data-profile-sync";
-
-type LoadProfileFromServer = (uid: string) => Promise<LoadedServerProfile>;
-
-type LoadMergedSavedColleges = (
-  uid: string,
-  legacySavedCollegeIds?: string[],
-  options?: SyncSavedCollegesOptions
-) => Promise<College[]>;
+import { parsePersistedAppDataState, serializeAppDataState } from "./app-data-persistence";
 
 type UseAppDataAuthActionsArgs = {
   stateRef: MutableRefObject<AppDataState>;
   setState: Dispatch<SetStateAction<AppDataState>>;
-  loadProfileFromServer: LoadProfileFromServer;
-  loadMergedSavedColleges: LoadMergedSavedColleges;
-  reconciledSavedCollegesUidRef: MutableRefObject<string | null>;
 };
 
-export function useAppDataAuthActions({
-  stateRef,
-  setState,
-  loadProfileFromServer,
-  loadMergedSavedColleges,
-  reconciledSavedCollegesUidRef,
-}: UseAppDataAuthActionsArgs) {
-  const signIn = useCallback(async (u: Pick<User, "name" | "email"> & { password: string; isSignUp: boolean }) => {
+async function readAccountState(uid: string): Promise<AppDataState | null> {
+  try {
+    const raw = await localStorageService.getItem(getUserAppDataStorageKey(uid));
+    if (!raw) return null;
+    const state = parsePersistedAppDataState(raw).state;
+    return state.user?.uid === uid && !state.user.isGuest ? state : null;
+  } catch {
+    return null;
+  }
+}
+
+export function useAppDataAuthActions({ stateRef, setState }: UseAppDataAuthActionsArgs) {
+  const activateAccount = useCallback(async (authUser: AuthUser) => {
+    const current = stateRef.current;
+    const currentIsSameAccount = current.user?.uid === authUser.uid && !current.user.isGuest;
+    const savedAccountState = currentIsSameAccount ? current : await readAccountState(authUser.uid);
+    setState(resolveAppDataForAccount(current, savedAccountState, authUser));
+  }, [setState, stateRef]);
+
+  const signIn = useCallback(async (
+    input: Pick<User, "name" | "email"> & { password: string; isSignUp: boolean }
+  ) => {
     const authUser = await authService.signIn({
-      name: u.name,
-      email: u.email,
-      password: u.password,
-      isSignUp: u.isSignUp,
+      name: input.name,
+      email: input.email,
+      password: input.password,
+      isSignUp: input.isSignUp,
     });
-
-    const shouldPromoteLocalSavedColleges = !!stateRef.current.user?.isGuest;
-    const { profile: profileFromServer, legacySavedCollegeIds } = await loadProfileFromServer(authUser.uid);
-    const mergedSavedColleges = await loadMergedSavedColleges(authUser.uid, legacySavedCollegeIds, {
-      includeLocalSnapshot: shouldPromoteLocalSavedColleges,
-    });
-    reconciledSavedCollegesUidRef.current = authUser.uid;
-
-    setState((prev) => {
-      if (prev.user && prev.user.email === authUser.email) {
-        return {
-          ...prev,
-          user: {
-            ...prev.user,
-            uid: authUser.uid,
-            name: authUser.name || u.name,
-            ...profileFromServer,
-            state: resolveUserState(profileFromServer.state ?? prev.user.state),
-          },
-          savedColleges: mergedSavedColleges,
-        };
-      }
-
-      return {
-        ...prev,
-        user: {
-          uid: authUser.uid,
-          name: authUser.name || u.name,
-          email: authUser.email,
-          isGuest: false,
-          major: "",
-          gender: "",
-          state: DEFAULT_USER_STATE,
-          gpa: "",
-          resume: "",
-          transcript: "",
-          ...profileFromServer,
-        },
-        savedColleges: mergedSavedColleges,
-      };
-    });
-  }, [
-    loadMergedSavedColleges,
-    loadProfileFromServer,
-    reconciledSavedCollegesUidRef,
-    setState,
-    stateRef,
-  ]);
+    await activateAccount(authUser);
+  }, [activateAccount]);
 
   const signInWithAuthUser = useCallback(async (authUser: AuthUser) => {
-    const shouldPromoteLocalSavedColleges = !!stateRef.current.user?.isGuest;
-    const { profile: profileFromServer, legacySavedCollegeIds } = await loadProfileFromServer(authUser.uid);
-    const mergedSavedColleges = await loadMergedSavedColleges(authUser.uid, legacySavedCollegeIds, {
-      includeLocalSnapshot: shouldPromoteLocalSavedColleges,
-    });
-    reconciledSavedCollegesUidRef.current = authUser.uid;
-
-    setState((prev) => ({
-      ...prev,
-      user: {
-        uid: authUser.uid,
-        name: authUser.name || "",
-        email: authUser.email,
-        isGuest: false,
-        major: "",
-        gender: "",
-        state: DEFAULT_USER_STATE,
-        gpa: "",
-        resume: "",
-        transcript: "",
-        ...profileFromServer,
-      },
-      savedColleges: mergedSavedColleges,
-    }));
-  }, [
-    loadMergedSavedColleges,
-    loadProfileFromServer,
-    reconciledSavedCollegesUidRef,
-    setState,
-    stateRef,
-  ]);
+    await activateAccount(authUser);
+  }, [activateAccount]);
 
   const signInAsGuest = useCallback(async () => {
-    reconciledSavedCollegesUidRef.current = null;
-    setState((prev) => ({
-      ...prev,
+    const current = stateRef.current;
+    const base = current.user?.isGuest ? current : initialState;
+    const uid = current.user?.isGuest ? current.user.uid : `guest-${Date.now()}`;
+    setState({
+      ...base,
       user: {
-        uid: `guest-${Date.now()}`,
+        uid,
         name: "Guest User",
-        email: `guest-${Date.now()}@gatorguide.local`,
+        email: `${uid}@gatorguide.local`,
         isGuest: true,
-        major: "",
-        gender: "",
-        state: DEFAULT_USER_STATE,
-        gpa: "",
-        resume: "",
-        transcript: "",
+        state: resolveUserState(base.user?.state),
+        major: base.user?.major ?? "",
+        gender: base.user?.gender ?? "",
+        gpa: base.user?.gpa ?? "",
+        resume: base.user?.resume ?? "",
+        transcript: base.user?.transcript ?? "",
       },
-    }));
-  }, [reconciledSavedCollegesUidRef, setState]);
+    });
+  }, [setState, stateRef]);
 
   const signOut = useCallback(async () => {
+    const current = stateRef.current;
+    if (current.user && !current.user.isGuest) {
+      try {
+        await localStorageService.setItem(
+          getUserAppDataStorageKey(current.user.uid),
+          serializeAppDataState(current)
+        );
+      } catch (error) {
+        void errorLoggingService.captureException(error, {
+          category: "storage",
+          operation: "persist-account-data-before-signout",
+          severity: "warn",
+          handled: true,
+          source: "use-app-data",
+        });
+      }
+    }
+
     try {
       await authService.signOut();
     } catch (error) {
@@ -169,24 +118,42 @@ export function useAppDataAuthActions({
     }
     await notificationsService.clearManagedNotifications().catch(() => {});
     setState(initialState);
-    reconciledSavedCollegesUidRef.current = null;
-    await localStorageService.removeItem(STORAGE_KEY);
-  }, [reconciledSavedCollegesUidRef, setState]);
+    await localStorageService.multiRemove([STORAGE_KEYS.appDataActiveUser, STORAGE_KEY]);
+  }, [setState, stateRef]);
 
   const deleteAccount = useCallback(async () => {
-    const signedInUid = stateRef.current.user?.isGuest ? null : stateRef.current.user?.uid ?? null;
-    try {
-      await authService.deleteAccount();
-    } finally {
-      if (signedInUid) {
-        await savedCollegesService.clearPendingSyncState(signedInUid).catch(() => {});
-      }
-      await notificationsService.clearManagedNotifications().catch(() => {});
-      setState(initialState);
-      reconciledSavedCollegesUidRef.current = null;
-      await localStorageService.multiRemove([STORAGE_KEY, STORAGE_KEYS.guestProfileShow]);
+    const user = stateRef.current.user;
+    const uid = user && !user.isGuest ? user.uid : null;
+    await authService.deleteAccount();
+    await notificationsService.clearManagedNotifications().catch(() => {});
+    if (uid) {
+      await storageService.deleteAllUserLocalDocuments(uid).catch(() => {});
+      const knownKeys = [
+        getUserAppDataStorageKey(uid),
+        getUserRoadmapStorageKey(uid),
+        getOpportunityStatusesStorageKey(uid),
+        getOpportunityPendingStorageKey(uid),
+        getResumeStorageKey(uid),
+        getTranscriptStorageKey(uid),
+        getAvatarStorageKey(uid),
+        ...["resume", "transcripts", "personalStatement", "recommendation1", "recommendation2"].map(
+          (docType) => getRoadmapDocumentStorageKey(uid, docType)
+        ),
+      ];
+      const keys = await localStorageService.getAllKeys().catch(() => []);
+      const roadmapDocumentPrefix = `roadmap:${uid}:`;
+      await localStorageService.multiRemove([
+        ...knownKeys,
+        ...keys.filter((key) => key.startsWith(roadmapDocumentPrefix)),
+      ]).catch(() => {});
     }
-  }, [reconciledSavedCollegesUidRef, setState, stateRef]);
+    setState(initialState);
+    await localStorageService.multiRemove([
+      STORAGE_KEY,
+      STORAGE_KEYS.appDataActiveUser,
+      STORAGE_KEYS.guestProfileShow,
+    ]).catch(() => {});
+  }, [setState, stateRef]);
 
   return {
     signIn,

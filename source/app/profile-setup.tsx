@@ -6,7 +6,7 @@ export default function ProfileSetup() {
   return (
     <RouteAccessBoundary
       allowGuest={false}
-      resolveRedirect={(user) => (hasCompletedProfileSetup(user) ? ROUTES.tabs : null)}
+      resolveRedirect={(user) => (hasCompletedProfileSetup(user) ? ROUTES.tabsResources : null)}
     >
       <ProfileSetupPage />
     </RouteAccessBoundary>

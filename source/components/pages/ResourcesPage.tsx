@@ -96,6 +96,17 @@ export default function ResourcesPage() {
           >
             <Text className={`${textClass} font-medium mb-1`}>{item.title}</Text>
             <Text className={`${secondaryTextClass} text-sm`}>{item.description}</Text>
+            {item.sourceLabel && item.sourceUrl ? (
+              <Text
+                accessibilityRole="link"
+                className="text-emerald-500 text-xs mt-2 underline"
+                onPress={() => {
+                  void openLink(item.sourceUrl ?? "");
+                }}
+              >
+                Source: {item.sourceLabel}
+              </Text>
+            ) : null}
           </View>
 
           <View
@@ -112,7 +123,7 @@ export default function ResourcesPage() {
               accessibilityRole="link"
             >
               <Text className="text-emerald-500 text-sm">
-                {t("resources.actionOpen")}
+                {item.actionLabel ?? t("resources.actionOpen")}
               </Text>
             </AnimatedChipPressable>
           </View>
@@ -204,7 +215,7 @@ export default function ResourcesPage() {
   const renderOpportunityItems = (
     items: MatchedOpportunity[],
     keyPrefix: string,
-    options?: { inset?: boolean }
+    options?: { inset?: boolean; showCompletionToggle?: boolean }
   ) =>
     items.map((item, index) => (
       <View
@@ -238,45 +249,51 @@ export default function ResourcesPage() {
             ) : null}
           </View>
 
-          <View
-            className="flex-row items-center gap-2"
-            style={stackOpportunityActions ? { width: "100%", justifyContent: "flex-end" } : undefined}
-          >
-            {item.externalUrl ? (
-              <AnimatedChipPressable
-                onPress={() => {
-                  void openLink(item.externalUrl ?? "");
-                }}
-                className="px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 items-center"
-              >
-                <Text className="text-emerald-500 text-sm">
-                  {t("resources.actionOpen")}
-                </Text>
-              </AnimatedChipPressable>
-            ) : (
-              !stackOpportunityActions ? <View className="flex-1" /> : null
-            )}
-
-            <TouchIconButton
-              onPress={() => {
-                void setOpportunityDone(item.opportunityId, !item.isDone);
-              }}
-              accessibilityLabel={`${item.isDone ? t("resources.actionUndo") : t("resources.actionMarkDone")}: ${item.title}`}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: item.isDone }}
-              className={`w-12 h-12 rounded-xl border items-center justify-center ${
-                item.isDone
-                  ? "bg-emerald-500 border-emerald-500"
-                  : "bg-emerald-500/10 border-emerald-500/30"
-              }`}
+          {item.externalUrl || options?.showCompletionToggle !== false ? (
+            <View
+              className="flex-row items-center gap-2"
+              style={stackOpportunityActions ? { width: "100%", justifyContent: "flex-end" } : undefined}
             >
-              <MaterialIcons
-                name={item.isDone ? "check-box" : "check-box-outline-blank"}
-                size={22}
-                color={item.isDone ? "#FFFFFF" : "#008f4e"}
-              />
-            </TouchIconButton>
-          </View>
+              {item.externalUrl ? (
+                <AnimatedChipPressable
+                  onPress={() => {
+                    void openLink(item.externalUrl ?? "");
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 items-center"
+                >
+                  <Text className="text-emerald-500 text-sm">
+                    {t("resources.actionOpen")}
+                  </Text>
+                </AnimatedChipPressable>
+              ) : (
+                options?.showCompletionToggle !== false && !stackOpportunityActions ? (
+                  <View className="flex-1" />
+                ) : null
+              )}
+
+              {options?.showCompletionToggle !== false ? (
+                <TouchIconButton
+                  onPress={() => {
+                    void setOpportunityDone(item.opportunityId, !item.isDone);
+                  }}
+                  accessibilityLabel={`${item.isDone ? t("resources.actionUndo") : t("resources.actionMarkDone")}: ${item.title}`}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: item.isDone }}
+                  className={`w-12 h-12 rounded-xl border items-center justify-center ${
+                    item.isDone
+                      ? "bg-emerald-500 border-emerald-500"
+                      : "bg-emerald-500/10 border-emerald-500/30"
+                  }`}
+                >
+                  <MaterialIcons
+                    name={item.isDone ? "check-box" : "check-box-outline-blank"}
+                    size={22}
+                    color={item.isDone ? "#FFFFFF" : "#008f4e"}
+                  />
+                </TouchIconButton>
+              ) : null}
+            </View>
+          ) : null}
         </View>
       </View>
     ));
@@ -317,6 +334,7 @@ export default function ResourcesPage() {
           <View className={`border-t ${borderClass}`}>
             {renderOpportunityItems(subsection.items, `${section.key}-${subsection.key}`, {
               inset: true,
+              showCompletionToggle: section.key !== "deadlines",
             })}
           </View>
         ) : null}
@@ -352,7 +370,9 @@ export default function ResourcesPage() {
 
         {expanded ? (
           <View className={`border-t ${borderClass}`}>
-            {renderOpportunityItems(section.items, section.key)}
+            {renderOpportunityItems(section.items, section.key, {
+              showCompletionToggle: section.key !== "deadlines",
+            })}
             {section.subsections.map((subsection, index) =>
               renderOpportunitySubsection(section, subsection, index)
             )}

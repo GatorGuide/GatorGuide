@@ -1,6 +1,6 @@
 /**
  * P18 calendar helper: offline Living Plan → Deadline Calendar entries.
- * Keeps controller thin; Firestore/roadmap not required when plannerV2 is present.
+ * Keeps controller thin; the local plannerV2 snapshot is sufficient for timeline entries.
  */
 
 import type { DeadlineCalendarEntry } from "@/services/deadlines/deadline-calendar.service";

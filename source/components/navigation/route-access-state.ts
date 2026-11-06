@@ -23,7 +23,7 @@ export function resolveRouteAccessRedirect({
   requireUser = true,
   allowGuest = true,
   unauthenticatedRedirect = ROUTES.login,
-  guestRedirect = ROUTES.tabs,
+  guestRedirect = ROUTES.tabsResources,
   resolveRedirect,
 }: RouteAccessRedirectOptions): Href | null {
   if (!isHydrated) return null;

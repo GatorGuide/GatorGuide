@@ -55,7 +55,7 @@ GEMINI_GUEST_DAILY_UNITS_LIMIT=12
 
 ### Step 4: Test Gradually
 
-- verify Firebase auth and Firestore first
+- verify Firebase Auth for sign-in flows; private app state persists locally
 - then verify College Scorecard-backed requests
 - then verify Gemini and Functions
 - use cached/fallback behavior only as a safety net, not as the primary setup plan

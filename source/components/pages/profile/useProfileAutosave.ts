@@ -80,8 +80,8 @@ export function useProfileAutosave({
           }
         } catch (error) {
           void errorLoggingService.captureException(error, {
-            category: "firestore",
-            operation: "auto-save-profile-edit",
+            category: "storage",
+            operation: "auto-save-profile-edit-locally",
             severity: "error",
             handled: true,
             source: "profile-page",

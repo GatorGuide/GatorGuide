@@ -2,7 +2,7 @@ import { Redirect, type Href } from "expo-router";
 
 import { ROUTES } from "@/constants/routes";
 
-/** P15-B: Home tab removed — land on Transfer Planner. */
+/** Previous-version Home route — send visitors to the Resources landing page. */
 export default function TabHomeRedirect() {
-  return <Redirect href={ROUTES.transferPlanner as Href} />;
+  return <Redirect href={ROUTES.tabsResources as Href} />;
 }

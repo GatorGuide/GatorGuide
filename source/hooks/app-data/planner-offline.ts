@@ -1,6 +1,6 @@
 /**
  * P18 soft path: derive offline timeline from persisted plannerV2.
- * Local AppData is enough — Firestore sync is not a read prerequisite.
+ * Local AppData is the source of truth; planner projection does not require a remote database.
  */
 
 import type { PlannerV2State } from "./planner-state-v2";
@@ -43,7 +43,7 @@ export function seedPlannerLocalRepositoryFromAppData(
 
 /**
  * Build Living Plan quarters from local plannerV2 and project an offline timeline.
- * No network / Firestore call.
+ * No network or remote database call.
  */
 export function projectOfflineTimelineFromPlannerV2(
   plannerV2: PlannerV2State | null | undefined,

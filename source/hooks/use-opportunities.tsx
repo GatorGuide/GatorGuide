@@ -82,7 +82,6 @@ export function OpportunitiesProvider({ children }: { children: React.ReactNode 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [statusById, setStatusById] = useState<Record<string, UserOpportunityStatus>>({});
-  const seedAttemptedRef = useRef(false);
   const deadlineEnsureInFlightRef = useRef<Set<string>>(new Set());
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
   const lastCatalogSyncAtRef = useRef(0);
@@ -92,7 +91,6 @@ export function OpportunitiesProvider({ children }: { children: React.ReactNode 
   const userKey = signedInUid ?? opportunityStatusService.getGuestUserKey();
 
   useEffect(() => {
-    seedAttemptedRef.current = false;
     deadlineEnsureInFlightRef.current.clear();
   }, [signedInUid]);
 
@@ -137,16 +135,13 @@ export function OpportunitiesProvider({ children }: { children: React.ReactNode 
       const guestStatuses = await opportunityStatusService.readLocalStatuses(
         opportunityStatusService.getGuestUserKey()
       );
-      const synced = await opportunityStatusService.syncStatuses(
+      const merged = await opportunityStatusService.mergeLocalStatuses(
         signedInUid,
         localStatuses,
-        {
-          userKey: signedInUid,
-          promoteStatuses: guestStatuses,
-        }
+        { promoteStatuses: guestStatuses }
       );
-      setStatusById(synced.statuses);
-      await opportunityStatusService.writeLocalStatuses(signedInUid, synced.statuses);
+      setStatusById(merged.statuses);
+      await opportunityStatusService.writeLocalStatuses(signedInUid, merged.statuses);
 
       if (hasStatuses(guestStatuses)) {
         await opportunityStatusService.clearLocalStatuses(
@@ -180,29 +175,6 @@ export function OpportunitiesProvider({ children }: { children: React.ReactNode 
       setIsRefreshing(true);
       try {
         let refreshed = await opportunitiesService.refreshCatalog();
-
-        if (
-          signedInUid &&
-          !seedAttemptedRef.current &&
-          !opportunitiesService.findOpportunityById(
-            refreshed.opportunities,
-            "green-river-foundation-scholarship"
-          )
-        ) {
-          seedAttemptedRef.current = true;
-          try {
-            const seeded = await opportunitiesService.ensureGreenRiverFoundationScholarshipSeeded();
-            if (seeded) refreshed = seeded;
-          } catch (error) {
-            void errorLoggingService.captureException(error, {
-              category: "sync",
-              operation: "seed-green-river-foundation-scholarship",
-              severity: "warn",
-              handled: true,
-              source: "use-opportunities",
-            });
-          }
-        }
 
         setOpportunities(opportunitiesService.filterActiveCatalog(refreshed.opportunities));
         recordCatalogSyncTime(refreshed.fetchedAt);
@@ -365,29 +337,6 @@ export function OpportunitiesProvider({ children }: { children: React.ReactNode 
       setStatusById(nextStatuses);
       await opportunityStatusService.writeLocalStatuses(userKey, nextStatuses);
 
-      if (!signedInUid) return;
-
-      try {
-        await opportunityStatusService.saveRemoteStatus(signedInUid, nextStatus);
-        await opportunityStatusService.clearPendingMutation(
-          signedInUid,
-          opportunityId
-        );
-      } catch (error) {
-        await opportunityStatusService.queueStatusMutation(signedInUid, nextStatus);
-        void errorLoggingService.captureException(error, {
-          category: "sync",
-          operation: "persist-opportunity-status",
-          severity: "warn",
-          handled: true,
-          source: "use-opportunities",
-          metadata: {
-            opportunityId,
-            signedInUid,
-            progress,
-          },
-        });
-      }
     },
     [opportunities, signedInUid, statusById, userKey]
   );

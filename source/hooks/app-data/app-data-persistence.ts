@@ -1,7 +1,7 @@
 /**
  * Local AppData envelope (AsyncStorage / localStorage).
- * P18: persisted plannerV2 is offline-readable; Firestore sync is not a
- * prerequisite for Living Plan / calendar timeline projection.
+ * Persisted plannerV2 is offline-readable and is the local source of truth for
+ * Living Plan / calendar timeline projection.
  */
 import { APP_DATA_SCHEMA_VERSION } from "@/constants/schema";
 import type { College } from "@/services/colleges/college.service";

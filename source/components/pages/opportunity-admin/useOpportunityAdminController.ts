@@ -2,10 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert } from "react-native";
 
 import { STARTER_OPPORTUNITIES } from "@/constants/starter-opportunities";
-import {
-  OPPORTUNITY_STATUSES,
-  type Opportunity,
-} from "@/constants/opportunities";
+import { OPPORTUNITY_STATUSES, normalizeOpportunity, type Opportunity } from "@/constants/opportunities";
 import { useAppData } from "@/hooks/use-app-data";
 import { useOpportunities } from "@/hooks/use-opportunities";
 import {
@@ -18,6 +15,7 @@ import { saveTextFileForUser } from "@/services/storage/file-system-adapter.serv
 import {
   buildDraftFromOpportunity,
   buildSaveInput,
+  getPublishableOpportunityCatalog,
   createBlankDraft,
   validateOpportunityAdminDraft,
   type OpportunityAdminDraft,
@@ -29,36 +27,40 @@ export function useOpportunityAdminController() {
   const [query, setQuery] = useState("");
   const [selectedOpportunityId, setSelectedOpportunityId] = useState<string | null>(null);
   const [draft, setDraft] = useState<OpportunityAdminDraft>(() => createBlankDraft());
+  const [catalogDraft, setCatalogDraft] = useState<Opportunity[] | null>(null);
   const [access, setAccess] = useState<OpportunityAdminAccessResponse | null>(null);
   const [isCheckingAccess, setIsCheckingAccess] = useState(false);
   const [accessError, setAccessError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
+  const [isExportingCatalog, setIsExportingCatalog] = useState(false);
+  const [catalogExportMessage, setCatalogExportMessage] = useState("");
   const [isExportingScholarships, setIsExportingScholarships] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
 
+  const currentCatalog = catalogDraft ?? opportunities;
   const starterIds = useMemo(
     () => new Set(STARTER_OPPORTUNITIES.map((item) => item.opportunityId)),
     []
   );
   const signedInUser = state.user && !state.user.isGuest ? state.user : null;
   const scholarshipExportPreview = useMemo(
-    () => buildScholarshipExportFile([...STARTER_OPPORTUNITIES, ...opportunities]),
-    [opportunities]
+    () => buildScholarshipExportFile(currentCatalog),
+    [currentCatalog]
   );
 
   const selectedOpportunity = useMemo(
     () =>
       selectedOpportunityId
-        ? opportunities.find((item) => item.opportunityId === selectedOpportunityId) ?? null
+        ? currentCatalog.find((item) => item.opportunityId === selectedOpportunityId) ?? null
         : null,
-    [opportunities, selectedOpportunityId]
+    [currentCatalog, selectedOpportunityId]
   );
 
   const filteredOpportunities = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) return opportunities;
-    return opportunities.filter((opportunity) =>
+    if (!normalizedQuery) return currentCatalog;
+    return currentCatalog.filter((opportunity) =>
       [
         opportunity.title,
         opportunity.organizationName,
@@ -71,12 +73,16 @@ export function useOpportunityAdminController() {
         .toLowerCase()
         .includes(normalizedQuery)
     );
-  }, [opportunities, query]);
+  }, [currentCatalog, query]);
 
   const canDeleteSelected =
     !!selectedOpportunity &&
     selectedOpportunity.source.kind === "manual" &&
     !starterIds.has(selectedOpportunity.opportunityId);
+
+  const updateCatalog = useCallback((mutate: (items: Opportunity[]) => Opportunity[]) => {
+    setCatalogDraft((current) => mutate(current ?? opportunities));
+  }, [opportunities]);
 
   const loadAccess = useCallback(async () => {
     if (!signedInUser) {
@@ -89,14 +95,11 @@ export function useOpportunityAdminController() {
     setIsCheckingAccess(true);
     setAccessError("");
     try {
-      const result = await opportunityGatewayService.getOpportunityAdminAccess();
-      setAccess(result);
+      setAccess(await opportunityGatewayService.getOpportunityAdminAccess());
     } catch (error) {
       setAccess(null);
       setAccessError(
-        error instanceof OpportunityGatewayError
-          ? error.message
-          : "Could not verify admin access."
+        error instanceof OpportunityGatewayError ? error.message : "Could not verify admin access."
       );
     } finally {
       setIsCheckingAccess(false);
@@ -129,129 +132,103 @@ export function useOpportunityAdminController() {
     setIsSaving(true);
     setSaveMessage("");
     try {
-      const response = await opportunityGatewayService.upsertManualOpportunity(
-        buildSaveInput(draft)
+      const response = await opportunityGatewayService.normalizeManualOpportunity(
+        buildSaveInput(draft, selectedOpportunity)
       );
-      await refreshOpportunities();
-      setSelectedOpportunityId(response.opportunityId);
-      setDraft((current) => ({
-        ...current,
-        opportunityId: response.opportunityId,
-      }));
-      setSaveMessage(
-        response.created
-          ? "Opportunity created and added to the Firebase catalog."
-          : "Opportunity updated in the Firebase catalog."
-      );
+      const normalized = normalizeOpportunity(response.opportunity);
+      if (!normalized.opportunityId) throw new Error("Opportunity response did not include a valid ID.");
+
+      updateCatalog((items) => [
+        ...items.filter((item) => item.opportunityId !== normalized.opportunityId),
+        normalized,
+      ]);
+      setSelectedOpportunityId(normalized.opportunityId);
+      setDraft(buildDraftFromOpportunity(normalized));
+      setSaveMessage("Saved to a local catalog draft. Export the GitHub JSON and commit it to publish changes.");
     } catch (error) {
       setSaveMessage(
         error instanceof OpportunityGatewayError
           ? error.message
-          : "Opportunity save failed."
+          : error instanceof Error ? error.message : "Opportunity draft save failed."
       );
     } finally {
       setIsSaving(false);
     }
-  }, [draft, refreshOpportunities]);
+  }, [draft, selectedOpportunity, updateCatalog]);
 
-  const handleArchive = useCallback(
-    async (archived: boolean) => {
-      if (!selectedOpportunityId) return;
+  const handleArchive = useCallback((archived: boolean) => {
+    if (!selectedOpportunityId) return;
+    const now = new Date().toISOString();
+    const status = archived ? OPPORTUNITY_STATUSES.archived : OPPORTUNITY_STATUSES.active;
+    updateCatalog((items) => items.map((item) => item.opportunityId === selectedOpportunityId
+      ? { ...item, status, updatedAt: now, source: { ...item.source, verifiedAt: now } }
+      : item
+    ));
+    setDraft((current) => ({ ...current, status }));
+    setSaveMessage("Catalog draft updated locally. Export the GitHub JSON and commit it to publish changes.");
+  }, [selectedOpportunityId, updateCatalog]);
 
-      setIsSaving(true);
-      setSaveMessage("");
-      try {
-        await opportunityGatewayService.archiveOpportunity(
-          selectedOpportunityId,
-          archived
-        );
-        await refreshOpportunities();
-        setDraft((current) => ({
-          ...current,
-          status: archived ? OPPORTUNITY_STATUSES.archived : OPPORTUNITY_STATUSES.active,
-        }));
-        setSaveMessage(
-          archived
-            ? "Opportunity archived from the live catalog."
-            : "Opportunity restored to the live catalog."
-        );
-      } catch (error) {
-        setSaveMessage(
-          error instanceof OpportunityGatewayError
-            ? error.message
-            : "Could not update archive status."
-        );
-      } finally {
-        setIsSaving(false);
-      }
-    },
-    [refreshOpportunities, selectedOpportunityId]
-  );
-
-  const handleDelete = useCallback(async () => {
+  const handleDelete = useCallback(() => {
     if (!selectedOpportunityId || !canDeleteSelected) return;
+    updateCatalog((items) => items.filter((item) => item.opportunityId !== selectedOpportunityId));
+    setSelectedOpportunityId(null);
+    setDraft(createBlankDraft());
+    setSaveMessage("Manual opportunity removed from the local draft. Export the GitHub JSON to publish the deletion.");
+  }, [canDeleteSelected, selectedOpportunityId, updateCatalog]);
 
-    setIsSaving(true);
-    setSaveMessage("");
+  const handleExportCatalog = useCallback(async () => {
+    setIsExportingCatalog(true);
+    setCatalogExportMessage("");
     try {
-      await opportunityGatewayService.deleteOpportunity(selectedOpportunityId);
-      await refreshOpportunities();
-      setSelectedOpportunityId(null);
-      setDraft(createBlankDraft());
-      setSaveMessage("Manual opportunity deleted from Firebase.");
+      const fileName = "starter-opportunities.json";
+      const publishableCatalog = getPublishableOpportunityCatalog(currentCatalog);
+      const content = `${JSON.stringify(publishableCatalog, null, 2)}\n`;
+      const savedFile = await saveTextFileForUser({
+        fileName,
+        content,
+        mimeType: "application/json;charset=utf-8",
+      });
+      if (savedFile.delivery === "filesystem") {
+        Alert.alert("Catalog export ready", `${fileName} was saved to app documents.`);
+      }
+      setCatalogExportMessage(`Exported ${publishableCatalog.length} reviewed opportunities. AI-generated deadlines are excluded until reviewed and saved as manual records. Replace source/data/${fileName} and commit to publish.`);
     } catch (error) {
-      setSaveMessage(
-        error instanceof OpportunityGatewayError
-          ? error.message
-          : "Could not delete opportunity."
-      );
+      const message = error instanceof Error ? error.message : "Could not export the catalog JSON.";
+      setCatalogExportMessage(message);
+      Alert.alert("Catalog export failed", message);
     } finally {
-      setIsSaving(false);
+      setIsExportingCatalog(false);
     }
-  }, [canDeleteSelected, refreshOpportunities, selectedOpportunityId]);
+  }, [currentCatalog]);
 
   const handleExportScholarships = useCallback(async () => {
-    const exportFile = buildScholarshipExportFile([
-      ...STARTER_OPPORTUNITIES,
-      ...opportunities,
-    ]);
-
-    if (!exportFile.scholarshipCount) {
+    if (!scholarshipExportPreview.scholarshipCount) {
       Alert.alert("No scholarships found", "There are no scholarship records to export yet.");
       return;
     }
 
     setIsExportingScholarships(true);
     setExportMessage("");
-
     try {
       const savedFile = await saveTextFileForUser({
-        fileName: exportFile.fileName,
-        content: exportFile.content,
+        fileName: scholarshipExportPreview.fileName,
+        content: scholarshipExportPreview.content,
         mimeType: "text/tab-separated-values;charset=utf-8",
       });
-
       if (savedFile.delivery === "filesystem") {
-        Alert.alert(
-          "Scholarship export ready",
-          `${exportFile.fileName} was saved to app documents.`
-        );
+        Alert.alert("Scholarship export ready", `${scholarshipExportPreview.fileName} was saved to app documents.`);
       }
-
       setExportMessage(
-        `Exported ${exportFile.scholarshipCount} scholarships (${exportFile.legacyCount} legacy).`
+        `Exported ${scholarshipExportPreview.scholarshipCount} scholarships (${scholarshipExportPreview.legacyCount} legacy).`
       );
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Could not create the scholarship export.";
+      const message = error instanceof Error ? error.message : "Could not create the scholarship export.";
       setExportMessage(message);
       Alert.alert("Scholarship export failed", message);
     } finally {
       setIsExportingScholarships(false);
     }
-  }, [opportunities]);
+  }, [scholarshipExportPreview]);
 
   const updateDraft = useCallback(
     <K extends keyof OpportunityAdminDraft>(key: K, value: OpportunityAdminDraft[K]) => {
@@ -264,21 +241,24 @@ export function useOpportunityAdminController() {
     access,
     accessError,
     canDeleteSelected,
+    catalogExportMessage,
     draft,
     exportMessage,
     filteredOpportunities,
     handleArchive,
     handleCreateNew,
     handleDelete,
+    handleExportCatalog,
     handleExportScholarships,
     handleSave,
     handleSelectOpportunity,
     isCheckingAccess,
+    isExportingCatalog,
     isExportingScholarships,
     isRefreshing,
     isSaving,
     loadAccess,
-    opportunities,
+    opportunities: currentCatalog,
     query,
     refreshOpportunities,
     saveMessage,

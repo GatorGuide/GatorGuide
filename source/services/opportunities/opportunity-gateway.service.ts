@@ -1,4 +1,5 @@
 import { httpsCallable } from "firebase/functions";
+import type { Opportunity } from "@/constants/opportunities";
 import { API_CONFIG } from "@/services/app/config";
 import { errorLoggingService } from "@/services/logging/error-logging.service";
 import { functionsClient } from "@/services/firebase/firebase";
@@ -17,18 +18,14 @@ export type OpportunityAdminAccessResponse = OpportunityGatewayBaseResponse & {
   allowedUidsConfigured: boolean;
 };
 
-type SeedGreenRiverResponse = OpportunityGatewayBaseResponse & {
-  seeded: boolean;
-  opportunityId: string;
-};
-
-type UpsertCollegeDeadlineResponse = OpportunityGatewayBaseResponse & {
+type GeneratedCollegeDeadlineResponse = OpportunityGatewayBaseResponse & {
   opportunityId: string;
   deadlineSourceUrl: string | null;
   deadlineDueAt: string | null;
+  opportunity: Opportunity;
 };
 
-export type UpsertManualOpportunityInput = {
+export type NormalizeManualOpportunityInput = {
   opportunityId?: string | null;
   type: string;
   status: string;
@@ -62,22 +59,14 @@ export type UpsertManualOpportunityInput = {
   collegeWebsite?: string | null;
   sourceUrl?: string | null;
   sourceLabel?: string | null;
+  existingOpportunity?: Opportunity | null;
 };
 
-export type UpsertManualOpportunityResponse = OpportunityGatewayBaseResponse & {
+export type NormalizeManualOpportunityResponse = OpportunityGatewayBaseResponse & {
   opportunityId: string;
   created: boolean;
   status: string;
-};
-
-export type ArchiveOpportunityResponse = OpportunityGatewayBaseResponse & {
-  opportunityId: string;
-  status: string;
-};
-
-export type DeleteOpportunityResponse = OpportunityGatewayBaseResponse & {
-  opportunityId: string;
-  deleted: boolean;
+  opportunity: Opportunity;
 };
 
 export class OpportunityGatewayError extends Error {
@@ -157,50 +146,29 @@ class OpportunityGatewayService {
     }
   }
 
-  async seedGreenRiverFoundationScholarship() {
-    return this.callGateway<SeedGreenRiverResponse>({
-      action: "seedGreenRiverFoundationScholarship",
-    });
-  }
-
   async getOpportunityAdminAccess() {
     return this.callGateway<OpportunityAdminAccessResponse>({
       action: "getOpportunityAdminAccess",
     });
   }
 
-  async upsertCollegeDeadlineOpportunity(input: {
+  async generateCollegeDeadlineOpportunity(input: {
     collegeId?: string | null;
     collegeName?: string | null;
     collegeWebsite?: string | null;
   }) {
-    return this.callGateway<UpsertCollegeDeadlineResponse>({
-      action: "upsertCollegeDeadlineOpportunity",
+    return this.callGateway<GeneratedCollegeDeadlineResponse>({
+      action: "generateCollegeDeadlineOpportunity",
       collegeId: input.collegeId ?? null,
       collegeName: input.collegeName ?? null,
       collegeWebsite: input.collegeWebsite ?? null,
     });
   }
 
-  async upsertManualOpportunity(input: UpsertManualOpportunityInput) {
-    return this.callGateway<UpsertManualOpportunityResponse>({
-      action: "upsertManualOpportunity",
+  async normalizeManualOpportunity(input: NormalizeManualOpportunityInput) {
+    return this.callGateway<NormalizeManualOpportunityResponse>({
+      action: "normalizeManualOpportunity",
       ...input,
-    });
-  }
-
-  async archiveOpportunity(opportunityId: string, archived: boolean = true) {
-    return this.callGateway<ArchiveOpportunityResponse>({
-      action: "archiveOpportunity",
-      opportunityId,
-      archived,
-    });
-  }
-
-  async deleteOpportunity(opportunityId: string) {
-    return this.callGateway<DeleteOpportunityResponse>({
-      action: "deleteOpportunity",
-      opportunityId,
     });
   }
 }

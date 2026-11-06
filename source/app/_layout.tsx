@@ -18,7 +18,6 @@ import { cacheManagerService } from "@/services/storage/cache-manager.service";
 import { translations } from "@/services/app/translations";
 import { AnimatedChipPressable, AnimatedIconPressable } from "@/components/ui/AnimatedPressables";
 import { AppStartupScreen } from "@/components/AppStartupScreen";
-import { VercelAnalytics } from "@/components/VercelAnalytics";
 
 const HAS_SEEN_STARTUP_KEY = STORAGE_KEYS.hasSeenStartup;
 
@@ -249,7 +248,6 @@ function RootLayoutContent() {
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         </Stack>
         {DevModeComponent ? <DevModeComponent /> : null}
-        <VercelAnalytics />
       </OpportunitiesProvider>
     </AppDataProvider>
   );

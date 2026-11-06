@@ -2,8 +2,8 @@
  * P18 local-first planner state repository (TS port of pipeline/offline/local-first.cjs).
  *
  * AppData / AsyncStorage / localStorage holds plannerV2 as the offline source of truth.
- * Firestore (and any remote merge) is sync-only — not a read prerequisite for Living Plan
- * timeline projection or calendar offline entries.
+ * Remote database synchronization is intentionally absent; local state is the source of truth
+ * for Living Plan timeline projection and calendar offline entries.
  */
 
 import type { PlannerV2State } from "@/hooks/app-data/planner-state-v2";

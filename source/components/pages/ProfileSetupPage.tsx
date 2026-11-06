@@ -5,11 +5,8 @@ import { MaterialIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useAudioPlayer } from "expo-audio";
 import ConfettiCannon from "react-native-confetti-cannon";
-import { deleteField, doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ROUTES } from "@/constants/routes";
-import { FIRESTORE_COLLECTIONS } from "@/constants/schema";
-import { db } from "@/services/firebase/firebase";
 import { ScreenBackground } from "@/components/layouts/ScreenBackground";
 import { useAppData } from "@/hooks/use-app-data";
 import { useAppLanguage } from "@/hooks/use-app-language";
@@ -41,7 +38,7 @@ import { errorLoggingService } from "@/services/logging/error-logging.service";
 
 export default function ProfileSetupPage() {
   const router = useRouter();
-  const back = useBack(ROUTES.tabs);
+  const back = useBack(ROUTES.tabsResources);
   const { updateUser, setQuestionnaireAnswers, state } = useAppData();
   const { t } = useAppLanguage();
   const styles = useThemeStyles();
@@ -259,24 +256,6 @@ export default function ProfileSetupPage() {
         isProfileComplete: true,
       };
 
-      if (db) {
-        const userDocRef = doc(db, FIRESTORE_COLLECTIONS.users, userId);
-        await setDoc(
-          userDocRef,
-          {
-            major,
-            gpa: sanitizedGpa || "",
-            resume: "",
-            isProfileComplete: true,
-            transcript: deleteField(),
-            resumeFileName: "",
-            transcriptFileName: deleteField(),
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
-      }
-
       await updateUser(flatData);
       // reflect sanitized GPA locally for consistent display
       setGpa(sanitizedGpa);
@@ -306,11 +285,11 @@ export default function ProfileSetupPage() {
       }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.replace(ROUTES.tabs);
+      router.replace(ROUTES.tabsResources);
     } catch (error) {
       void errorLoggingService.captureException(error, {
-        category: "firestore",
-        operation: "complete-profile-setup",
+        category: "storage",
+        operation: "complete-profile-setup-locally",
         severity: "error",
         handled: true,
         source: "profile-setup-page",

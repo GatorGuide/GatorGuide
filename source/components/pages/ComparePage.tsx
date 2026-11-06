@@ -346,7 +346,7 @@ export default function ComparePage() {
               <Text className={`${textClass} text-center font-medium mb-2`}>{t("tools.saveCollegesFirst")}</Text>
               <Text className={`${secondaryTextClass} text-center text-sm`}>{t("tools.saveCollegesFirstHint")}</Text>
               <AnimatedChipPressable
-                onPress={() => router.push(ROUTES.tabs)}
+                onPress={() => router.push(ROUTES.tabsResources)}
                 className="mt-4 self-center flex-row items-center rounded-xl bg-emerald-500 px-4 py-3"
               >
                 <MaterialIcons name="search" size={18} color="#FFFFFF" />

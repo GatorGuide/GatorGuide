@@ -55,16 +55,19 @@ export default function OpportunityAdminPage() {
     access,
     accessError,
     canDeleteSelected,
+    catalogExportMessage,
     draft,
     exportMessage,
     filteredOpportunities,
     handleArchive,
     handleCreateNew,
     handleDelete,
+    handleExportCatalog,
     handleExportScholarships,
     handleSave,
     handleSelectOpportunity,
     isCheckingAccess,
+    isExportingCatalog,
     isExportingScholarships,
     isRefreshing,
     isSaving,
@@ -192,7 +195,7 @@ export default function OpportunityAdminPage() {
             ) : null}
             <Text className={`${textClass} text-3xl font-bold`}>Opportunity Admin</Text>
             <Text className={`${secondaryTextClass} mt-2`}>
-              Add, edit, archive, and review opportunity records from the app instead of touching source files.
+              Prepare opportunity catalog changes locally, export the GitHub JSON, and publish through the repository.
             </Text>
           </View>
 
@@ -265,8 +268,11 @@ export default function OpportunityAdminPage() {
                       Editor access active
                     </Text>
                     <Text className={`${secondaryTextClass} mt-2 leading-6`}>
-                      Signed in as {access.email ?? signedInUser.email}. Manual saves write to Firebase and appear in the shared catalog after refresh.
+                      Signed in as {access.email ?? signedInUser.email}. Changes stay on this device until the JSON catalog is reviewed and committed to GitHub.
                     </Text>
+                    {catalogExportMessage ? (
+                      <Text className={`${secondaryTextClass} mt-3`}>{catalogExportMessage}</Text>
+                    ) : null}
                   </View>
                   <View
                     style={{
@@ -282,6 +288,19 @@ export default function OpportunityAdminPage() {
                       style={phoneChipStyle}
                     >
                       <Text className={`${textClass} font-semibold`}>New blank</Text>
+                    </AnimatedChipPressable>
+                    <AnimatedChipPressable
+                      onPress={() => {
+                        void handleExportCatalog();
+                      }}
+                      className="px-4 py-3 rounded-2xl bg-sky-600"
+                      containerStyle={phoneChipContainerStyle}
+                      style={phoneChipStyle}
+                      disabled={isExportingCatalog}
+                    >
+                      <Text className="text-white font-semibold">
+                        {isExportingCatalog ? "Exporting JSON..." : "Export GitHub JSON"}
+                      </Text>
                     </AnimatedChipPressable>
                     <AnimatedChipPressable
                       onPress={() => {
@@ -775,7 +794,7 @@ export default function OpportunityAdminPage() {
                           Save actions
                         </Text>
                         <Text className={`${secondaryTextClass} mt-2 leading-6`}>
-                          Save writes to Firebase immediately, then refreshes the shared catalog on this device.
+                          Save validates and updates a local draft only. Export the full JSON catalog, review it, then commit it to publish changes.
                         </Text>
                         {saveMessage ? (
                           <Text className={`${secondaryTextClass} mt-3`}>
@@ -800,7 +819,7 @@ export default function OpportunityAdminPage() {
                           disabled={isSaving}
                         >
                           <Text className="text-white font-semibold">
-                            {isSaving ? "Saving..." : selectedOpportunityId ? "Save changes" : "Create opportunity"}
+                            {isSaving ? "Validating..." : selectedOpportunityId ? "Save draft" : "Create draft"}
                           </Text>
                         </AnimatedChipPressable>
                         {selectedOpportunityId ? (
@@ -814,7 +833,7 @@ export default function OpportunityAdminPage() {
                             disabled={isSaving}
                           >
                             <Text className={`${textClass} font-semibold`}>
-                              {draft.status === OPPORTUNITY_STATUSES.archived ? "Restore" : "Archive"}
+                              {draft.status === OPPORTUNITY_STATUSES.archived ? "Restore draft" : "Archive draft"}
                             </Text>
                           </AnimatedChipPressable>
                         ) : null}
@@ -828,7 +847,7 @@ export default function OpportunityAdminPage() {
                             style={phoneChipStyle}
                             disabled={isSaving}
                           >
-                            <Text className="text-red-500 font-semibold">Delete</Text>
+                            <Text className="text-red-500 font-semibold">Remove from draft</Text>
                           </AnimatedChipPressable>
                         ) : null}
                       </View>

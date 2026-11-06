@@ -12,14 +12,11 @@ import {
   OAuthProvider,
   User as FirebaseUser,
 } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
 import { Platform } from "react-native";
-import { FIRESTORE_COLLECTIONS } from "@/constants/schema";
-import { DEFAULT_USER_STATE } from "@/constants/profile-defaults";
 import { isStubMode } from "@/services/app/config";
 import { errorLoggingService } from "@/services/logging/error-logging.service";
-import { db, firebaseAuth } from "@/services/firebase/firebase";
-import { deleteAllUserData } from "./userData.service";
+import { firebaseAuth } from "@/services/firebase/firebase";
+import { deleteAllUserStorageFiles } from "./userData.service";
 
 function firebaseUserToAuthUser(u: FirebaseUser): AuthUser {
   return {
@@ -68,30 +65,6 @@ class AuthService {
 
       if (credentials.name?.trim()) {
         await updateProfile(userCredential.user, { displayName: credentials.name.trim() });
-      }
-
-      if (db) {
-        await setDoc(
-          doc(db, FIRESTORE_COLLECTIONS.users, userCredential.user.uid),
-          {
-            hasSeenOnboarding: false,
-            email: userCredential.user.email ?? credentials.email,
-            name: credentials.name?.trim() || userCredential.user.displayName || "",
-            state: DEFAULT_USER_STATE,
-          },
-          { merge: true }
-        ).catch((error) => {
-          void errorLoggingService.captureException(error, {
-            category: "firestore",
-            operation: "seed-user-doc-after-signup",
-            severity: "warn",
-            handled: true,
-            source: "auth.service",
-            metadata: {
-              uid: userCredential.user.uid,
-            },
-          });
-        });
       }
 
       return firebaseUserToAuthUser(userCredential.user);
@@ -209,7 +182,7 @@ class AuthService {
   }
 
   /**
-   * Delete account: remove all user data from Firestore + Storage, then delete Firebase Auth user.
+   * Delete the Firebase Auth account and its supported Firebase Storage uploads.
    */
   async deleteAccount(): Promise<void> {
     if (isStubMode()) return;
@@ -219,8 +192,8 @@ class AuthService {
     }
 
     const uid = firebaseAuth.currentUser.uid;
-    // Start cleanup, but don't let cleanup latency block account deletion.
-    const cleanupPromise = deleteAllUserData(uid).catch((error) => {
+    // Start cleanup, but don't let storage cleanup latency block account deletion.
+    const cleanupPromise = deleteAllUserStorageFiles(uid).catch((error) => {
       void errorLoggingService.captureException(error, {
         category: "sync",
         operation: "pre-delete-account-cleanup",

@@ -42,8 +42,8 @@ export default function Index() {
           `user=${state.user.uid} guest=${String(!!state.user.isGuest)} hasSeenOnboarding=${String(state.user.hasSeenOnboarding)} major=${String(!!state.user.major)} gpa=${String(!!state.user.gpa)}`
         );
         if (state.user.isGuest) {
-          await appendDebug(`route -> ${ROUTES.tabs} (guest)`);
-          router.replace(ROUTES.tabs);
+          await appendDebug(`route -> ${ROUTES.tabsResources} (guest)`);
+          router.replace(ROUTES.tabsResources);
           return;
         }
 
@@ -54,8 +54,8 @@ export default function Index() {
         );
 
         if (hasCompletedSetup) {
-          await appendDebug(`route -> ${ROUTES.tabs} (profile complete)`);
-          router.replace(ROUTES.tabs);
+          await appendDebug(`route -> ${ROUTES.tabsResources} (profile complete)`);
+          router.replace(ROUTES.tabsResources);
         } else {
           await appendDebug(`route -> ${ROUTES.profileSetup} (profile incomplete)`);
           router.replace(ROUTES.profileSetup);
@@ -63,8 +63,8 @@ export default function Index() {
       } else {
         await appendDebug("auto guest sign-in (no user)");
         await signInAsGuest();
-        await appendDebug(`route -> ${ROUTES.tabs} (auto guest)`);
-        setTimeout(() => router.replace(ROUTES.tabs), 50);
+        await appendDebug(`route -> ${ROUTES.tabsResources} (auto guest)`);
+        setTimeout(() => router.replace(ROUTES.tabsResources), 50);
       }
     };
 

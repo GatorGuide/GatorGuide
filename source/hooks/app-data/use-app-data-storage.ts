@@ -1,14 +1,10 @@
 import { localStorageService } from "@/services/storage/local-storage.service";
 import { useEffect, type Dispatch, type SetStateAction } from "react";
+import { STORAGE_KEYS } from "@/constants/schema";
+import { getUserAppDataStorageKey } from "@/services/storage/local-storage-contracts";
 import { errorLoggingService } from "@/services/logging/error-logging.service";
-import {
-  STORAGE_KEY,
-  type AppDataState,
-} from "./app-data-state";
-import {
-  parsePersistedAppDataState,
-  serializeAppDataState,
-} from "./app-data-persistence";
+import { STORAGE_KEY, type AppDataState } from "./app-data-state";
+import { parsePersistedAppDataState, serializeAppDataState } from "./app-data-persistence";
 
 type UseAppDataStorageArgs = {
   isHydrated: boolean;
@@ -17,22 +13,18 @@ type UseAppDataStorageArgs = {
   setState: Dispatch<SetStateAction<AppDataState>>;
 };
 
-export function useAppDataStorage({
-  isHydrated,
-  setIsHydrated,
-  state,
-  setState,
-}: UseAppDataStorageArgs) {
+export function useAppDataStorage({ isHydrated, setIsHydrated, state, setState }: UseAppDataStorageArgs) {
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
-        const raw = await localStorageService.getItem(STORAGE_KEY);
+        const activeUserId = await localStorageService.getItem(STORAGE_KEYS.appDataActiveUser);
+        const accountStorageKey = activeUserId ? getUserAppDataStorageKey(activeUserId) : null;
+        const raw =
+          (accountStorageKey ? await localStorageService.getItem(accountStorageKey) : null) ??
+          (await localStorageService.getItem(STORAGE_KEY));
         if (!mounted) return;
-        if (raw) {
-          const persisted = parsePersistedAppDataState(raw);
-          setState(persisted.state);
-        }
+        if (raw) setState(parsePersistedAppDataState(raw).state);
       } catch (error) {
         void errorLoggingService.captureException(error, {
           category: "storage",
@@ -40,9 +32,7 @@ export function useAppDataStorage({
           severity: "warn",
           handled: true,
           source: "use-app-data",
-          metadata: {
-            storageKey: STORAGE_KEY,
-          },
+          metadata: { storageKey: STORAGE_KEY },
         });
       } finally {
         if (mounted) setIsHydrated(true);
@@ -55,18 +45,28 @@ export function useAppDataStorage({
 
   useEffect(() => {
     if (!isHydrated) return;
-    localStorageService.setItem(STORAGE_KEY, serializeAppDataState(state)).catch((error) => {
-      void errorLoggingService.captureException(error, {
-        category: "storage",
-        operation: "persist-app-data",
-        severity: "warn",
-        handled: true,
-        source: "use-app-data",
-        metadata: {
-          storageKey: STORAGE_KEY,
-          hasUser: !!state.user,
-        },
-      });
-    });
+    const userId = state.user && !state.user.isGuest ? state.user.uid : null;
+    const storageKey = userId ? getUserAppDataStorageKey(userId) : STORAGE_KEY;
+
+    void (async () => {
+      try {
+        await localStorageService.setItem(storageKey, serializeAppDataState(state));
+        if (userId) {
+          await localStorageService.setItem(STORAGE_KEYS.appDataActiveUser, userId);
+          await localStorageService.removeItem(STORAGE_KEY);
+        } else {
+          await localStorageService.removeItem(STORAGE_KEYS.appDataActiveUser);
+        }
+      } catch (error) {
+        void errorLoggingService.captureException(error, {
+          category: "storage",
+          operation: "persist-app-data-locally",
+          severity: "warn",
+          handled: true,
+          source: "use-app-data",
+          metadata: { storageKey, hasUser: !!state.user },
+        });
+      }
+    })();
   }, [isHydrated, state]);
 }

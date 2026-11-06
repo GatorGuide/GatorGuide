@@ -1,9 +1,5 @@
 import { DEFAULT_USER_STATE } from "@/constants/profile-defaults";
-import {
-  FIRESTORE_SYNCABLE_PROFILE_FIELD_KEYS,
-  STORAGE_KEYS,
-  type FirestoreSyncableProfileFieldKey,
-} from "@/constants/schema";
+import { STORAGE_KEYS } from "@/constants/schema";
 import {
   type QuestionnaireAnswers,
 } from "@/services/app/questionnaire.enums";
@@ -150,18 +146,4 @@ export function normalizeAppDataState(data: Partial<AppDataState> & { savedColle
       existingLegacy,
     }),
   };
-}
-
-export function buildFirestoreUserPatch(patch: Partial<User>) {
-  const syncPatch: Partial<Record<FirestoreSyncableProfileFieldKey, unknown>> = {};
-
-  for (const key of FIRESTORE_SYNCABLE_PROFILE_FIELD_KEYS) {
-    if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
-    const value = patch[key];
-    if (value !== undefined) {
-      syncPatch[key] = value;
-    }
-  }
-
-  return syncPatch;
 }

@@ -1,10 +1,9 @@
 import { localStorageService } from "@/services/storage/local-storage.service";
 import Constants from "expo-constants";
 import { Platform } from "react-native";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
-import { FIRESTORE_COLLECTIONS, STORAGE_KEYS } from "@/constants/schema";
+import { STORAGE_KEYS } from "@/constants/schema";
 import { API_CONFIG } from "@/services/app/config";
-import { db, firebaseAuth } from "@/services/firebase/firebase";
+import { firebaseAuth } from "@/services/firebase/firebase";
 import { fetchWithHandling } from "@/services/network/fetch-with-handling";
 
 const LOG_QUEUE_KEY = STORAGE_KEYS.errorLogQueue;
@@ -19,15 +18,14 @@ type ErrorLogCategory =
   | "auth"
   | "upload"
   | "ai"
-  | "firestore"
   | "api"
   | "notifications"
   | "storage"
   | "sync";
 
 type ErrorLogAuthState = "signed_in" | "signed_out";
-type ErrorLogDestination = "firestore" | "webhook" | "queue" | "dropped";
-type TransportPreference = "firestore-first" | "webhook-first";
+type ErrorLogDestination = "webhook" | "queue" | "dropped";
+type TransportPreference = "webhook-first";
 
 export type ErrorLogContext = {
   category: ErrorLogCategory;
@@ -308,19 +306,6 @@ class ErrorLoggingService {
     }
   }
 
-  private async sendToFirestore(entry: ErrorLogEntry) {
-    const currentUser = firebaseAuth?.currentUser;
-    if (!db || !currentUser?.uid) return false;
-
-    await addDoc(collection(db, FIRESTORE_COLLECTIONS.supportErrorLogs), {
-      ...entry,
-      userId: currentUser.uid,
-      createdAt: serverTimestamp(),
-      loggerSource: "app-logger",
-    });
-    return true;
-  }
-
   private async sendToWebhook(entry: ErrorLogEntry) {
     const webhookUrl = API_CONFIG.logging.errorWebhookUrl;
     if (!webhookUrl) return false;
@@ -363,51 +348,28 @@ class ErrorLoggingService {
     return true;
   }
 
-  private async dispatchEntry(
-    entry: ErrorLogEntry,
-    transportPreference: TransportPreference
-  ): Promise<ErrorLogResult | null> {
-    const attempts =
-      transportPreference === "webhook-first"
-        ? [
-            { destination: "webhook" as const, fn: () => this.sendToWebhook(entry) },
-            { destination: "firestore" as const, fn: () => this.sendToFirestore(entry) },
-          ]
-        : [
-            { destination: "firestore" as const, fn: () => this.sendToFirestore(entry) },
-            { destination: "webhook" as const, fn: () => this.sendToWebhook(entry) },
-          ];
-
-    for (const attempt of attempts) {
-      try {
-        const sent = await attempt.fn();
-        if (sent) {
-          return {
-            status: "sent",
-            destination: attempt.destination,
-            entryId: entry.id,
-          };
-        }
-      } catch (transportError) {
-        this.writeConsole(
-          this.buildEntry(transportError, {
-            category: "app",
-            operation: "error-log-transport",
-            severity: "warn",
-            handled: true,
-            source: "error-logging.service",
-            metadata: {
-              destination: attempt.destination,
-              originalEntryId: entry.id,
-              originalCategory: entry.category,
-              originalOperation: entry.operation,
-            },
-          })
-        );
-      }
+  private async dispatchEntry(entry: ErrorLogEntry): Promise<ErrorLogResult | null> {
+    try {
+      if (!(await this.sendToWebhook(entry))) return null;
+      return { status: "sent", destination: "webhook", entryId: entry.id };
+    } catch (transportError) {
+      this.writeConsole(
+        this.buildEntry(transportError, {
+          category: "app",
+          operation: "error-log-transport",
+          severity: "warn",
+          handled: true,
+          source: "error-logging.service",
+          metadata: {
+            destination: "webhook",
+            originalEntryId: entry.id,
+            originalCategory: entry.category,
+            originalOperation: entry.operation,
+          },
+        })
+      );
+      return null;
     }
-
-    return null;
   }
 
   async captureException(
@@ -427,10 +389,7 @@ class ErrorLoggingService {
         };
       }
 
-      const dispatched = await this.dispatchEntry(
-        entry,
-        options.transportPreference ?? "firestore-first"
-      );
+      const dispatched = await this.dispatchEntry(entry);
       if (dispatched) return dispatched;
 
       if (options.allowQueue === false) {
@@ -470,10 +429,7 @@ class ErrorLoggingService {
         const remaining: ErrorLogEntry[] = [];
         let flushed = 0;
         for (const entry of queue) {
-          const dispatched = await this.dispatchEntry(
-            entry,
-            options.transportPreference ?? "firestore-first"
-          );
+          const dispatched = await this.dispatchEntry(entry);
           if (dispatched) {
             flushed += 1;
           } else {

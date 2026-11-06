@@ -58,7 +58,7 @@ test("P14 removal inventory report exists for deferred delete", () => {
     "Cost Calculator",
     "AI Stack",
     "Roadmap Generation",
-    "Vercel Analytics",
+    "Analytics",
   ]) {
     assert.ok(
       inventory.includes(requiredCategory) || readiness.includes(requiredCategory),

@@ -12,8 +12,7 @@ This folder holds the app source: pages, settings, translations, services, plann
 - `functions/`: Firebase Functions code related to the mobile app.
 - [`docs/product/OFFLINE_ONLINE_SYNC_SPEC.md`](docs/product/OFFLINE_ONLINE_SYNC_SPEC.md): current offline/online caching, sync, and conflict-resolution behavior.
 - [`docs/product/BRANDING_ASSET_PIPELINE.md`](docs/product/BRANDING_ASSET_PIPELINE.md): icon, splash, adaptive icon, and favicon source-of-truth pipeline.
-- [`docs/product/FIREBASE_CHAT_HISTORY_SCHEMA.md`](docs/product/FIREBASE_CHAT_HISTORY_SCHEMA.md): planned Firestore schema, ownership rules, and retention policy for assistant chat sessions/messages.
-- [`docs/product/OPPORTUNITY_ADMIN_TOOL.md`](docs/product/OPPORTUNITY_ADMIN_TOOL.md): staff editor flow for creating and managing shared opportunity records without code changes.
+- [`docs/product/OPPORTUNITY_ADMIN_TOOL.md`](docs/product/OPPORTUNITY_ADMIN_TOOL.md): staff editor flow for local drafts and GitHub JSON catalog publication.
 - [`docs/planner/UWS_DEGREE_COURSES.md`](docs/planner/UWS_DEGREE_COURSES.md): current Green River -> UW Seattle degree rows, Green River equivalent courses, and tracked requirement sequences.
 - [`docs/planner/UWB_DEGREE_COURSES.md`](docs/planner/UWB_DEGREE_COURSES.md): current Green River -> UW Bothell degree rows, Green River equivalent courses, and tracked requirement sequences.
 - [`docs/planner/UWT_DEGREE_COURSES.md`](docs/planner/UWT_DEGREE_COURSES.md): current Green River -> UW Tacoma degree rows, Green River equivalent courses, and tracked requirement sequences.
@@ -40,16 +39,7 @@ Notes:
 
 ### Web Deployment
 
-This app now deploys to Vercel from `source`:
-
-```bash
-vercel --prod
-```
-
-Notes:
-
-- [`vercel.json`](vercel.json) runs the Expo static web export and serves the built `dist` output.
-- The current production URL is <https://gator-guide.vercel.app>.
+GitHub Pages deploys the Expo static web export automatically from `main` using `.github/workflows/deploy-pages.yml`. The public site is <https://marsluay.github.io/GatorGuide/>. The workflow can also be started manually from the repository's Actions tab.
 
 ### Planner Maintenance
 

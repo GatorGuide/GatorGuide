@@ -47,6 +47,63 @@
     ]
   },
   {
+    "id": "ai-resources",
+    "title": "AI Resources",
+    "icon": "psychology",
+    "items": [
+      {
+        "title": "Google AI Pro Student Trial",
+        "description": "Eligible higher-education students in the U.S. can get Google AI Pro free for 12 months. Requires SheerID verification with a valid school email, a personal Google account, and a qualifying payment method.",
+        "url": "https://one.google.com/ai-student?plans=1%2C2",
+        "actionLabel": "Claim Google AI student offer",
+        "sourceLabel": "Google Help",
+        "sourceUrl": "https://gemini.google/students/",
+        "tags": [
+          "AI",
+          "Google AI Pro",
+          "student",
+          "higher education",
+          "SheerID",
+          "Google Help"
+        ]
+      },
+      {
+        "title": "OpenAI Codex for Students",
+        "description": "Eligible students at degree-granting institutions in the U.S. or Canada can claim $100 in Codex credits (2,500 ChatGPT credits) after SheerID verification. Credits expire after 12 months and are not API credits.",
+        "url": "https://chatgpt.com/codex/offers/students",
+        "actionLabel": "Claim Codex student credits",
+        "sourceLabel": "OpenAI Developers",
+        "sourceUrl": "https://chatgpt.com/codex/students/",
+        "tags": [
+          "AI",
+          "OpenAI",
+          "Codex",
+          "student",
+          "ChatGPT credits",
+          "SheerID"
+        ]
+      },
+      {
+        "title": "GitHub Copilot Student",
+        "description": "Free for verified GitHub Education students, including unlimited completions, GitHub AI Credits, and limited chat and agent usage.",
+        "url": "https://education.github.com/pack",
+        "actionLabel": "GitHub Student Developer Pack",
+        "sourceLabel": "GitHub Education",
+        "sourceUrl": "https://github.com/education/students",
+        "tags": [
+          "AI",
+          "GitHub Copilot",
+          "student",
+          "GitHub Education",
+          "Student Developer Pack",
+          "completions",
+          "AI Credits",
+          "agent"
+        ]
+      }
+    ]
+  },
+  {
     "id": "student-tools",
     "titleKey": "resources.studentTools",
     "icon": "account-circle",

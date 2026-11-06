@@ -26,6 +26,9 @@ export type ResourceItem = {
   title: string;
   description: string;
   url: string;
+  actionLabel?: string;
+  sourceLabel?: string;
+  sourceUrl?: string;
   tags?: string[];
   expiresAt?: string | null;
 };
@@ -87,6 +90,9 @@ function mapCatalogItem(item: ResourceCatalogItem, t: Translate): ResourceItem {
     title: resolveCatalogText(item, "title", t),
     description: resolveCatalogText(item, "description", t),
     url: item.url,
+    actionLabel: item.actionLabel,
+    sourceLabel: item.sourceLabel,
+    sourceUrl: item.sourceUrl,
     tags: item.tags ?? [],
     expiresAt: item.expiresAt ?? null,
   };
@@ -158,6 +164,12 @@ export function isTransferPlannerResourceUrl(url: string) {
   const pathname = parseInternalAppUrl(url)?.pathname ?? "";
   const plannerRoot = String(ROUTES.transferPlanner);
   return pathname === plannerRoot || pathname.startsWith(`${plannerRoot}/`);
+}
+
+export function filterVisibleResourceCatalogItems<T extends Pick<ResourceCatalogItem, "url">>(
+  items: readonly T[]
+) {
+  return items.filter((item) => !isTransferPlannerResourceUrl(item.url));
 }
 
 export function preloadTransferPlannerPage() {
@@ -598,14 +610,14 @@ export function useResourcesPageModel() {
         id: section.id,
         title: resolveCatalogText(section, "title", t),
         icon: section.icon,
-        items: (section.items ?? [])
+        items: filterVisibleResourceCatalogItems(section.items ?? [])
           .filter((item) => !isExpiredResource(item.expiresAt))
           .map((item) => mapCatalogItem(item, t)),
         subsections: (section.subsections ?? [])
           .map((subsection) => ({
             id: subsection.id,
             title: resolveCatalogText(subsection, "title", t),
-            items: subsection.items
+            items: filterVisibleResourceCatalogItems(subsection.items)
               .filter((item) => !isExpiredResource(item.expiresAt))
               .map((item) => mapCatalogItem(item, t)),
           }))

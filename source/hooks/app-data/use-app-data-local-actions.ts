@@ -1,5 +1,7 @@
 import { localStorageService } from "@/services/storage/local-storage.service";
-import { useCallback, type Dispatch, type SetStateAction } from "react";
+import { STORAGE_KEYS } from "@/constants/schema";
+import { getUserAppDataStorageKey } from "@/services/storage/local-storage-contracts";
+import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { normalizeQuestionnaireAnswers } from "@/services/app/questionnaire.enums";
 import { migrateTransferPlannerLegacyCompletedCourses } from "@/services/planning/transfer-planner-cache.service";
 import { errorLoggingService } from "@/services/logging/error-logging.service";
@@ -17,11 +19,13 @@ import {
 } from "./app-data-state";
 
 type UseAppDataLocalActionsArgs = {
+  stateRef: MutableRefObject<AppDataState>;
   setState: Dispatch<SetStateAction<AppDataState>>;
   setRestoreVersion: Dispatch<SetStateAction<number>>;
 };
 
 export function useAppDataLocalActions({
+  stateRef,
   setState,
   setRestoreVersion,
 }: UseAppDataLocalActionsArgs) {
@@ -71,7 +75,9 @@ export function useAppDataLocalActions({
 
   const clearAll = useCallback(async () => {
     await notificationsService.clearManagedNotifications().catch(() => {});
-    await localStorageService.removeItem(STORAGE_KEY).catch((error) => {
+    const user = stateRef.current.user;
+    const storageKey = user && !user.isGuest ? getUserAppDataStorageKey(user.uid) : STORAGE_KEY;
+    await localStorageService.multiRemove([storageKey, STORAGE_KEYS.appDataActiveUser]).catch((error) => {
       void errorLoggingService.captureException(error, {
         category: "storage",
         operation: "clear-app-data-primary",
@@ -79,12 +85,12 @@ export function useAppDataLocalActions({
         handled: true,
         source: "use-app-data",
         metadata: {
-          storageKey: STORAGE_KEY,
+          storageKey,
         },
       });
     });
     setState(initialState);
-  }, [setState]);
+  }, [setState, stateRef]);
 
   return {
     setQuestionnaireAnswers,

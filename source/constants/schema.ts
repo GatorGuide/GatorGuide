@@ -2,26 +2,10 @@ type ValueOf<T> = T[keyof T];
 
 export const APP_DATA_SCHEMA_VERSION = 1 as const;
 
-export const FIRESTORE_COLLECTIONS = {
-  users: "users",
-  questionnaires: "questionnaires",
-  roadmaps: "roadmaps",
-  opportunities: "opportunities",
-  chatHistory: "chatHistory",
-  supportErrorLogs: "supportErrorLogs",
-} as const;
-
-export const FIRESTORE_USER_SUBCOLLECTIONS = {
-  savedColleges: "savedColleges",
-  opportunityStatuses: "opportunityStatuses",
-} as const;
-
-export const FIRESTORE_CHAT_HISTORY_SUBCOLLECTIONS = {
-  messages: "messages",
-} as const;
-
 export const STORAGE_KEYS = {
   appData: "gatorguide:appdata:v1",
+  appDataUserPrefix: "gatorguide:appdata:user:",
+  appDataActiveUser: "gatorguide:appdata:active-user:v1",
   hasSeenStartup: "gatorguide:hasSeenStartup",
   pendingAccountData: "gatorguide:pending-account-data",
   guestProfileShow: "gatorguide:guestProfile:show",
@@ -30,12 +14,13 @@ export const STORAGE_KEYS = {
   onboardingDebugLog: "gatorguide:onboarding-debug-log:v1",
   notificationsManaged: "gatorguide:notifications:managed:v1",
   errorLogQueue: "gatorguide:error-logs:queue:v1",
-  savedCollegesPendingPrefix: "gatorguide:saved-colleges:pending:",
-  opportunitiesCatalog: "gatorguide:opportunities:catalog:v1",
+  opportunitiesCatalog: "gatorguide:opportunities:catalog:v2",
+  opportunitiesGenerated: "gatorguide:opportunities:generated:v1",
   opportunitiesGuestStatuses: "gatorguide:opportunities:statuses:guest:v1",
   opportunitiesGuestPending: "gatorguide:opportunities:pending:guest:v1",
   opportunitiesStatusesPrefix: "gatorguide:opportunities:statuses:",
   opportunitiesPendingPrefix: "gatorguide:opportunities:pending:",
+  roadmapDataPrefix: "gatorguide:roadmap:data:",
 } as const;
 
 export const LOCAL_DOCUMENTS_DIR_NAME = "gatorguide_docs" as const;
@@ -59,21 +44,6 @@ export const PROFILE_FIELD_KEYS = {
 } as const;
 
 export type ProfileFieldKey = ValueOf<typeof PROFILE_FIELD_KEYS>;
-
-export const FIRESTORE_SYNCABLE_PROFILE_FIELD_KEYS = [
-  PROFILE_FIELD_KEYS.name,
-  PROFILE_FIELD_KEYS.state,
-  PROFILE_FIELD_KEYS.major,
-  PROFILE_FIELD_KEYS.gender,
-  PROFILE_FIELD_KEYS.gpa,
-  PROFILE_FIELD_KEYS.resume,
-  PROFILE_FIELD_KEYS.avatar,
-  PROFILE_FIELD_KEYS.residencyType,
-  PROFILE_FIELD_KEYS.isProfileComplete,
-] as const;
-
-export type FirestoreSyncableProfileFieldKey =
-  (typeof FIRESTORE_SYNCABLE_PROFILE_FIELD_KEYS)[number];
 
 export const PROFILE_DOCUMENT_TYPES = {
   resume: "resume",
@@ -160,10 +130,6 @@ export const PROFILE_QUESTIONNAIRE_FIELD_IDS = [
 
 export type ProfileQuestionnaireFieldId =
   (typeof PROFILE_QUESTIONNAIRE_FIELD_IDS)[number];
-
-export function getSavedCollegesPendingStorageKey(uid: string) {
-  return `${STORAGE_KEYS.savedCollegesPendingPrefix}${uid}`;
-}
 
 export function getOpportunityStatusesStorageKey(userKey: string) {
   return `${STORAGE_KEYS.opportunitiesStatusesPrefix}${userKey}`;

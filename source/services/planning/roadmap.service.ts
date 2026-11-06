@@ -1,6 +1,5 @@
-import { doc, getDoc, setDoc, Timestamp } from "firebase/firestore";
-import { FIRESTORE_COLLECTIONS } from "@/constants/schema";
-import { db } from "@/services/firebase/firebase";
+import { localStorageService } from "@/services/storage/local-storage.service";
+import { getUserRoadmapStorageKey } from "@/services/storage/local-storage-contracts";
 
 export const ROADMAP_SCHEMA_VERSION = 3 as const;
 export const ROADMAP_SECTION_ORDER = ["documents", "courses", "applications", "interests"] as const;
@@ -162,7 +161,6 @@ function splitList(value: unknown): string[] {
 }
 
 function timestampToIso(value: unknown, fallback: string): string {
-  if (value instanceof Timestamp) return value.toDate().toISOString();
   if (value instanceof Date) return value.toISOString();
   if (typeof value === "string" && value.trim()) {
     const parsed = new Date(value);
@@ -833,7 +831,7 @@ function updateSectionTask(
 }
 
 function saveAllowed(userId: string) {
-  return !!db && !!String(userId).trim();
+  return !!String(userId).trim();
 }
 
 export const roadmapService = {
@@ -846,18 +844,20 @@ export const roadmapService = {
       return seedInput ? createInitialRoadmap(userId, seedInput) : null;
     }
 
-    const docSnap = await getDoc(doc(db!, FIRESTORE_COLLECTIONS.roadmaps, userId));
-    if (!docSnap.exists()) {
+    const storageKey = getUserRoadmapStorageKey(userId);
+    const raw = await localStorageService.getItem(storageKey);
+    if (!raw) return seedInput ? createInitialRoadmap(userId, seedInput) : null;
+
+    let rawData: unknown;
+    try {
+      rawData = JSON.parse(raw);
+    } catch {
       return seedInput ? createInitialRoadmap(userId, seedInput) : null;
     }
-
-    const rawData = docSnap.data();
     const normalized = normalizeRoadmapDocument(userId, rawData, seedInput);
-
     if (roadmapHasLegacyTranscriptFileUrl(rawData)) {
-      await setDoc(doc(db!, FIRESTORE_COLLECTIONS.roadmaps, userId), normalized, { merge: true }).catch(() => {});
+      await localStorageService.setItem(storageKey, JSON.stringify(normalized));
     }
-
     return normalized;
   },
 
@@ -867,13 +867,13 @@ export const roadmapService = {
     if (!existing) {
       const created = createInitialRoadmap(userId, seed);
       if (saveAllowed(userId)) {
-        await setDoc(doc(db!, FIRESTORE_COLLECTIONS.roadmaps, userId), created);
+        await localStorageService.setItem(getUserRoadmapStorageKey(userId), JSON.stringify(created));
       }
       return created;
     }
 
     if (saveAllowed(userId)) {
-      await setDoc(doc(db!, FIRESTORE_COLLECTIONS.roadmaps, userId), existing, { merge: true });
+      await localStorageService.setItem(getUserRoadmapStorageKey(userId), JSON.stringify(existing));
     }
     return existing;
   },
@@ -886,7 +886,7 @@ export const roadmapService = {
     });
 
     if (saveAllowed(userId)) {
-      await setDoc(doc(db!, FIRESTORE_COLLECTIONS.roadmaps, userId), normalized);
+      await localStorageService.setItem(getUserRoadmapStorageKey(userId), JSON.stringify(normalized));
     }
 
     return normalized;

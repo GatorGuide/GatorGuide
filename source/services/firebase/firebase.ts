@@ -1,7 +1,6 @@
 import { initializeApp, getApps } from "firebase/app";
 import * as firebaseAuthSdk from "firebase/auth";
 import ReactNativeAsyncStorage from "@react-native-async-storage/async-storage";
-import { getFirestore } from "firebase/firestore";
 import { getFunctions } from "firebase/functions";
 import { getStorage } from "firebase/storage";
 import { Platform } from "react-native";
@@ -42,7 +41,6 @@ function getAuthInstance() {
 }
 
 export const firebaseAuth = getAuthInstance();
-export const db = shouldInitFirebase && firebaseApp ? getFirestore(firebaseApp) : null;
 export const functionsClient =
   shouldInitFirebase && firebaseApp ? getFunctions(firebaseApp, API_CONFIG.functions.region) : null;
 export const storage = shouldInitFirebase && firebaseApp ? getStorage(firebaseApp) : null;

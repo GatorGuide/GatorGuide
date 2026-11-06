@@ -34,12 +34,8 @@ export default function TabLayout() {
 
   const titles = useMemo(
     () => ({
-      transferPlanner: isHydrated
-        ? t("navigation.transferPlanner")
-        : "Transfer Planner",
       resources: isHydrated ? t("navigation.resources") : "Resources",
       calendar: isHydrated ? t("navigation.calendar") : "Calendar",
-      profile: isHydrated ? t("navigation.profile") : "Profile",
     }),
     [isHydrated, t]
   );
@@ -111,11 +107,6 @@ export default function TabLayout() {
         }}
       >
         <Tabs.Screen
-          name="resources/transfer-planner"
-          options={buildTabOptions(titles.transferPlanner, "map")}
-        />
-
-        <Tabs.Screen
           name="resources/index"
           options={buildTabOptions(titles.resources, "library")}
         />
@@ -123,11 +114,6 @@ export default function TabLayout() {
         <Tabs.Screen
           name="calendar"
           options={buildTabOptions(titles.calendar, "calendar")}
-        />
-
-        <Tabs.Screen
-          name="profile"
-          options={buildTabOptions(titles.profile, "person")}
         />
 
         {HIDDEN_TAB_ROUTE_SCREENS.map((screenName) => (

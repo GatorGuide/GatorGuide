@@ -236,8 +236,8 @@ export function useDeadlineCalendarController({
         if (!cancelled) setRoadmap(nextRoadmap);
       } catch (error) {
         void errorLoggingService.captureException(error, {
-          category: "firestore",
-          operation: "load-deadline-calendar-roadmap",
+          category: "storage",
+          operation: "load-deadline-calendar-roadmap-locally",
           severity: "error",
           handled: true,
           source: "deadline-calendar-page",
@@ -272,7 +272,7 @@ export function useDeadlineCalendarController({
     userId,
   ]);
 
-  // P18: local plannerV2 → offline timeline; Firestore not required.
+  // Local plannerV2 is sufficient to project the offline timeline.
   const personalizedTimelineEntries = useMemo(
     () => projectPlannerV2OfflineCalendarEntries(state.plannerV2),
     [state.plannerV2]

@@ -4,7 +4,6 @@ import { Alert } from "react-native";
 import { ROUTES } from "@/constants/routes";
 import { normalizeQuestionnaireAnswers } from "@/services/app/questionnaire.enums";
 import type { QuestionnaireAnswers, User } from "@/hooks/use-app-data";
-import { collegeService } from "@/services/colleges/college.service";
 import type { DocumentExtractionReview } from "@/services/documents/document-reader.service";
 import { errorLoggingService } from "@/services/logging/error-logging.service";
 import type { Language } from "@/services/app/translations";
@@ -144,7 +143,7 @@ export function useProfileTranscriptWorkflow({
     } catch (error) {
       latestProfileGpaRef.current = previousGpa || editData.gpa || user?.gpa || "";
       void errorLoggingService.captureException(error, {
-        category: "firestore",
+        category: "storage",
         operation,
         severity: "warn",
         handled: true,
@@ -255,19 +254,6 @@ export function useProfileTranscriptWorkflow({
           language
         ) as Record<string, string>;
         await setQuestionnaireAnswers(nextQuestionnaire);
-        try {
-          await collegeService.saveQuestionnaireResult(nextQuestionnaire);
-        } catch (error) {
-          void errorLoggingService.captureException(error, {
-            category: "firestore",
-            operation: "apply-document-review-questionnaire-sync",
-            severity: "warn",
-            handled: true,
-            source: "profile-page",
-            screen: "profile",
-            route: ROUTES.profile,
-          });
-        }
       }
 
       dismissDocumentReview();

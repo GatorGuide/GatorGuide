@@ -399,6 +399,22 @@ class StorageService {
     return data ? normalizeUploadedFile(JSON.parse(data)) : null;
   }
 
+  async deleteAllUserLocalDocuments(userId: string): Promise<void> {
+    await Promise.all(
+      (["resume", "transcript", "avatar", "roadmap"] as const).map((type) =>
+        deleteLocalDocumentDirectory(type, userId)
+      )
+    );
+    const keys = await localStorageService.getAllKeys().catch(() => []);
+    const roadmapPrefix = getRoadmapDocumentStorageKey(userId, "");
+    await localStorageService.multiRemove([
+      getResumeStorageKey(userId),
+      getTranscriptStorageKey(userId),
+      getAvatarStorageKey(userId),
+      ...keys.filter((key) => key.startsWith(roadmapPrefix)),
+    ]);
+  }
+
   /**
    * Delete uploaded file metadata from local storage.
    * Legacy remote transcript copies are cleaned up if they still exist.

@@ -1,6 +1,6 @@
 // services/config.ts
 // All API keys are read from .env. Copy .env.example -> .env and fill in real values.
-// Firebase: enable Authentication and Firestore in the console before use.
+// Firebase: enable Authentication; Storage is used for supported uploads. App data stays local.
 //
 // NOTE about stub/sample data:
 // - The app no longer exposes an env-driven global stub mode toggle.

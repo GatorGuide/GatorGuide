@@ -208,7 +208,7 @@ export default function CostCalculatorPage() {
         {t("tools.saveCollegesFirstHint")}
       </Text>
       <AnimatedChipPressable
-        onPress={() => router.push(ROUTES.tabs)}
+        onPress={() => router.push(ROUTES.tabsResources)}
         containerClassName="mt-4 self-center"
         className="flex-row items-center rounded-xl bg-emerald-500 px-4 py-3"
       >

@@ -58,13 +58,12 @@ test("resolveRouteAccessRedirect applies unauthenticated and guest guards before
   assert.equal(
     resolveRouteAccessRedirect({
       allowGuest: false,
-      guestRedirect: ROUTES.tabs,
       isHydrated: true,
       requireUser: true,
       resolveRedirect: customRedirect,
       user: { uid: "guest-1", isGuest: true },
     }),
-    ROUTES.tabs
+    ROUTES.tabsResources
   );
 });
 
@@ -82,7 +81,8 @@ test("resolveRouteAccessRedirect allows public routes and post-auth custom redir
     resolveRouteAccessRedirect({
       isHydrated: true,
       user: { uid: "u1", isGuest: false },
-      resolveRedirect: (user) => (hasCompletedProfileSetup(user) ? ROUTES.tabs : ROUTES.profileSetup),
+      resolveRedirect: (user) =>
+        hasCompletedProfileSetup(user) ? ROUTES.tabsResources : ROUTES.profileSetup,
     }),
     ROUTES.profileSetup
   );

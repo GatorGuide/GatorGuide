@@ -105,7 +105,6 @@
     "test:app": "node scripts/qa/run-app-tests.cjs",
     "check": "npm run env:check && npm run typecheck && npm run test:fetch-contract && npm run test:app && npm run lint && npm run i18n:check",
     "lint": "expo lint",
-    "test:firebase-rules": "node scripts/qa/run-firebase-rules-tests.cjs",
     "prebuild": "expo prebuild",
     "prebuild:android": "expo prebuild --platform android",
     "prebuild:ios": "expo prebuild --platform ios",
@@ -123,7 +122,6 @@
     "@react-navigation/bottom-tabs": "^7.4.0",
     "@react-navigation/elements": "^2.9.26",
     "@react-navigation/native": "^7.1.8",
-    "@vercel/analytics": "^2.0.1",
     "expo": "~54.0.35",
     "expo-asset": "~12.0.12",
     "expo-audio": "^1.1.1",
@@ -165,7 +163,6 @@
   },
   "devDependencies": {
     "@expo/image-utils": "^0.8.13",
-    "@firebase/rules-unit-testing": "^5.0.0",
     "@types/pako": "^2.0.4",
     "@types/react": "~19.1.0",
     "eslint": "^9.25.0",

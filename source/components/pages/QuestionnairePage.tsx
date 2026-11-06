@@ -24,7 +24,6 @@ import {
   type LocationPrimaryOptionKey,
   US_STATE_OPTIONS,
 } from "@/services/app/questionnaire.enums";
-import { collegeService } from "@/services/colleges/college.service";
 import { errorLoggingService } from "@/services/logging/error-logging.service";
 import {
   buildBlankQuestionnaireAnswers,
@@ -50,7 +49,7 @@ export default function QuestionnairePage() {
   const { t, language } = useAppLanguage();
   const { width } = useWindowDimensions();
   const { getScrollContentPadding } = useResponsiveLayout();
-  const back = useBack(ROUTES.tabs);
+  const back = useBack(ROUTES.tabsResources);
   const questionnaireScrollRef = useRef<ScrollView>(null);
   const [questionnaireMode, setQuestionnaireMode] =
     useState<QuestionnaireMode>("basic");
@@ -267,12 +266,11 @@ export default function QuestionnairePage() {
     setIsActionLocked(true);
 
     try {
-      const normalized = await persistQuestionnaireDraft();
-      await collegeService.saveQuestionnaireResult(normalized); 
+      await persistQuestionnaireDraft();
     } catch (error) {
       void errorLoggingService.captureException(error, {
-        category: "firestore",
-        operation: "submit-questionnaire",
+        category: "storage",
+        operation: "save-questionnaire-locally",
         severity: "warn",
         handled: true,
         source: "questionnaire-page",
@@ -301,8 +299,8 @@ export default function QuestionnairePage() {
       await persistQuestionnaireDraft();
     } catch (error) {
       void errorLoggingService.captureException(error, {
-        category: "firestore",
-        operation: "leave-questionnaire-page",
+        category: "storage",
+        operation: "save-questionnaire-draft-locally",
         severity: "warn",
         handled: true,
         source: "questionnaire-page",
@@ -322,12 +320,11 @@ export default function QuestionnairePage() {
     setIsActionLocked(true);
 
     try {
-      const normalized = await persistQuestionnaireDraft();
-      await collegeService.saveQuestionnaireResult(normalized);
+      await persistQuestionnaireDraft();
     } catch (error) {
       void errorLoggingService.captureException(error, {
-        category: "firestore",
-        operation: "save-and-exit-questionnaire",
+        category: "storage",
+        operation: "save-questionnaire-and-exit-locally",
         severity: "warn",
         handled: true,
         source: "questionnaire-page",

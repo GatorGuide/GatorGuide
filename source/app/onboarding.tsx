@@ -8,7 +8,7 @@ export default function Onboarding() {
       allowGuest={false}
       resolveRedirect={(user) => {
         if (user?.hasSeenOnboarding === true) {
-          return hasCompletedProfileSetup(user) ? ROUTES.tabs : ROUTES.profileSetup;
+          return hasCompletedProfileSetup(user) ? ROUTES.tabsResources : ROUTES.profileSetup;
         }
         return null;
       }}

@@ -3,64 +3,6 @@ const test = require("node:test");
 const { HttpsError } = require("firebase-functions/v2/https");
 const { __test } = require("./geminiGateway");
 
-class FakeSnapshot {
-  constructor(data) {
-    this.data = data ?? null;
-    this.exists = !!data;
-  }
-
-  get(field) {
-    return this.data?.[field];
-  }
-}
-
-class FakeDocRef {
-  constructor(db, pathParts) {
-    this.db = db;
-    this.path = pathParts.join("/");
-  }
-
-  collection(name) {
-    return {
-      doc: (id) => new FakeDocRef(this.db, [this.path, name, id]),
-    };
-  }
-
-  async update(data) {
-    this.db.directUpdates.push({ type: "update", path: this.path, data });
-  }
-}
-
-class FakeFirestore {
-  constructor(initialDocs = {}) {
-    this.docs = new Map(Object.entries(initialDocs));
-    this.transactionOps = [];
-    this.directUpdates = [];
-  }
-
-  collection(name) {
-    return {
-      doc: (id) => new FakeDocRef(this, [name, id]),
-    };
-  }
-
-  async runTransaction(callback) {
-    const transaction = {
-      get: async (ref) => new FakeSnapshot(this.docs.get(ref.path)),
-      set: (ref, data) => {
-        this.transactionOps.push({ type: "set", path: ref.path, data });
-        this.docs.set(ref.path, data);
-      },
-      update: (ref, data) => {
-        this.transactionOps.push({ type: "update", path: ref.path, data });
-        this.docs.set(ref.path, { ...(this.docs.get(ref.path) ?? {}), ...data });
-      },
-    };
-
-    await callback(transaction);
-  }
-}
-
 function buildConfig(overrides = {}) {
   return {
     authDailyUnitsLimit: 8,
@@ -169,23 +111,21 @@ test("Gemini document extraction responses keep only supported bounded fields", 
   assert.equal(response.extractedFields.unsupported, undefined);
 });
 
-test("Gemini quota reservation accounts for allowed attempts and finalized usage", async () => {
-  const fakeDb = new FakeFirestore();
+test("Gemini in-memory quota reservation accounts for attempts and finalized usage", async () => {
+  const store = new __test.InMemoryUsageStore();
+  const identity = buildIdentity();
   const reservation = await __test.reserveUsage(
     buildConfig(),
     "recommendFactors",
     2,
-    buildIdentity(),
-    fakeDb
+    identity,
+    store
   );
 
   assert.equal(reservation.allowed, true);
   assert.equal(reservation.units, 2);
   assert.equal(reservation.clientRemaining, 3);
   assert.equal(reservation.globalRemaining, 8);
-  assert.equal(fakeDb.transactionOps.length, 2);
-  assert.ok(fakeDb.transactionOps.every((operation) => operation.type === "set"));
-  assert.ok(fakeDb.transactionOps.every((operation) => operation.data.units === 2));
 
   await __test.finalizeUsage(
     reservation,
@@ -200,44 +140,34 @@ test("Gemini quota reservation accounts for allowed attempts and finalized usage
         libraryVersion: "test-lib",
       },
     },
-    fakeDb
+    store
   );
 
-  assert.equal(fakeDb.directUpdates.length, 2);
-  const update = fakeDb.directUpdates[0].data;
-  assert.ok(Object.hasOwn(update, "successes"));
-  assert.ok(Object.hasOwn(update, "actions.recommendFactors.successes"));
-  assert.ok(Object.hasOwn(update, "actions.recommendFactors.totalTokens"));
-  assert.equal(update.lastModel, "gemini-test");
-  assert.equal(update.lastPromptTemplateId, "recommend-factor-scoring");
+  const day = store.days.get(reservation.dateKey);
+  const client = day.clients.get(identity.clientKeyHash);
+  assert.equal(day.global.requests, 1);
+  assert.equal(day.global.units, 2);
+  assert.equal(day.global.successes, 1);
+  assert.equal(day.global.totalTokens, 10);
+  assert.equal(day.global.actions.recommendFactors.promptTokens, 4);
+  assert.equal(client.lastModel, "gemini-test");
+  assert.equal(client.lastPromptTemplateId, "recommend-factor-scoring");
 });
 
-test("Gemini quota reservation records denied global and client attempts", async () => {
-  const dateKey = new Date().toISOString().slice(0, 10);
-  const globalPath = `aiUsageDaily/${dateKey}`;
-  const clientPath = `${globalPath}/clients/client-hash`;
-  const fakeDb = new FakeFirestore({
-    [globalPath]: { units: 9 },
-    [clientPath]: { units: 1 },
-  });
+test("Gemini in-memory quotas record and deny over-limit attempts", async () => {
+  const store = new __test.InMemoryUsageStore();
+  const identity = buildIdentity();
+  const config = buildConfig({ globalDailyUnitsLimit: 10, guestDailyUnitsLimit: 10 });
+  const allowed = await __test.reserveUsage(config, "chatAssistant", 9, identity, store);
+  const denied = await __test.reserveUsage(config, "chatAssistant", 2, identity, store);
 
-  const reservation = await __test.reserveUsage(
-    buildConfig({ globalDailyUnitsLimit: 10, guestDailyUnitsLimit: 5 }),
-    "chatAssistant",
-    2,
-    buildIdentity(),
-    fakeDb
-  );
-
-  assert.equal(reservation.allowed, false);
-  assert.equal(reservation.reason, "global_limit");
-  assert.equal(fakeDb.transactionOps.length, 2);
-  assert.ok(fakeDb.transactionOps.every((operation) => operation.type === "update"));
-  assert.ok(
-    fakeDb.transactionOps.every((operation) =>
-      Object.hasOwn(operation.data, "actions.chatAssistant.quotaDenied")
-    )
-  );
+  assert.equal(allowed.allowed, true);
+  assert.equal(denied.allowed, false);
+  assert.equal(denied.reason, "global_limit");
+  const day = store.days.get(allowed.dateKey);
+  assert.equal(day.global.units, 9);
+  assert.equal(day.global.quotaDenied, 1);
+  assert.equal(day.global.actions.chatAssistant.quotaDenied, 1);
 });
 
 test("Gemini action parsing and upstream errors map to callable error codes", () => {

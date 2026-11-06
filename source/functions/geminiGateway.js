@@ -1,19 +1,10 @@
 const crypto = require("node:crypto");
-const admin = require("firebase-admin");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const {
   fetchWithTimeout,
 } = require("./fetchWithTimeout");
 const { renderPromptTemplate } = require("./promptTemplates");
 
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
-
-const db = admin.firestore();
-const { FieldValue } = admin.firestore;
-
-const AI_USAGE_COLLECTION = "aiUsageDaily";
 const GATEWAY_REGION = "us-central1";
 const DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_GEMINI_MODEL = "gemini-1.5-flash";
@@ -194,25 +185,12 @@ function getQuotaLimits(config, scope) {
   };
 }
 
-function createActionStats({ requests = 0, units = 0, successes = 0, failures = 0, quotaDenied = 0, fallbacks = 0 } = {}) {
-  return {
-    requests,
-    units,
-    successes,
-    failures,
-    quotaDenied,
-    fallbacks,
-    totalTokens: 0,
-    promptTokens: 0,
-    candidateTokens: 0,
-  };
-}
-
-function createGlobalUsageDoc(dateKey, action, units) {
+function createUsageStats(dateKey, metadata = {}) {
   return {
     dateKey,
-    requests: 1,
-    units,
+    ...metadata,
+    requests: 0,
+    units: 0,
     successes: 0,
     failures: 0,
     quotaDenied: 0,
@@ -220,264 +198,158 @@ function createGlobalUsageDoc(dateKey, action, units) {
     totalTokens: 0,
     promptTokens: 0,
     candidateTokens: 0,
-    actions: {
-      [action]: createActionStats({ requests: 1, units }),
-    },
-    createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
-    lastRequestAt: FieldValue.serverTimestamp(),
-    lastAction: action,
+    actions: {},
   };
 }
 
-function createClientUsageDoc(dateKey, action, units, identity) {
-  return {
-    dateKey,
-    clientScope: identity.scope,
-    authUid: identity.authUid,
-    clientInstanceId: identity.clientInstanceId,
-    requests: 1,
-    units,
-    successes: 0,
-    failures: 0,
-    quotaDenied: 0,
-    fallbacks: 0,
-    totalTokens: 0,
-    promptTokens: 0,
-    candidateTokens: 0,
-    actions: {
-      [action]: createActionStats({ requests: 1, units }),
-    },
-    createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
-    lastRequestAt: FieldValue.serverTimestamp(),
-    lastAction: action,
-  };
+function getActionUsage(record, action) {
+  if (!record.actions[action]) {
+    record.actions[action] = createUsageStats(record.dateKey);
+  }
+  return record.actions[action];
 }
 
-function createBlockedGlobalUsageDoc(dateKey, action, reason) {
-  return {
-    dateKey,
-    requests: 0,
-    units: 0,
-    successes: 0,
-    failures: 0,
-    quotaDenied: 1,
-    fallbacks: 0,
-    totalTokens: 0,
-    promptTokens: 0,
-    candidateTokens: 0,
-    actions: {
-      [action]: createActionStats({ quotaDenied: 1 }),
-    },
-    createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
-    lastDeniedAt: FieldValue.serverTimestamp(),
-    lastAction: action,
-    lastQuotaReason: reason,
-  };
+function incrementAttempt(record, action, units) {
+  const actionUsage = getActionUsage(record, action);
+  record.requests += 1;
+  record.units += units;
+  actionUsage.requests += 1;
+  actionUsage.units += units;
+  record.lastAction = action;
+  record.lastRequestAt = new Date().toISOString();
 }
 
-function createBlockedClientUsageDoc(dateKey, action, reason, identity) {
-  return {
-    dateKey,
-    clientScope: identity.scope,
-    authUid: identity.authUid,
-    clientInstanceId: identity.clientInstanceId,
-    requests: 0,
-    units: 0,
-    successes: 0,
-    failures: 0,
-    quotaDenied: 1,
-    fallbacks: 0,
-    totalTokens: 0,
-    promptTokens: 0,
-    candidateTokens: 0,
-    actions: {
-      [action]: createActionStats({ quotaDenied: 1 }),
-    },
-    createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
-    lastDeniedAt: FieldValue.serverTimestamp(),
-    lastAction: action,
-    lastQuotaReason: reason,
-  };
+function incrementDenied(record, action, reason) {
+  const actionUsage = getActionUsage(record, action);
+  record.quotaDenied += 1;
+  actionUsage.quotaDenied += 1;
+  record.lastAction = action;
+  record.lastQuotaReason = reason;
+  record.lastDeniedAt = new Date().toISOString();
 }
 
-function buildAttemptUsageUpdate(action, units) {
-  return {
-    requests: FieldValue.increment(1),
-    units: FieldValue.increment(units),
-    updatedAt: FieldValue.serverTimestamp(),
-    lastRequestAt: FieldValue.serverTimestamp(),
-    lastAction: action,
-    [`actions.${action}.requests`]: FieldValue.increment(1),
-    [`actions.${action}.units`]: FieldValue.increment(units),
-  };
-}
-
-function buildBlockedUsageUpdate(action, reason) {
-  return {
-    quotaDenied: FieldValue.increment(1),
-    updatedAt: FieldValue.serverTimestamp(),
-    lastDeniedAt: FieldValue.serverTimestamp(),
-    lastAction: action,
-    lastQuotaReason: reason,
-    [`actions.${action}.quotaDenied`]: FieldValue.increment(1),
-  };
-}
-
-function buildOutcomeUsageUpdate(action, outcome) {
-  const updates = {
-    updatedAt: FieldValue.serverTimestamp(),
-    lastResponseAt: FieldValue.serverTimestamp(),
-    lastAction: action,
-    lastStatus: outcome.status,
-    lastResponseMs: outcome.responseMs,
-  };
-
-  if (outcome.model) {
-    updates.lastModel = outcome.model;
-  }
-  if (outcome.errorCode) {
-    updates.lastErrorCode = outcome.errorCode;
-  }
-  if (outcome.errorMessage) {
-    updates.lastErrorMessage = truncate(outcome.errorMessage, 500);
-  }
-  if (outcome.promptTemplate?.id) {
-    updates.lastPromptTemplateId = outcome.promptTemplate.id;
-  }
-  if (outcome.promptTemplate?.version) {
-    updates.lastPromptTemplateVersion = outcome.promptTemplate.version;
-  }
-  if (outcome.promptTemplate?.libraryVersion) {
-    updates.lastPromptLibraryVersion = outcome.promptTemplate.libraryVersion;
-  }
-
+function applyOutcome(record, action, outcome) {
+  const actionUsage = getActionUsage(record, action);
   const isSuccess = outcome.status === "success" || outcome.status === "partial_fallback";
-  if (isSuccess) {
-    updates.successes = FieldValue.increment(1);
-    updates[`actions.${action}.successes`] = FieldValue.increment(1);
-  } else {
-    updates.failures = FieldValue.increment(1);
-    updates[`actions.${action}.failures`] = FieldValue.increment(1);
-  }
+  const outcomeField = isSuccess ? "successes" : "failures";
+  record[outcomeField] += 1;
+  actionUsage[outcomeField] += 1;
 
   if (outcome.status === "partial_fallback") {
-    updates.fallbacks = FieldValue.increment(1);
-    updates[`actions.${action}.fallbacks`] = FieldValue.increment(1);
+    record.fallbacks += 1;
+    actionUsage.fallbacks += 1;
   }
 
-  const totalTokens = toNumberOrNull(outcome.usage?.totalTokens);
-  const promptTokens = toNumberOrNull(outcome.usage?.promptTokens);
-  const candidateTokens = toNumberOrNull(outcome.usage?.candidateTokens);
-
-  if (totalTokens !== null && totalTokens > 0) {
-    updates.totalTokens = FieldValue.increment(totalTokens);
-    updates[`actions.${action}.totalTokens`] = FieldValue.increment(totalTokens);
-  }
-  if (promptTokens !== null && promptTokens > 0) {
-    updates.promptTokens = FieldValue.increment(promptTokens);
-    updates[`actions.${action}.promptTokens`] = FieldValue.increment(promptTokens);
-  }
-  if (candidateTokens !== null && candidateTokens > 0) {
-    updates.candidateTokens = FieldValue.increment(candidateTokens);
-    updates[`actions.${action}.candidateTokens`] = FieldValue.increment(candidateTokens);
+  for (const field of ["totalTokens", "promptTokens", "candidateTokens"]) {
+    const value = toNumberOrNull(outcome.usage?.[field]);
+    if (value !== null && value > 0) {
+      record[field] += value;
+      actionUsage[field] += value;
+    }
   }
 
-  return updates;
+  record.lastAction = action;
+  record.lastStatus = outcome.status;
+  record.lastResponseMs = outcome.responseMs;
+  record.lastResponseAt = new Date().toISOString();
+  if (outcome.model) record.lastModel = outcome.model;
+  if (outcome.errorCode) record.lastErrorCode = outcome.errorCode;
+  if (outcome.errorMessage) record.lastErrorMessage = truncate(outcome.errorMessage, 500);
+  if (outcome.promptTemplate?.id) record.lastPromptTemplateId = outcome.promptTemplate.id;
+  if (outcome.promptTemplate?.version) record.lastPromptTemplateVersion = outcome.promptTemplate.version;
+  if (outcome.promptTemplate?.libraryVersion) record.lastPromptLibraryVersion = outcome.promptTemplate.libraryVersion;
 }
 
-async function reserveUsage(config, action, units, identity, usageDb = db) {
-  const dateKey = getDateKey();
-  const globalRef = usageDb.collection(AI_USAGE_COLLECTION).doc(dateKey);
-  const clientRef = globalRef.collection("clients").doc(identity.clientKeyHash);
-  const { globalLimit, clientLimit } = getQuotaLimits(config, identity.scope);
+class InMemoryUsageStore {
+  constructor(options = {}) {
+    this.days = new Map();
+    this.maxClientRecords = options.maxClientRecords ?? 4096;
+  }
 
-  let reservation = null;
+  getDay(dateKey) {
+    let day = this.days.get(dateKey);
+    if (!day) {
+      day = {
+        global: createUsageStats(dateKey),
+        clients: new Map(),
+      };
+      this.days.set(dateKey, day);
+      while (this.days.size > 2) this.days.delete(this.days.keys().next().value);
+    }
+    return day;
+  }
 
-  await usageDb.runTransaction(async (transaction) => {
-    const [globalSnap, clientSnap] = await Promise.all([
-      transaction.get(globalRef),
-      transaction.get(clientRef),
-    ]);
+  getClient(day, dateKey, identity) {
+    let client = day.clients.get(identity.clientKeyHash);
+    if (!client && day.clients.size < this.maxClientRecords) {
+      client = createUsageStats(dateKey, { clientScope: identity.scope });
+      day.clients.set(identity.clientKeyHash, client);
+    }
+    return client ?? createUsageStats(dateKey, { clientScope: identity.scope });
+  }
 
-    const globalUsed = globalSnap.exists ? Number(globalSnap.get("units") ?? 0) : 0;
-    const clientUsed = clientSnap.exists ? Number(clientSnap.get("units") ?? 0) : 0;
-    const blockedReason =
+  reserve(config, action, units, identity) {
+    const dateKey = getDateKey();
+    const day = this.getDay(dateKey);
+    const client = this.getClient(day, dateKey, identity);
+    const { globalLimit, clientLimit } = getQuotaLimits(config, identity.scope);
+    const globalUsed = Number(day.global.units) || 0;
+    const clientUsed = Number(client.units) || 0;
+    const reason =
       globalUsed + units > globalLimit
         ? "global_limit"
         : clientUsed + units > clientLimit
           ? "client_limit"
           : "";
 
-    if (blockedReason) {
-      if (globalSnap.exists) {
-        transaction.update(globalRef, buildBlockedUsageUpdate(action, blockedReason));
-      } else {
-        transaction.set(globalRef, createBlockedGlobalUsageDoc(dateKey, action, blockedReason));
-      }
-
-      if (clientSnap.exists) {
-        transaction.update(clientRef, buildBlockedUsageUpdate(action, blockedReason));
-      } else {
-        transaction.set(clientRef, createBlockedClientUsageDoc(dateKey, action, blockedReason, identity));
-      }
-
-      reservation = {
+    if (reason) {
+      incrementDenied(day.global, action, reason);
+      incrementDenied(client, action, reason);
+      return {
         allowed: false,
-        reason: blockedReason,
+        reason,
         scope: identity.scope,
         globalLimit,
         clientLimit,
         globalUsed,
         clientUsed,
       };
-      return;
     }
 
-    if (globalSnap.exists) {
-      transaction.update(globalRef, buildAttemptUsageUpdate(action, units));
-    } else {
-      transaction.set(globalRef, createGlobalUsageDoc(dateKey, action, units));
-    }
-
-    if (clientSnap.exists) {
-      transaction.update(clientRef, buildAttemptUsageUpdate(action, units));
-    } else {
-      transaction.set(clientRef, createClientUsageDoc(dateKey, action, units, identity));
-    }
-
-    reservation = {
+    incrementAttempt(day.global, action, units);
+    incrementAttempt(client, action, units);
+    return {
       allowed: true,
       action,
       units,
       dateKey,
       scope: identity.scope,
-      authUid: identity.authUid,
       clientDocId: identity.clientKeyHash,
       globalLimit,
       clientLimit,
       globalRemaining: Math.max(0, globalLimit - (globalUsed + units)),
       clientRemaining: Math.max(0, clientLimit - (clientUsed + units)),
     };
-  });
+  }
 
-  return reservation;
+  finalize(reservation, outcome) {
+    if (!reservation?.allowed) return;
+    const day = this.days.get(reservation.dateKey);
+    const client = day?.clients.get(reservation.clientDocId);
+    if (!day || !client) return;
+    applyOutcome(day.global, reservation.action, outcome);
+    applyOutcome(client, reservation.action, outcome);
+  }
 }
 
-async function finalizeUsage(reservation, outcome, usageDb = db) {
-  if (!reservation?.allowed) return;
+const inMemoryUsageStore = new InMemoryUsageStore();
 
-  const globalRef = usageDb.collection(AI_USAGE_COLLECTION).doc(reservation.dateKey);
-  const clientRef = globalRef.collection("clients").doc(reservation.clientDocId);
-  const updates = buildOutcomeUsageUpdate(reservation.action, outcome);
+async function reserveUsage(config, action, units, identity, usageStore = inMemoryUsageStore) {
+  return usageStore.reserve(config, action, units, identity);
+}
 
-  await Promise.all([
-    globalRef.update(updates),
-    clientRef.update(updates),
-  ]);
+async function finalizeUsage(reservation, outcome, usageStore = inMemoryUsageStore) {
+  return usageStore.finalize(reservation, outcome);
 }
 
 function extractGeminiText(json) {
@@ -1134,7 +1006,7 @@ exports.geminiGateway = onCall(
   {
     region: GATEWAY_REGION,
     timeoutSeconds: 30,
-    maxInstances: 3,
+    maxInstances: 1,
   },
   async (request) => {
     const config = getConfig();
@@ -1239,8 +1111,8 @@ exports.__test = {
   MAX_CHAT_MESSAGE_CHARS,
   MAX_DOCUMENT_BASE64_CHARS,
   MAX_PROGRAMS_PER_COLLEGE,
+  InMemoryUsageStore,
   buildChatAssistantPrompt,
-  buildOutcomeUsageUpdate,
   buildRecommendPrompt,
   finalizeUsage,
   getRequestIdentity,

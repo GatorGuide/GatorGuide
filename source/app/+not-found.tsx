@@ -39,7 +39,7 @@ export default function NotFound() {
           </Text>
 
           <AnimatedChipPressable
-            onPress={() => router.replace(ROUTES.tabs)}
+            onPress={() => router.replace(ROUTES.tabsResources)}
             containerStyle={{ width: "100%" }}
             className="px-5 py-4 rounded-2xl bg-emerald-500 w-full items-center"
           >

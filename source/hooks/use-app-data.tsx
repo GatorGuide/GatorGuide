@@ -17,7 +17,6 @@ import {
   useAppDataNotificationActions,
   useAppDataNotificationSync,
 } from "./app-data/use-app-data-notifications";
-import { useAppDataProfileSync } from "./app-data/use-app-data-profile-sync";
 import { useAppDataStorage } from "./app-data/use-app-data-storage";
 import { useAppDataUserActions } from "./app-data/use-app-data-user-actions";
 import { useSavedCollegeActions } from "./app-data/use-saved-college-actions";
@@ -71,7 +70,6 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const currentDeadlineAnswer =
     state.questionnaireAnswers?.[QUESTIONNAIRE_FIELD_IDS.deadline];
   const currentUserUid = state.user?.uid ?? null;
-  const currentUserIsGuest = !!state.user?.isGuest;
   const currentUserTranscript = state.user?.transcript ?? "";
 
   useEffect(() => {
@@ -98,18 +96,6 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     setState,
   });
 
-  const {
-    reconciledSavedCollegesUidRef,
-    loadProfileFromServer,
-    loadMergedSavedColleges,
-  } = useAppDataProfileSync({
-    isHydrated,
-    currentUserUid,
-    currentUserIsGuest,
-    stateRef,
-    setState,
-  });
-
   useTranscriptReconciliation({
     isHydrated,
     currentUserUid,
@@ -126,9 +112,6 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   } = useAppDataAuthActions({
     stateRef,
     setState,
-    loadProfileFromServer,
-    loadMergedSavedColleges,
-    reconciledSavedCollegesUidRef,
   });
 
   const {
@@ -143,6 +126,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     restoreData,
     clearAll,
   } = useAppDataLocalActions({
+    stateRef,
     setState,
     setRestoreVersion,
   });

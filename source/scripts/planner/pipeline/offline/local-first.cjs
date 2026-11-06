@@ -2,7 +2,7 @@
 
 /**
  * P18 offline/local-first repository harness.
- * Firestore is sync, not a read prerequisite.
+ * Local app state is the source of truth for offline projection.
  */
 
 function createMemoryPlannerStateRepository(seed = {}) {

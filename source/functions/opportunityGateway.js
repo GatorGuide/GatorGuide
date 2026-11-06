@@ -1,17 +1,9 @@
 const crypto = require("node:crypto");
-const admin = require("firebase-admin");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const {
   fetchWithTimeout,
 } = require("./fetchWithTimeout");
 const { renderPromptTemplate } = require("./promptTemplates");
-
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
-
-const db = admin.firestore();
-const { Timestamp } = admin.firestore;
 
 const GATEWAY_REGION = "us-central1";
 const DEFAULT_TIMEOUT_MS = 15000;
@@ -19,8 +11,6 @@ const DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1bet
 const DEFAULT_GEMINI_MODEL = "gemini-1.5-flash";
 const SCORECARD_BASE_URL = "https://api.data.gov/ed/collegescorecard/v1/schools";
 const MAX_EVIDENCE_CHARS = 9000;
-const GREEN_RIVER_FOUNDATION_SCHOLARSHIP_ID =
-  "green-river-foundation-scholarship";
 
 function getConfig() {
   return {
@@ -45,7 +35,7 @@ function assertAuthenticated(request) {
   if (!request.auth?.uid) {
     throw new HttpsError(
       "unauthenticated",
-      "Authentication is required for opportunity writes."
+      "Authentication is required to use the opportunity gateway."
     );
   }
 }
@@ -474,91 +464,7 @@ async function fetchScorecardCollege(config, data) {
   };
 }
 
-function buildGreenRiverSeedDocument(now) {
-  const dueDate = `${now.getFullYear()}-04-30`;
-  const dueAt = buildIsoDueDate(dueDate, "America/Los_Angeles");
-  return {
-    schemaVersion: 1,
-    opportunityId: GREEN_RIVER_FOUNDATION_SCHOLARSHIP_ID,
-    type: "scholarship",
-    status: "active",
-    title: "Green River College Foundation Scholarship",
-    organizationName: "Green River College Foundation",
-    summary:
-      "Annual Green River scholarship application with broad student eligibility and short-answer responses.",
-    externalUrl: "https://grcfoundation.awardspring.com/",
-    dueAt: Timestamp.fromDate(new Date(dueAt)),
-    recurrence: {
-      isYearly: true,
-      month: 4,
-      day: 30,
-      timezone: "America/Los_Angeles",
-    },
-    deadline: {
-      type: "final",
-      label: "Annual scholarship deadline",
-    },
-    matching: {
-      financialAidTags: ["need_based", "merit"],
-      suggestedMajors: [],
-      hasToBeMajor: false,
-    },
-    eligibility: {
-      gpaMin: null,
-      residencyTypes: [],
-      communityTags: [],
-      transferOnly: false,
-    },
-    requirements: {
-      needsRecommendations: true,
-      recommendationCountMin: 1,
-      essayCount: 3,
-    },
-    award: {
-      amountMin: null,
-      amountMax: null,
-      currency: "USD",
-      amountText: "Amount varies by scholarship award",
-      renewable: null,
-    },
-    college: {
-      collegeId: null,
-      collegeName: null,
-      city: null,
-      state: null,
-      website: null,
-    },
-    source: {
-      kind: "seed",
-      sourceUrl:
-        "https://www.greenriver.edu/students/pay-for-college/financial-aid/types-of-aid/scholarships/",
-      sourceLabel: "Green River scholarships page",
-      model: null,
-      fetchedAt: Timestamp.fromDate(now),
-      verifiedAt: Timestamp.fromDate(now),
-    },
-    createdAt: Timestamp.fromDate(now),
-    updatedAt: Timestamp.fromDate(now),
-  };
-}
-
-async function seedGreenRiverFoundationScholarship(requestId) {
-  const now = new Date();
-  const payload = buildGreenRiverSeedDocument(now);
-  await db
-    .collection("opportunities")
-    .doc(GREEN_RIVER_FOUNDATION_SCHOLARSHIP_ID)
-    .set(payload, { merge: true });
-
-  return {
-    ok: true,
-    requestId,
-    seeded: true,
-    opportunityId: GREEN_RIVER_FOUNDATION_SCHOLARSHIP_ID,
-  };
-}
-
-async function upsertCollegeDeadlineOpportunity(data, requestId, config) {
+async function generateCollegeDeadlineOpportunity(data, requestId, config) {
   const college = await fetchScorecardCollege(config, data);
   const deadline = await lookupDeadline(config, college);
   if (!deadline?.dueAt) {
@@ -585,7 +491,7 @@ async function upsertCollegeDeadlineOpportunity(data, requestId, config) {
       300
     ),
     externalUrl: deadline.sourceUrl ?? college.website ?? null,
-    dueAt: Timestamp.fromDate(new Date(deadline.dueAt)),
+    dueAt: deadline.dueAt,
     recurrence: {
       isYearly: month != null && day != null,
       month,
@@ -631,16 +537,12 @@ async function upsertCollegeDeadlineOpportunity(data, requestId, config) {
       sourceUrl: deadline.sourceUrl ?? null,
       sourceLabel: "Official admissions page",
       model: config.geminiModel || null,
-      fetchedAt: Timestamp.fromDate(now),
-      verifiedAt: Timestamp.fromDate(now),
+      fetchedAt: now.toISOString(),
+      verifiedAt: now.toISOString(),
     },
-    createdAt: Timestamp.fromDate(now),
-    updatedAt: Timestamp.fromDate(now),
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
   };
-
-  await db.collection("opportunities").doc(opportunityId).set(payload, {
-    merge: true,
-  });
 
   return {
     ok: true,
@@ -648,18 +550,8 @@ async function upsertCollegeDeadlineOpportunity(data, requestId, config) {
     opportunityId,
     deadlineSourceUrl: deadline.sourceUrl ?? null,
     deadlineDueAt: deadline.dueAt ?? null,
+    opportunity: payload,
   };
-}
-
-async function getOpportunityDoc(opportunityId) {
-  const normalizedId = truncate(opportunityId, 160);
-  if (!normalizedId) {
-    throw new HttpsError("invalid-argument", "Opportunity ID is required.");
-  }
-
-  const ref = db.collection("opportunities").doc(normalizedId);
-  const snapshot = await ref.get();
-  return { ref, snapshot, normalizedId };
 }
 
 function buildManualOpportunityPayload(data, now, existingData = null) {
@@ -695,7 +587,7 @@ function buildManualOpportunityPayload(data, now, existingData = null) {
         normalizeUrl(data.externalUrl) ??
         normalizeUrl(existingData?.externalUrl) ??
         null,
-      dueAt: dueAtIso ? Timestamp.fromDate(new Date(dueAtIso)) : null,
+      dueAt: dueAtIso,
       recurrence: {
         isYearly,
         month: isYearly ? month : null,
@@ -751,88 +643,35 @@ function buildManualOpportunityPayload(data, now, existingData = null) {
           null,
         sourceLabel: truncate(data.sourceLabel, 160) || "Opportunity Admin",
         model: null,
-        fetchedAt: existingData?.source?.fetchedAt ?? Timestamp.fromDate(now),
-        verifiedAt: Timestamp.fromDate(now),
+        fetchedAt: existingData?.source?.fetchedAt ?? now.toISOString(),
+        verifiedAt: now.toISOString(),
       },
-      createdAt: existingData?.createdAt ?? Timestamp.fromDate(now),
-      updatedAt: Timestamp.fromDate(now),
+      createdAt: existingData?.createdAt ?? now.toISOString(),
+      updatedAt: now.toISOString(),
     },
   };
 }
 
-async function upsertManualOpportunity(request, requestId) {
+async function normalizeManualOpportunity(request, requestId) {
   assertOpportunityAdmin(request);
   const now = new Date();
-  const requestedId = truncate(request.data?.opportunityId, 160);
-  const existingSnapshot = requestedId
-    ? await db.collection("opportunities").doc(requestedId).get()
-    : null;
-  const existingData = existingSnapshot?.exists ? existingSnapshot.data() : null;
+  const existingData =
+    request.data?.existingOpportunity && typeof request.data.existingOpportunity === "object"
+      ? request.data.existingOpportunity
+      : null;
   const { opportunityId, payload } = buildManualOpportunityPayload(
     request.data ?? {},
     now,
     existingData
   );
 
-  await db.collection("opportunities").doc(opportunityId).set(payload, {
-    merge: true,
-  });
-
   return {
     ok: true,
     requestId,
     opportunityId,
-    created: !existingSnapshot?.exists,
+    created: !existingData,
     status: payload.status,
-  };
-}
-
-async function archiveOpportunity(request, requestId) {
-  assertOpportunityAdmin(request);
-  const { ref, snapshot, normalizedId } = await getOpportunityDoc(
-    request.data?.opportunityId
-  );
-  if (!snapshot.exists) {
-    throw new HttpsError("not-found", "Opportunity record was not found.");
-  }
-
-  const archived = parseBoolean(request.data?.archived, true);
-  await ref.set(
-    {
-      status: archived ? "archived" : "active",
-      updatedAt: Timestamp.fromDate(new Date()),
-      source: {
-        ...(snapshot.data()?.source ?? {}),
-        kind: snapshot.data()?.source?.kind ?? "manual",
-        verifiedAt: Timestamp.fromDate(new Date()),
-      },
-    },
-    { merge: true }
-  );
-
-  return {
-    ok: true,
-    requestId,
-    opportunityId: normalizedId,
-    status: archived ? "archived" : "active",
-  };
-}
-
-async function deleteOpportunity(request, requestId) {
-  assertOpportunityAdmin(request);
-  const { ref, snapshot, normalizedId } = await getOpportunityDoc(
-    request.data?.opportunityId
-  );
-  if (!snapshot.exists) {
-    throw new HttpsError("not-found", "Opportunity record was not found.");
-  }
-
-  await ref.delete();
-  return {
-    ok: true,
-    requestId,
-    opportunityId: normalizedId,
-    deleted: true,
+    opportunity: payload,
   };
 }
 
@@ -856,24 +695,12 @@ exports.opportunityGateway = onCall(
       };
     }
 
-    if (action === "seedGreenRiverFoundationScholarship") {
-      return seedGreenRiverFoundationScholarship(requestId);
+    if (action === "generateCollegeDeadlineOpportunity") {
+      return generateCollegeDeadlineOpportunity(request.data ?? {}, requestId, config);
     }
 
-    if (action === "upsertCollegeDeadlineOpportunity") {
-      return upsertCollegeDeadlineOpportunity(request.data ?? {}, requestId, config);
-    }
-
-    if (action === "upsertManualOpportunity") {
-      return upsertManualOpportunity(request, requestId);
-    }
-
-    if (action === "archiveOpportunity") {
-      return archiveOpportunity(request, requestId);
-    }
-
-    if (action === "deleteOpportunity") {
-      return deleteOpportunity(request, requestId);
+    if (action === "normalizeManualOpportunity") {
+      return normalizeManualOpportunity(request, requestId);
     }
 
     throw new HttpsError("invalid-argument", "Unsupported opportunity action.");

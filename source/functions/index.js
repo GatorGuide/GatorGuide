@@ -1,13 +1,14 @@
 const { onRequest } = require("firebase-functions/v2/https");
 const { setGlobalOptions } = require("firebase-functions/v2");
-const admin = require("firebase-admin");
+const { getApps, initializeApp } = require("firebase-admin/app");
+const { getAuth } = require("firebase-admin/auth");
 const { geminiGateway } = require("./geminiGateway");
 const { opportunityGateway } = require("./opportunityGateway");
 const {
   fetchWithTimeout,
 } = require("./fetchWithTimeout");
 const {
-  FirestoreRateLimitStore,
+  MemoryRateLimitStore,
   assertBodySize,
   buildEmailPayload,
   buildRateLimitDimensions,
@@ -18,9 +19,10 @@ const {
   resolveSupportRequestIdentity,
 } = require("./supportEmail");
 
-if (!admin.apps.length) {
-  admin.initializeApp();
+if (!getApps().length) {
+  initializeApp();
 }
+const admin = { auth: () => getAuth() };
 
 setGlobalOptions({ maxInstances: 10, region: "us-central1" });
 
@@ -28,7 +30,7 @@ const SUPPORT_TO_EMAIL = "gatorguide@outlook.com";
 const SUPPORT_FROM_EMAIL = process.env.SUPPORT_FROM_EMAIL || "onboarding@resend.dev";
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const RESEND_TIMEOUT_MS = 10000;
-const supportRateLimitStore = new FirestoreRateLimitStore(admin.firestore());
+const supportRateLimitStore = new MemoryRateLimitStore();
 const supportHttpOptions = {
   cors: false,
   timeoutSeconds: 30,

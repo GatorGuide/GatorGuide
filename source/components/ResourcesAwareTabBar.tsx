@@ -4,9 +4,9 @@ import { BottomTabBar, BottomTabBarProps } from "@react-navigation/bottom-tabs";
 
 import { GlassTabBar } from "@/components/GlassTabBar";
 import {
-  PRIMARY_TAB_ROUTE_NAMES,
+  getPrimaryTabRouteNames,
+  getPrimaryTabRoutes,
   TAB_ROUTE_PRIMARY_TAB_BY_SCREEN,
-  type PrimaryTabRouteName,
 } from "@/constants/routes";
 import { useAppTheme } from "@/hooks/use-app-theme";
 import { useResponsiveLayout } from "@/hooks/use-responsive-layout";
@@ -18,7 +18,7 @@ type ResourcesAwareTabBarProps = BottomTabBarProps & {
 
 /**
  * Custom tab bar that highlights the owning primary tab for nested tool screens.
- * P15 primary tabs: Transfer Planner, Resources, Calendar, Profile.
+ * Primary tabs: Resources and Calendar.
  */
 export function ResourcesAwareTabBar({
   variant = "glass",
@@ -45,12 +45,8 @@ export function ResourcesAwareTabBar({
     }
   }
 
-  const visibleRoutes = modifiedState.routes.filter((route) =>
-    PRIMARY_TAB_ROUTE_NAMES.includes(route.name as PrimaryTabRouteName)
-  );
-  const visibleRouteNames = modifiedState.routeNames.filter((routeName) =>
-    PRIMARY_TAB_ROUTE_NAMES.includes(routeName as PrimaryTabRouteName)
-  );
+  const visibleRoutes = getPrimaryTabRoutes(modifiedState.routes);
+  const visibleRouteNames = getPrimaryTabRouteNames(modifiedState.routeNames);
   const visibleRouteKeys = new Set(visibleRoutes.map((route) => route.key));
   const filteredDescriptors = Object.fromEntries(
     visibleRoutes.map((route) => [route.key, props.descriptors[route.key]])

@@ -83,12 +83,12 @@ test("P18 TS port + calendar offline product path exist", () => {
   const tsText = fs.readFileSync(tsPort, "utf8");
   assert.match(tsText, /export function createMemoryPlannerStateRepository/);
   assert.match(tsText, /export function projectTimelineOffline/);
-  assert.match(tsText, /sync-only|not a read prerequisite/i);
+  assert.match(tsText, /local state is the source of truth/i);
 
   const bridgeText = fs.readFileSync(appBridge, "utf8");
   assert.match(bridgeText, /projectOfflineTimelineFromPlannerV2/);
   assert.match(bridgeText, /projectTimelineOffline/);
-  assert.match(bridgeText, /Firestore sync is not a read prerequisite/i);
+  assert.match(bridgeText, /Local AppData is the source of truth/i);
 
   const helperText = fs.readFileSync(calendarHelper, "utf8");
   assert.match(helperText, /projectPlannerV2OfflineCalendarEntries/);

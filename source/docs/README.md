@@ -33,10 +33,7 @@ This folder contains the mobile app's planner docs, remaining reference artifact
 ## Product And Technical Docs
 
 - [OFFLINE_ONLINE_SYNC_SPEC.md](./product/OFFLINE_ONLINE_SYNC_SPEC.md)
-  Sync behavior and data-handling spec for offline/online app workflows.
-
-- [FIREBASE_CHAT_HISTORY_SCHEMA.md](./product/FIREBASE_CHAT_HISTORY_SCHEMA.md)
-  Firebase data-structure notes for chat history.
+  Local-first private data and GitHub-hosted public opportunity catalog behavior.
 
 - [OPPORTUNITY_ADMIN_TOOL.md](./product/OPPORTUNITY_ADMIN_TOOL.md)
   Notes for the opportunity admin tool.

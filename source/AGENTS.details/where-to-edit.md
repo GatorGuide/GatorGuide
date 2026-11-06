@@ -4,7 +4,7 @@
 - Tab shell and hidden tab routes: `app/(tabs)/_layout.tsx`
 - Resources tab highlighting aliases: `components/ResourcesAwareTabBar.tsx`
 - App state and persistence: `hooks/use-app-data.tsx`
-- Firestore/local storage schema keys: `constants/schema.ts`
+- App/local storage schema keys: `constants/schema.ts`
 - Planner questionnaire storage keys: `constants/planner-storage.ts`
 - Theme values: `constants/theme-tokens.ts`
 - Theme state: `hooks/use-app-theme.tsx`

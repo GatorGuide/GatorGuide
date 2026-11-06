@@ -4,7 +4,7 @@ import {
   OPPORTUNITY_TYPES,
   type Opportunity,
 } from "@/constants/opportunities";
-import type { UpsertManualOpportunityInput } from "@/services/opportunities/opportunity-gateway.service";
+import type { NormalizeManualOpportunityInput } from "@/services/opportunities/opportunity-gateway.service";
 
 export type OpportunityAdminDraft = {
   opportunityId: string;
@@ -201,7 +201,10 @@ export function validateOpportunityAdminDraft(draft: OpportunityAdminDraft) {
   };
 }
 
-export function buildSaveInput(draft: OpportunityAdminDraft): UpsertManualOpportunityInput {
+export function buildSaveInput(
+  draft: OpportunityAdminDraft,
+  existingOpportunity?: Opportunity | null
+): NormalizeManualOpportunityInput {
   return {
     opportunityId: draft.opportunityId.trim() || null,
     type: draft.type,
@@ -239,7 +242,12 @@ export function buildSaveInput(draft: OpportunityAdminDraft): UpsertManualOpport
     collegeWebsite: draft.collegeWebsite.trim() || null,
     sourceUrl: draft.sourceUrl.trim() || null,
     sourceLabel: draft.sourceLabel.trim() || null,
+    ...(existingOpportunity ? { existingOpportunity } : {}),
   };
+}
+
+export function getPublishableOpportunityCatalog(opportunities: Opportunity[]) {
+  return opportunities.filter((opportunity) => opportunity.source.kind !== "ai_college_deadline");
 }
 
 export function formatOpportunityMeta(opportunity: Opportunity) {

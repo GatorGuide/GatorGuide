@@ -19,8 +19,10 @@ const test = require("node:test");
 const {
   buildSaveInput,
   createBlankDraft,
+  getPublishableOpportunityCatalog,
   validateOpportunityAdminDraft,
 } = require("@/components/pages/opportunity-admin/opportunity-admin-draft");
+const { STARTER_OPPORTUNITIES } = require("@/constants/starter-opportunities");
 const {
   OPPORTUNITY_DEADLINE_TYPES,
   OPPORTUNITY_STATUSES,
@@ -41,6 +43,19 @@ test("validateOpportunityAdminDraft requires title and summary before gateway sa
     title: "Missing summary",
     message: "Add a short summary before saving this opportunity.",
   });
+});
+
+test("catalog export omits locally generated deadlines until they are reviewed", () => {
+  const generated = {
+    ...STARTER_OPPORTUNITIES[0],
+    opportunityId: "generated-deadline",
+    source: { ...STARTER_OPPORTUNITIES[0].source, kind: "ai_college_deadline" },
+  };
+
+  assert.deepEqual(
+    getPublishableOpportunityCatalog([STARTER_OPPORTUNITIES[0], generated]),
+    [STARTER_OPPORTUNITIES[0]]
+  );
 });
 
 test("buildSaveInput normalizes manual admin drafts for the gateway contract", () => {

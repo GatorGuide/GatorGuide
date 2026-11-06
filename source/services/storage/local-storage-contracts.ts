@@ -9,6 +9,7 @@ export const LOCAL_STORAGE_KEYS = {
   appTheme: "app-theme",
   appLanguage: "app-language",
   opportunitiesCatalog: STORAGE_KEYS.opportunitiesCatalog,
+  opportunitiesGenerated: STORAGE_KEYS.opportunitiesGenerated,
   aiGatewayClientId: "ai:gateway:clientId:v1",
   aiLastResponse: "ai:lastResponse",
   aiLastResponseMap: "ai:lastResponseMap",
@@ -33,6 +34,8 @@ export const ZIP_GEOCODE_CACHE_PREFIX = "zip:geocode:" as const;
 
 export type LocalStorageContractId =
   | "app-data"
+  | "app-data-user"
+  | "app-data-active-user"
   | "app-theme"
   | "app-language"
   | "startup-seen"
@@ -44,13 +47,14 @@ export type LocalStorageContractId =
   | "managed-notifications"
   | "error-log-queue"
   | "opportunities-catalog"
+  | "opportunities-generated"
   | "opportunities-guest-statuses"
   | "opportunities-guest-pending"
-  | "saved-colleges-pending"
   | "opportunity-statuses"
   | "opportunity-pending"
   | "profile-document"
   | "roadmap-document"
+  | "roadmap-data"
   | "college-cache"
   | "college-cache-marker"
   | "zip-geocode-cache"
@@ -128,11 +132,31 @@ export const LOCAL_STORAGE_CONTRACTS = [
   {
     category: "user-state",
     clearWithCache: false,
-    debugDescription: "Versioned app data envelope; exported as the top-level data payload.",
+    debugDescription: "Versioned app data envelope for legacy and guest sessions.",
     exportPolicy: "app-data-payload",
     id: "app-data",
     key: STORAGE_KEYS.appData,
     match: "exact",
+    valueKind: "json",
+  },
+  {
+    category: "profile-state",
+    clearWithCache: false,
+    debugDescription: "Active signed-in local profile identifier.",
+    exportPolicy: "none",
+    id: "app-data-active-user",
+    key: STORAGE_KEYS.appDataActiveUser,
+    match: "exact",
+    valueKind: "string",
+  },
+  {
+    category: "user-state",
+    clearWithCache: false,
+    debugDescription: "Private versioned app-data snapshot scoped to one signed-in user.",
+    exportPolicy: "none",
+    id: "app-data-user",
+    match: "prefix",
+    prefix: STORAGE_KEYS.appDataUserPrefix,
     valueKind: "json",
   },
   {
@@ -246,6 +270,16 @@ export const LOCAL_STORAGE_CONTRACTS = [
     valueKind: "json",
   },
   {
+    category: "cache",
+    clearWithCache: true,
+    debugDescription: "Locally generated public college-deadline opportunity records.",
+    exportPolicy: "none",
+    id: "opportunities-generated",
+    key: LOCAL_STORAGE_KEYS.opportunitiesGenerated,
+    match: "exact",
+    valueKind: "json",
+  },
+  {
     category: "profile-state",
     clearWithCache: true,
     debugDescription: "Guest opportunity progress statuses.",
@@ -266,13 +300,13 @@ export const LOCAL_STORAGE_CONTRACTS = [
     valueKind: "json",
   },
   {
-    category: "pending-sync",
+    category: "profile-state",
     clearWithCache: false,
-    debugDescription: "Saved-college mutations queued per signed-in user.",
+    debugDescription: "Private roadmap state stored locally for the signed-in user.",
     exportPolicy: "current-user",
-    id: "saved-colleges-pending",
+    id: "roadmap-data",
     match: "prefix",
-    prefix: STORAGE_KEYS.savedCollegesPendingPrefix,
+    prefix: STORAGE_KEYS.roadmapDataPrefix,
     valueKind: "json",
   },
   {
@@ -442,8 +476,12 @@ export function getLocalStorageOwnerContext(
   };
 }
 
-export function getSavedCollegesPendingStorageKey(userId: string) {
-  return `${STORAGE_KEYS.savedCollegesPendingPrefix}${userId}`;
+export function getUserAppDataStorageKey(userId: string) {
+  return `${STORAGE_KEYS.appDataUserPrefix}${userId}`;
+}
+
+export function getUserRoadmapStorageKey(userId: string) {
+  return `${STORAGE_KEYS.roadmapDataPrefix}${encodeURIComponent(userId)}`;
 }
 
 export function getOpportunityStatusesStorageKey(userKey: string) {

@@ -321,7 +321,7 @@ export default function OnboardingPage() {
     await setOnboardingSeen(true);
 
     if (hasCompletedSetup) {
-      router.replace(ROUTES.tabs);
+      router.replace(ROUTES.tabsResources);
     } else {
       router.replace(ROUTES.profileSetup);
     }

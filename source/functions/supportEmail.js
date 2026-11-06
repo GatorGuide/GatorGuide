@@ -1,6 +1,5 @@
 const crypto = require("node:crypto");
 
-const SUPPORT_RATE_LIMIT_COLLECTION = "supportEmailRateLimits";
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const DEFAULT_MAX_BODY_BYTES = 32 * 1024;
 const MAX_RESPONSE_DETAIL_CHARS = 800;
@@ -253,12 +252,20 @@ function buildRateLimitDimensions(endpoint, identity, env = process.env) {
 class MemoryRateLimitStore {
   constructor() {
     this.entries = new Map();
+    this.lastCleanupAt = 0;
   }
 
   async consume({ key, limit, windowMs, now = Date.now() }) {
+    if (now - this.lastCleanupAt >= 60_000) {
+      for (const [entryKey, entry] of this.entries) {
+        if (entry.expiresAt <= now) this.entries.delete(entryKey);
+      }
+      this.lastCleanupAt = now;
+    }
+
     const bucketStartMs = Math.floor(now / windowMs) * windowMs;
     const bucketKey = `${key}:${bucketStartMs}`;
-    const current = this.entries.get(bucketKey) ?? 0;
+    const current = this.entries.get(bucketKey)?.count ?? 0;
     if (current >= limit) {
       return {
         allowed: false,
@@ -268,63 +275,16 @@ class MemoryRateLimitStore {
       };
     }
 
-    this.entries.set(bucketKey, current + 1);
+    this.entries.set(bucketKey, {
+      count: current + 1,
+      expiresAt: bucketStartMs + windowMs * 2,
+    });
     return {
       allowed: true,
       count: current + 1,
       limit,
       retryAfterSeconds: 0,
     };
-  }
-}
-
-class FirestoreRateLimitStore {
-  constructor(db, options = {}) {
-    this.db = db;
-    this.collectionName = options.collectionName || SUPPORT_RATE_LIMIT_COLLECTION;
-  }
-
-  async consume({ key, limit, windowMs, now = Date.now() }) {
-    const bucketStartMs = Math.floor(now / windowMs) * windowMs;
-    const retryAfterSeconds = Math.max(1, Math.ceil((bucketStartMs + windowMs - now) / 1000));
-    const docId = hashValue(`${key}:${bucketStartMs}`).slice(0, 80);
-    const ref = this.db.collection(this.collectionName).doc(docId);
-    let result = null;
-
-    await this.db.runTransaction(async (transaction) => {
-      const snapshot = await transaction.get(ref);
-      const current = snapshot.exists ? Number(snapshot.data()?.count ?? 0) : 0;
-      if (current >= limit) {
-        result = {
-          allowed: false,
-          count: current,
-          limit,
-          retryAfterSeconds,
-        };
-        return;
-      }
-
-      transaction.set(
-        ref,
-        {
-          keyHash: hashValue(key).slice(0, 80),
-          count: current + 1,
-          limit,
-          bucketStartAt: new Date(bucketStartMs),
-          expiresAt: new Date(bucketStartMs + windowMs * 2),
-          updatedAt: new Date(now),
-        },
-        { merge: true }
-      );
-      result = {
-        allowed: true,
-        count: current + 1,
-        limit,
-        retryAfterSeconds: 0,
-      };
-    });
-
-    return result;
   }
 }
 
@@ -460,7 +420,6 @@ module.exports = {
   MAX_MESSAGE_CHARS,
   MAX_STACK_CHARS,
   SUPPORT_ENDPOINT_CONFIG,
-  FirestoreRateLimitStore,
   MemoryRateLimitStore,
   assertBodySize,
   buildEmailPayload,

@@ -6,16 +6,13 @@ require("ts-node").register({
     moduleResolution: "node",
     jsx: "react-jsx",
     baseUrl: ".",
-    paths: {
-      "@/*": ["./*"],
-    },
+    paths: { "@/*": ["./*"] },
   },
 });
 require("tsconfig-paths/register");
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-
 const { STORAGE_KEYS } = require("@/constants/schema");
 const {
   LOCAL_STORAGE_KEYS,
@@ -29,8 +26,9 @@ const {
   getPortableLocalStorageKeysForOwner,
   getResumeStorageKey,
   getRoadmapDocumentStorageKey,
-  getSavedCollegesPendingStorageKey,
   getTranscriptStorageKey,
+  getUserAppDataStorageKey,
+  getUserRoadmapStorageKey,
   getZipGeocodeCacheKey,
   parseLocalDocumentStorageKey,
 } = require("@/services/storage/local-storage-contracts");
@@ -40,14 +38,16 @@ test("portable storage keys are scoped to the signed-in owner", () => {
   const portableKeys = getPortableLocalStorageKeysForOwner(
     [
       STORAGE_KEYS.appData,
+      STORAGE_KEYS.appDataActiveUser,
+      getUserAppDataStorageKey("user-1"),
       LOCAL_STORAGE_KEYS.appTheme,
       getResumeStorageKey("user-1"),
       getTranscriptStorageKey("user-1"),
       getAvatarStorageKey("other-user"),
       getRoadmapDocumentStorageKey("user-1", "transfer-roadmap"),
       getRoadmapDocumentStorageKey("other-user", "transfer-roadmap"),
-      getSavedCollegesPendingStorageKey("user-1"),
-      getSavedCollegesPendingStorageKey("other-user"),
+      getUserRoadmapStorageKey("user-1"),
+      getUserRoadmapStorageKey("other-user"),
       getOpportunityStatusesStorageKey("user-1"),
       getOpportunityPendingStorageKey("other-user"),
       getCollegeCacheKey("search", "nursing"),
@@ -60,8 +60,8 @@ test("portable storage keys are scoped to the signed-in owner", () => {
     getOpportunityStatusesStorageKey("user-1"),
     getResumeStorageKey("user-1"),
     getRoadmapDocumentStorageKey("user-1", "transfer-roadmap"),
-    getSavedCollegesPendingStorageKey("user-1"),
     getTranscriptStorageKey("user-1"),
+    getUserRoadmapStorageKey("user-1"),
   ].sort());
 });
 
@@ -94,15 +94,12 @@ test("document storage keys parse to local document directories", () => {
     key: getResumeStorageKey("user-1"),
     userId: "user-1",
   });
-  assert.deepEqual(
-    parseLocalDocumentStorageKey(getRoadmapDocumentStorageKey("user-1", "essay")),
-    {
-      docType: "essay",
-      kind: "roadmap",
-      key: getRoadmapDocumentStorageKey("user-1", "essay"),
-      userId: "user-1",
-    }
-  );
+  assert.deepEqual(parseLocalDocumentStorageKey(getRoadmapDocumentStorageKey("user-1", "essay")), {
+    docType: "essay",
+    kind: "roadmap",
+    key: getRoadmapDocumentStorageKey("user-1", "essay"),
+    userId: "user-1",
+  });
   assert.equal(
     getImportedLocalDocumentDirectory({
       kind: "transcript",
@@ -121,12 +118,12 @@ test("cache-clearable keys come from contract policy", () => {
     LOCAL_STORAGE_KEYS.collegeCacheCleanupVersion,
     getZipGeocodeCacheKey("98001"),
     LOCAL_STORAGE_KEYS.opportunitiesCatalog,
+    LOCAL_STORAGE_KEYS.opportunitiesGenerated,
     STORAGE_KEYS.opportunitiesGuestStatuses,
     getOpportunityPendingStorageKey("user-1"),
     LOCAL_STORAGE_KEYS.aiLastResponse,
     LOCAL_STORAGE_KEYS.aiLastAssistantResponse,
     LOCAL_STORAGE_KEYS.aiFactorCache,
-    getSavedCollegesPendingStorageKey("user-1"),
     LOCAL_STORAGE_KEYS.cacheAutoClearEnabled,
   ];
 
@@ -135,6 +132,7 @@ test("cache-clearable keys come from contract policy", () => {
     LOCAL_STORAGE_KEYS.aiLastAssistantResponse,
     LOCAL_STORAGE_KEYS.aiLastResponse,
     LOCAL_STORAGE_KEYS.opportunitiesCatalog,
+    LOCAL_STORAGE_KEYS.opportunitiesGenerated,
     STORAGE_KEYS.opportunitiesGuestStatuses,
     getCollegeCacheKey("details", "123"),
     LOCAL_STORAGE_KEYS.collegeCacheCleanupVersion,
