@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { spawnSync } = require("child_process");
 const { ensureTmpLayout, getTmpPath } = require("../lib/tmp-layout.cjs");
 const { createGrcBrowserFetcher } = require("./grc-browser-fetch.cjs");
 const {
@@ -960,129 +961,188 @@ function buildPagedCourseDescriptionUrl(courseDescriptionsExpandedUrl, pageNumbe
 }
 
 function detectCatalogPageNumbers(html) {
-  const pageNumbers = new Set([1]);
-  for (const match of html.matchAll(/filter(?:%5B|\[)cpage(?:%5D|\])=(\d+)/gi)) {
-    pageNumbers.add(Number.parseInt(match[1], 10));
-  }
-  const maxPageNumber = Math.max(...pageNumbers);
-  if (Number.isFinite(maxPageNumber) && maxPageNumber > 1) {
-    for (let pageNumber = 1; pageNumber <= maxPageNumber; pageNumber += 1) {
-      pageNumbers.add(pageNumber);
+  const manifestPath = path.resolve(REPO_ROOT, "..", "automation", "Cargo.toml");
+  const result = spawnSync(
+    "cargo",
+    [
+      "run",
+      "--offline",
+      "--locked",
+      "--quiet",
+      "--manifest-path",
+      manifestPath,
+      "--",
+      "parse-grc-catalog-page-numbers",
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      input: JSON.stringify({ html }),
+      maxBuffer: 1024 * 1024,
     }
-  }
-  return [...pageNumbers].filter(Number.isFinite).sort((left, right) => left - right);
-}
-
-function extractLabeledSectionHtml(rawBody, label) {
-  const pattern = new RegExp(
-    `<strong>\\s*${label}\\s*:<\\/strong>([\\s\\S]*?)(?=<br\\s*\\/?>\\s*<br\\s*\\/?>\\s*<strong>|<strong>\\s*(?:Course Fee|Course Outcomes|Program Outcomes|College-wide Outcomes)\\s*:<\\/strong>|$)`,
-    "i"
   );
-  const match = rawBody.match(pattern);
-  return match ? match[1] : null;
-}
-
-function extractLabeledSectionText(rawBody, label) {
-  const sectionHtml = extractLabeledSectionHtml(rawBody, label);
-  return sectionHtml === null ? null : stripHtml(sectionHtml);
-}
-
-function extractLinkedCourseCodes(sectionHtml) {
-  const codes = [];
-  for (const match of String(sectionHtml ?? "").matchAll(
-    /<a\b([^>]*)>([\s\S]*?)<\/a>/gi
-  )) {
-    if (!/(?:^|\s)href\s*=/i.test(match[1])) {
-      continue;
-    }
-    const anchorText = stripHtml(match[2]);
-    codes.push(...getSafeCourseCodeMatches(anchorText).map((courseMatch) => courseMatch.code));
+  if (result.error) {
+    throw new Error(`Could not start Rust GRC catalog pagination parser: ${result.error.message}`);
   }
-  return uniqueStrings(codes.map(normalizeCourseCode));
+  if (result.status !== 0) {
+    throw new Error(
+      `Rust GRC catalog pagination parser failed${result.stderr ? `: ${result.stderr.trim()}` : "."}`
+    );
+  }
+  try {
+    const pageNumbers = JSON.parse(result.stdout);
+    if (!Array.isArray(pageNumbers) || pageNumbers.some((value) => !Number.isFinite(value))) {
+      throw new Error("expected a finite page-number array");
+    }
+    return pageNumbers;
+  } catch (error) {
+    throw new Error(`Rust GRC catalog pagination parser returned invalid JSON: ${error.message}`);
+  }
 }
 
-function extractCredits(rawBody) {
-  const match = rawBody.match(/Credits:\s*([^<\r\n]+)/i);
-  const creditLabel = match ? normalizeWhitespace(match[1]) : null;
-  const numericMatch = creditLabel?.match(/^(\d+(?:\.\d+)?)$/);
-  return {
-    creditLabel,
-    creditValue: numericMatch ? Number.parseFloat(numericMatch[1]) : null,
-  };
+function parseGrcCourseDetails(rawBodies) {
+  if (rawBodies.length === 0) {
+    return [];
+  }
+  const manifestPath = path.resolve(REPO_ROOT, "..", "automation", "Cargo.toml");
+  const result = spawnSync(
+    "cargo",
+    [
+      "run",
+      "--offline",
+      "--locked",
+      "--quiet",
+      "--manifest-path",
+      manifestPath,
+      "--",
+      "parse-grc-course-details",
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      input: JSON.stringify({ rawBodies }),
+      maxBuffer: 4 * 1024 * 1024,
+    }
+  );
+  if (result.error) {
+    throw new Error(`Could not start Rust GRC course-details parser: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `Rust GRC course-details parser failed${result.stderr ? `: ${result.stderr.trim()}` : "."}`
+    );
+  }
+  try {
+    const details = JSON.parse(result.stdout);
+    if (
+      !Array.isArray(details) ||
+      details.length !== rawBodies.length ||
+      details.some((entry) => !entry || typeof entry !== "object")
+    ) {
+      throw new Error("expected one course-details object per raw course body");
+    }
+    return details;
+  } catch (error) {
+    throw new Error(`Rust GRC course-details parser returned invalid JSON: ${error.message}`);
+  }
 }
 
-function extractCourseDescription(rawBody) {
-  const withoutCredits = rawBody.replace(/^\s*Credits:\s*[^<\r\n]+/i, "");
-  const beforeRequirement = withoutCredits.split(/<br\s*\/?>\s*<br\s*\/?>\s*<strong>\s*(?:Enrollment Requirement|Enrollment Prerequisite|Satisfies Requirement|Course Fee|Course Outcomes|Program Outcomes|College-wide Outcomes)\s*:/i)[0];
-  const description = stripHtml(beforeRequirement);
-  return description || null;
+function parseGrcCourseCatalog(html) {
+  const manifestPath = path.resolve(REPO_ROOT, "..", "automation", "Cargo.toml");
+  const result = spawnSync(
+    "cargo",
+    [
+      "run",
+      "--offline",
+      "--locked",
+      "--quiet",
+      "--manifest-path",
+      manifestPath,
+      "--",
+      "parse-grc-course-catalog",
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      input: JSON.stringify({ html }),
+      maxBuffer: 8 * 1024 * 1024,
+    }
+  );
+  if (result.error) {
+    throw new Error(`Could not start Rust GRC course-catalog parser: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `Rust GRC course-catalog parser failed${result.stderr ? `: ${result.stderr.trim()}` : "."}`
+    );
+  }
+  try {
+    const sections = JSON.parse(result.stdout);
+    if (
+      !Array.isArray(sections) ||
+      sections.some(
+        (section) =>
+          !section ||
+          typeof section.headingText !== "string" ||
+          (section.courseCodeCandidate !== null &&
+            typeof section.courseCodeCandidate !== "string") ||
+          (section.courseTitleCandidate !== null &&
+            typeof section.courseTitleCandidate !== "string") ||
+          typeof section.courseCodeSyntaxValid !== "boolean" ||
+          !section.details ||
+          typeof section.details !== "object" ||
+          !Array.isArray(section.details.enrollmentRequirementLinkedCourseCodeCandidates)
+      )
+    ) {
+      throw new Error("expected heading text and parsed details for every course section");
+    }
+    return sections;
+  } catch (error) {
+    throw new Error(`Rust GRC course-catalog parser returned invalid JSON: ${error.message}`);
+  }
 }
 
 function classifyGrcGeneralEducationRequirementTags(value) {
-  const normalized = normalizeWhitespace(value).toLowerCase();
-  if (!normalized) {
-    return [];
-  }
-
-  const tags = new Set();
-  if (/\bbasic skills\s*\/\s*communication\b|\bwritten communication\b/.test(normalized)) {
-    tags.add("COMM");
-  }
-  if (/\bquantitative\b|\bsymbolic reasoning\b|\bquantitative skills\b|\bbasic skills requirement\b/.test(normalized)) {
-    tags.add("QSR");
-  }
-  if (/\bhumanities\b|\bfine arts\b|\benglish\b/.test(normalized)) {
-    tags.add("AH");
-  }
-  if (/\bsocial science\b|\bsocial sciences\b/.test(normalized)) {
-    tags.add("SSC");
-  }
-  if (/\bnatural science\b|\bnatural sciences\b|\blab science\b/.test(normalized)) {
-    tags.add("NSC");
-  }
-  if (/\bdiversity\b/.test(normalized)) {
-    tags.add("DIV");
-  }
-
-  return GRC_GENERAL_ED_TAG_ORDER.filter((tag) => tags.has(tag));
+  const safeText = String(value ?? "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return parseGrcCourseDetails([`<strong>Satisfies Requirement:</strong>${safeText}`])[0]
+    ?.generalEducationTags ?? [];
 }
 
 function buildCourseEntries(html, catalogYearLabel, courseDescriptionsSourceUrl) {
-  const headingPattern = /<h3[^>]*>([\s\S]*?)<\/h3>/gi;
-  const headings = [...html.matchAll(headingPattern)];
+  const courseSections = parseGrcCourseCatalog(html);
   const entries = [];
 
-  for (let index = 0; index < headings.length; index += 1) {
-    const heading = headings[index];
-    const nextHeading = headings[index + 1];
-    const headingText = stripHtml(heading[1]);
-    const titleMatch = headingText.match(/^(.+?)\s+-\s+(.+)$/);
-
-    if (!titleMatch) {
+  for (let index = 0; index < courseSections.length; index += 1) {
+    const courseSection = courseSections[index];
+    if (
+      courseSection.courseCodeCandidate === null ||
+      courseSection.courseTitleCandidate === null ||
+      !courseSection.courseCodeSyntaxValid
+    ) {
       continue;
     }
 
-    const rawCode = normalizeCourseCode(titleMatch[1]);
-    const title = normalizeWhitespace(titleMatch[2]);
-    if (!/^[A-Z0-9 &]+\s+\d{1,3}(?:\.\d+)?[A-Z]?$/.test(rawCode)) {
-      continue;
-    }
-
-    const bodyStart = heading.index + heading[0].length;
-    const bodyEnd = nextHeading?.index ?? html.length;
-    const rawBody = html.slice(bodyStart, bodyEnd);
-    const credits = extractCredits(rawBody);
-    const enrollmentRequirementHtml = extractLabeledSectionHtml(
-      rawBody,
-      "(?:Enrollment Requirement|Enrollment Prerequisite)"
+    const rawCode = normalizeCourseCode(courseSection.courseCodeCandidate);
+    const title = normalizeWhitespace(courseSection.courseTitleCandidate);
+    const courseDetailsForHeading = courseSection.details;
+    const enrollmentRequirement = courseDetailsForHeading.enrollmentRequirement;
+    const linkedEnrollmentCourseCodes = uniqueStrings(
+      courseDetailsForHeading.enrollmentRequirementLinkedCourseCodeCandidates.map(
+        normalizeCourseCode
+      )
     );
-    const enrollmentRequirement =
-      enrollmentRequirementHtml === null ? null : stripHtml(enrollmentRequirementHtml);
-    const linkedEnrollmentCourseCodes = extractLinkedCourseCodes(enrollmentRequirementHtml);
-    const corequisiteRequirement = extractLabeledSectionText(rawBody, "Corequisite");
-    const satisfiesRequirement = extractLabeledSectionText(rawBody, "Satisfies Requirement");
-    const description = extractCourseDescription(rawBody);
-    const parsedEnrollmentRequirement = parseGrcEnrollmentRequirementText(enrollmentRequirement);
+    const corequisiteRequirement = courseDetailsForHeading.corequisiteRequirement;
+    const satisfiesRequirement = courseDetailsForHeading.satisfiesRequirement;
+    const rustEnrollmentPaths = courseDetailsForHeading.enrollmentCourseCodePaths;
+    const rustEnrollmentCorequisitePaths =
+      courseDetailsForHeading.enrollmentCorequisiteCourseCodePaths;
+    const parsedEnrollmentRequirement =
+      Array.isArray(rustEnrollmentPaths) || Array.isArray(rustEnrollmentCorequisitePaths)
+        ? materializeParsedRequirementFields(
+            uniqueCoursePaths(rustEnrollmentPaths ?? []),
+            uniqueCoursePaths(rustEnrollmentCorequisitePaths ?? [])
+          )
+        : parseGrcEnrollmentRequirementText(enrollmentRequirement);
     // Links corroborate text candidates; absence of a link alone cannot disprove a prerequisite.
     const parsedEnrollmentCourseCodes = uniqueStrings([
       ...(parsedEnrollmentRequirement.prerequisiteCourseCodes ?? []),
@@ -1093,9 +1153,11 @@ function buildCourseEntries(html, catalogYearLabel, courseDescriptionsSourceUrl)
     const unlinkedEnrollmentCourseCodes = linkedEnrollmentCourseCodes.length
       ? parsedEnrollmentCourseCodes.filter((code) => !linkedEnrollmentCourseCodes.includes(code))
       : [];
-    const parsedCorequisiteRequirement = parseGrcCorequisiteText(corequisiteRequirement);
-    const grcGeneralEducationTags =
-      classifyGrcGeneralEducationRequirementTags(satisfiesRequirement);
+    const rustCorequisitePaths = courseDetailsForHeading.corequisiteCourseCodePaths;
+    const parsedCorequisiteRequirement = Array.isArray(rustCorequisitePaths)
+      ? materializeParsedRequirementFields([], uniqueCoursePaths(rustCorequisitePaths))
+      : parseGrcCorequisiteText(corequisiteRequirement);
+    const grcGeneralEducationTags = courseDetailsForHeading.generalEducationTags;
     const hasStructuredRequirementFields =
       parsedEnrollmentRequirement.hasStructuredRequirementFields ||
       parsedCorequisiteRequirement.hasStructuredRequirementFields;
@@ -1108,9 +1170,9 @@ function buildCourseEntries(html, catalogYearLabel, courseDescriptionsSourceUrl)
       schoolId: "grc",
       code: rawCode,
       title,
-      creditValue: credits.creditValue,
-      creditLabel: credits.creditLabel,
-      catalogDescription: description,
+      creditValue: courseDetailsForHeading.creditValue,
+      creditLabel: courseDetailsForHeading.creditLabel,
+      catalogDescription: courseDetailsForHeading.catalogDescription,
       ...(grcGeneralEducationTags.length
         ? {
             grcGeneralEducationCategories: [

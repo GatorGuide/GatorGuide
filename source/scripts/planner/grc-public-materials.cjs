@@ -1,4 +1,6 @@
 const fs = require("fs");
+const path = require("path");
+const { spawnSync } = require("child_process");
 const { fetchTextWithHandling } = require("../lib/fetch-with-handling.cjs");
 const {
   SOURCE_ROOT,
@@ -25,37 +27,6 @@ function ensureTmpDir() {
   ensurePlannerTmpLayout();
 }
 
-const HTML_ENTITY_DECODERS = {
-  nbsp: " ",
-  amp: "&",
-  quot: '"',
-  "#39": "'",
-  apos: "'",
-};
-
-function decodeKnownHtmlEntities(value) {
-  return String(value ?? "").replace(/&(nbsp|amp|quot|#39|apos);/gi, (match, entityName) => {
-    const normalizedEntityName = String(entityName ?? "").toLowerCase();
-    return Object.prototype.hasOwnProperty.call(HTML_ENTITY_DECODERS, normalizedEntityName)
-      ? HTML_ENTITY_DECODERS[normalizedEntityName]
-      : match;
-  });
-}
-
-function normalizeWhitespace(value) {
-  return decodeKnownHtmlEntities(value)
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function decodeHtmlAttribute(value) {
-  return decodeKnownHtmlEntities(value);
-}
-
-function stripHtml(value) {
-  return normalizeWhitespace(String(value ?? "").replace(/<[^>]+>/g, " "));
-}
-
 function compareAcademicYearLabels(left, right) {
   const leftStart = getAcademicYearStart(left);
   const rightStart = getAcademicYearStart(right);
@@ -78,21 +49,15 @@ function sortAcademicYearLabels(labels, direction = "asc") {
 }
 
 function filterRelevantAnnualSchedules(annualSchedules, currentCatalogYearLabel) {
-  const currentStartYear = getAcademicYearStart(currentCatalogYearLabel);
-  if (!Number.isFinite(currentStartYear)) {
-    return annualSchedules;
+  const schedules = runRustGrcParser(
+    "filter-grc-annual-schedules",
+    { annualSchedules, currentCatalogYearLabel },
+    "GRC annual-schedule filter"
+  );
+  if (!Array.isArray(schedules)) {
+    throw new Error("Rust GRC annual-schedule filter returned invalid schedule data");
   }
-
-  const minimumStartYear = currentStartYear - 1;
-  return annualSchedules.filter((entry) => getAcademicYearStart(entry.label) >= minimumStartYear);
-}
-
-function toAbsoluteUrl(value, baseUrl) {
-  try {
-    return new URL(decodeHtmlAttribute(value).trim(), baseUrl).href;
-  } catch {
-    return null;
-  }
+  return schedules;
 }
 
 function slugifyAcademicYear(label) {
@@ -114,69 +79,88 @@ async function fetchText(url) {
   });
 }
 
-function extractAnchorMatches(html) {
-  return [...String(html ?? "").matchAll(/<a\b[^>]*href=(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi)];
+function runRustGrcParser(command, input, parserLabel) {
+  const manifestPath = path.resolve(REPO_ROOT, "..", "automation", "Cargo.toml");
+  const result = spawnSync(
+    "cargo",
+    [
+      "run",
+      "--offline",
+      "--locked",
+      "--quiet",
+      "--manifest-path",
+      manifestPath,
+      "--",
+      command,
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      input: JSON.stringify(input),
+      maxBuffer: 1024 * 1024,
+    }
+  );
+  if (result.error) {
+    throw new Error(`Could not start Rust ${parserLabel} parser: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `Rust ${parserLabel} parser failed${result.stderr ? `: ${result.stderr.trim()}` : "."}`
+    );
+  }
+  try {
+    return JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(`Rust ${parserLabel} parser returned invalid JSON: ${error.message}`);
+  }
 }
 
 function extractGrcAnnualSchedules(html, baseUrl = GRC_CLASS_SCHEDULES_URL) {
-  const byLabel = new Map();
-
-  for (const match of extractAnchorMatches(html)) {
-    const href = match[2];
-    const text = stripHtml(match[3]);
-    const sourceText = `${text} ${href}`;
-    const labelMatch = sourceText.match(/\b(20\d{2}-20\d{2})\b/);
-    if (!labelMatch || !/annual schedule/i.test(sourceText) || !/\.pdf(?:$|[?#])/i.test(href)) {
-      continue;
-    }
-
-    const label = labelMatch[1];
-    const url = toAbsoluteUrl(href, baseUrl);
-    if (!url) {
-      continue;
-    }
-
-    byLabel.set(label, {
-      label,
-      url,
-      outputPath: buildAnnualScheduleSnapshotPath(label),
-      ownerId: `grc-annual-schedule-${slugifyAcademicYear(label)}`,
-      sourcePageUrl: baseUrl,
-    });
+  const candidates = runRustGrcParser(
+    "parse-grc-annual-schedule-candidates",
+    { html, baseUrl },
+    "GRC annual-schedule"
+  );
+  if (
+    !Array.isArray(candidates) ||
+    candidates.some(
+      (candidate) =>
+        !candidate ||
+        typeof candidate.label !== "string" ||
+        typeof candidate.url !== "string" ||
+        typeof candidate.sourcePageUrl !== "string"
+    )
+  ) {
+    throw new Error("Rust GRC annual-schedule parser returned invalid candidate data");
   }
-
-  return sortAcademicYearLabels([...byLabel.keys()])
-    .map((label) => byLabel.get(label))
-    .filter(Boolean);
+  return candidates.map(({ label, url, sourcePageUrl }) => ({
+    label,
+    url,
+    outputPath: buildAnnualScheduleSnapshotPath(label),
+    ownerId: `grc-annual-schedule-${slugifyAcademicYear(label)}`,
+    sourcePageUrl,
+  }));
 }
 
 function extractGrcCatalogArchiveEntries(html, baseUrl = GRC_CATALOG_ARCHIVE_URL) {
-  const byLabel = new Map();
-
-  for (const match of extractAnchorMatches(html)) {
-    const href = match[2];
-    const text = stripHtml(match[3]);
-    const titleMatch = text.match(/Green River College\s+(20\d{2}-20\d{2})\s+Catalog/i);
-    if (!titleMatch) {
-      continue;
-    }
-
-    const label = titleMatch[1];
-    const url = toAbsoluteUrl(href, baseUrl);
-    if (!url) {
-      continue;
-    }
-
-    byLabel.set(label, {
-      label,
-      url,
-      sourcePageUrl: baseUrl,
-    });
+  const entries = runRustGrcParser(
+    "parse-grc-catalog-archive-entries",
+    { html, baseUrl },
+    "GRC catalog-archive"
+  );
+  if (
+    !Array.isArray(entries) ||
+    entries.some(
+      (entry) =>
+        !entry ||
+        typeof entry.label !== "string" ||
+        typeof entry.url !== "string" ||
+        typeof entry.sourcePageUrl !== "string"
+    )
+  ) {
+    throw new Error("Rust GRC catalog-archive parser returned invalid entry data");
   }
-
-  return sortAcademicYearLabels([...byLabel.keys()], "desc")
-    .map((label) => byLabel.get(label))
-    .filter(Boolean);
+  return entries;
 }
 
 function extractCurrentGrcCatalogDetails(
@@ -184,44 +168,28 @@ function extractCurrentGrcCatalogDetails(
   catalogRootUrl,
   expectedCatalogYearLabel
 ) {
-  let courseDescriptionsUrl = null;
-
-  for (const match of extractAnchorMatches(html)) {
-    const href = match[2];
-    const text = stripHtml(match[3]);
-    if (!/course descriptions/i.test(text)) {
-      continue;
-    }
-    courseDescriptionsUrl = toAbsoluteUrl(href, catalogRootUrl);
-    if (courseDescriptionsUrl) {
-      break;
-    }
+  const currentCatalog = runRustGrcParser(
+    "parse-grc-current-catalog-details",
+    { html, catalogRootUrl, expectedCatalogYearLabel },
+    "GRC current-catalog"
+  );
+  const requiredStringFields = [
+    "label",
+    "rootUrl",
+    "sourcePageUrl",
+    "courseDescriptionsUrl",
+    "courseDescriptionsExpandedUrl",
+  ];
+  if (
+    !currentCatalog ||
+    typeof currentCatalog !== "object" ||
+    requiredStringFields.some((field) => typeof currentCatalog[field] !== "string") ||
+    (currentCatalog.catoid !== null && typeof currentCatalog.catoid !== "string") ||
+    (currentCatalog.navoid !== null && typeof currentCatalog.navoid !== "string")
+  ) {
+    throw new Error("Rust GRC current-catalog parser returned invalid catalog details");
   }
-
-  if (!courseDescriptionsUrl) {
-    throw new Error(`Could not find the current Green River course descriptions link on ${catalogRootUrl}`);
-  }
-
-  const parsedCourseDescriptionsUrl = new URL(courseDescriptionsUrl);
-  const sourceUrl = new URL(courseDescriptionsUrl);
-  sourceUrl.searchParams.delete("expand");
-  sourceUrl.searchParams.delete("print");
-
-  const expandedUrl = new URL(courseDescriptionsUrl);
-  expandedUrl.searchParams.set("expand", "1");
-  if (!expandedUrl.searchParams.has("print")) {
-    expandedUrl.searchParams.set("print", "");
-  }
-
-  return {
-    label: expectedCatalogYearLabel,
-    rootUrl: catalogRootUrl,
-    sourcePageUrl: catalogRootUrl,
-    courseDescriptionsUrl: sourceUrl.href,
-    courseDescriptionsExpandedUrl: expandedUrl.href,
-    catoid: parsedCourseDescriptionsUrl.searchParams.get("catoid") ?? null,
-    navoid: parsedCourseDescriptionsUrl.searchParams.get("navoid") ?? null,
-  };
+  return currentCatalog;
 }
 
 function buildPagedGrcCourseDescriptionsUrl(courseDescriptionsUrl, pageNumber) {

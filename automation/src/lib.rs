@@ -1,3 +1,5 @@
+pub mod planner;
+
 use chrono::{SecondsFormat, Utc};
 use reqwest::blocking::{Client, Response};
 use scraper::{Html, Selector};
