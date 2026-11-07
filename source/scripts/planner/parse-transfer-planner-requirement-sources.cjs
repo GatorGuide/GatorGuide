@@ -44,6 +44,10 @@ try {
 }
 const parserRules = require("./parser-rule-utils.cjs");
 const {
+  parseSequenceCourseCodes,
+  parseSequenceInlineSegments,
+} = require("./lib/rust-sequence-parser.cjs");
+const {
   CHOICE_COUNT_WORDS_PATTERN,
   CHOICE_LIST_START_PATTERN,
   CHOICE_REQUIREMENT_CONTEXT_PATTERN,
@@ -5413,7 +5417,7 @@ function sequenceRowLooksLikeSinglePath(rowLine, rowCourseCodes, expectedSubject
   return sequenceRowSubjectsFitCue(rowCourseCodes, expectedSubjects);
 }
 
-function parseSequencePathSegmentsFromInlineText(text, fallbackSubject = null) {
+function splitInlineSequenceSegmentsWithNode(text) {
   const normalizedText = normalizeWhitespace(
     text
       .replace(/\(\s*or\s+/gi, " or ")
@@ -5421,14 +5425,27 @@ function parseSequencePathSegmentsFromInlineText(text, fallbackSubject = null) {
       .replace(/\s+-OR-\s+/gi, " or ")
       .replace(/\s+\+\s+/g, ", ")
   );
-  const segments = normalizedText
+  return normalizedText
     .split(/\s*;\s*or\s+|\s+or\s+/i)
     .map(normalizeWhitespace)
     .filter(Boolean);
+}
+
+function parseSequencePathSegmentsFromInlineText(
+  text,
+  fallbackSubject = null,
+  rustSegments = null,
+  rustCourseCodeSets = null
+) {
+  const segments = Array.isArray(rustSegments)
+    ? rustSegments
+    : splitInlineSequenceSegmentsWithNode(text);
 
   return segments
-    .map((segment) => {
-      const uwCourses = extractCourseCodesFromSequenceText(segment, fallbackSubject);
+    .map((segment, index) => {
+      const uwCourses = Array.isArray(rustCourseCodeSets)
+        ? rustCourseCodeSets[index] ?? []
+        : extractCourseCodesFromSequenceText(segment, fallbackSubject);
       return {
         label: getSequencePathLabelFromText(segment, uwCourses),
         uwCourses,
@@ -8579,7 +8596,7 @@ function buildSequenceChoiceRequirementGroup(owner, candidate) {
 }
 
 function buildLetteredChooseOneRequirementGroups(owner, snapshotLines) {
-  const groups = [];
+  const candidates = [];
   const seenGroupIds = new Set();
 
   for (let index = 0; index < (snapshotLines ?? []).length; index += 1) {
@@ -8617,18 +8634,68 @@ function buildLetteredChooseOneRequirementGroups(owner, snapshotLines) {
       continue;
     }
 
-    const fallbackSubject = getSequenceFallbackSubjectFromContext(snapshotLines, index, heading);
-    const paths = [];
-    for (const optionLine of optionLines) {
+    candidates.push({
+      heading,
+      optionLines,
+      fallbackSubject: getSequenceFallbackSubjectFromContext(snapshotLines, index, heading),
+    });
+  }
+
+  const flattenedOptionTexts = candidates.flatMap((candidate) =>
+    candidate.optionLines.map((optionLine) => normalizeWhitespace(optionLine.text))
+  );
+  const rustSegments = parseSequenceInlineSegments(flattenedOptionTexts);
+  let optionIndex = 0;
+  const candidateSegments = candidates.map((candidate) =>
+    candidate.optionLines.map((optionLine) => {
       const optionText = normalizeWhitespace(optionLine.text);
-      const inlinePaths = parseSequencePathSegmentsFromInlineText(optionText, fallbackSubject);
+      const segments = rustSegments?.[optionIndex] ?? splitInlineSequenceSegmentsWithNode(optionText);
+      optionIndex += 1;
+      return segments;
+    })
+  );
+  const sequenceCourseCodeRows = [];
+  for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+    const candidate = candidates[candidateIndex];
+    for (const segments of candidateSegments[candidateIndex]) {
+      for (const segment of segments) {
+        const normalizedCourseText = normalizeSequenceSourceLine(segment);
+        sequenceCourseCodeRows.push({
+          text: normalizedCourseText,
+          fallbackSubject: normalizeExtractedCourseSubject(candidate.fallbackSubject ?? ""),
+          explicitCourseCodes: uniqueInOrder(extractCourseCodesFromLine(normalizedCourseText)),
+        });
+      }
+    }
+  }
+  const rustCourseCodeSets = parseSequenceCourseCodes(sequenceCourseCodeRows);
+  let courseCodeRowIndex = 0;
+  const groups = [];
+
+  for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+    const candidate = candidates[candidateIndex];
+    const paths = [];
+    for (let optionIndex = 0; optionIndex < candidate.optionLines.length; optionIndex += 1) {
+      const optionLine = candidate.optionLines[optionIndex];
+      const optionText = normalizeWhitespace(optionLine.text);
+      const segments = candidateSegments[candidateIndex][optionIndex];
+      const optionCourseCodeSets = Array.isArray(rustCourseCodeSets)
+        ? rustCourseCodeSets.slice(courseCodeRowIndex, courseCodeRowIndex + segments.length)
+        : null;
+      courseCodeRowIndex += segments.length;
+      const inlinePaths = parseSequencePathSegmentsFromInlineText(
+        optionText,
+        candidate.fallbackSubject,
+        segments,
+        optionCourseCodeSets
+      );
       if (inlinePaths.length) {
         paths.push(...inlinePaths);
         continue;
       }
 
       const uwCourses = uniqueInOrder(
-        extractCourseCodesFromSequenceText(optionText, fallbackSubject)
+        extractCourseCodesFromSequenceText(optionText, candidate.fallbackSubject)
       );
       if (uwCourses.length) {
         paths.push({
@@ -8640,8 +8707,10 @@ function buildLetteredChooseOneRequirementGroups(owner, snapshotLines) {
     }
 
     const group = buildSequenceChoiceRequirementGroup(owner, {
-      rawText: normalizeWhitespace(`${heading}: ${optionLines.map((line) => line.text).join(" ")}`),
-      sourceSection: heading,
+      rawText: normalizeWhitespace(
+        `${candidate.heading}: ${candidate.optionLines.map((line) => line.text).join(" ")}`
+      ),
+      sourceSection: candidate.heading,
       detectedOptionCue: "lettered choose-one options",
       paths,
     });

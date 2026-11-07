@@ -1,0 +1,77 @@
+name: Transfer Category Equivalencies Monthly Refresh
+
+on:
+  schedule:
+    - cron: "0 12 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gator-guide-refresh-and-pages
+  cancel-in-progress: false
+
+jobs:
+  refresh-transfer-equivalencies:
+    if: github.ref == 'refs/heads/main'
+    name: Refresh UW Green River equivalencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install app dependencies
+        working-directory: source
+        run: npm ci
+
+      - name: Check Rust automation
+        run: |
+          cargo fmt --manifest-path automation/Cargo.toml -- --check
+          cargo test --locked --manifest-path automation/Cargo.toml
+
+      - name: Verify monthly refresh contract
+        working-directory: source
+        run: node --test scripts/planner/transfer-category-equivalencies-monthly.contract.test.cjs
+
+      - name: Refresh UW Green River Equivalency Guide data
+        working-directory: source
+        run: node scripts/planner/parse-transfer-planner-equivalency-guide.cjs
+
+      - name: Publish refreshed equivalencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- \
+            source/constants/transfer-planner-source/equivalency-guide.generated.ts \
+            source/constants/transfer-equivalency-catalog.generated.ts
+          git diff --cached --check
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(equivalencies): monthly UW guide refresh"
+            if ! git push origin HEAD:main; then
+              git fetch origin main
+              git merge --no-edit origin/main
+              git push origin HEAD:main
+            fi
+          else
+            echo "Transfer equivalency data is unchanged; no data commit is needed."
+          fi

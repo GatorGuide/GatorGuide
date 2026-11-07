@@ -29,6 +29,8 @@ npm run planner:verify
 npm run planner:full:verify
 ```
 
+The UW Green River guide parser also renders `constants/transfer-equivalency-catalog.generated.ts` through the Rust catalog projection. The monthly `.github/workflows/transfer-category-equivalencies-monthly.yml` task uses this same parser and commits only these two equivalency outputs when they change.
+
 Useful planner reports under `.tmp/reports/`, especially:
 
 - `.tmp/reports/transfer-planner-maintenance-summary.md`

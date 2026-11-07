@@ -50,7 +50,7 @@ npm run planner:verify
 npm run planner:full:verify
 ```
 
-From repo root, `cd source` first unless root launcher like `Start-to-run.bat` or `Course-Planner-Updater.bat` explicitly involved.
+From repo root, `cd source` first unless root launcher like `Start-to-run.exe` or `Course-Planner-Updater.exe` explicitly involved.
 
 ## Generated File Rule
 

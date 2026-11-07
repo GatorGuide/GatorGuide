@@ -31,7 +31,7 @@ npm run planner:verify
 npm run planner:full:verify
 ```
 
-Repo-root launchers like `Start-to-run.bat` and `Course-Planner-Updater.bat` are exceptions.
+Repo-root Rust launchers like `Start-to-run.exe` and `Course-Planner-Updater.exe` are exceptions.
 
 ## Core Conventions
 

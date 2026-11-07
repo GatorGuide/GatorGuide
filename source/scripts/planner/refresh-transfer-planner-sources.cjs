@@ -926,10 +926,19 @@ async function main() {
 
   const getGrcPublicMaterials = async () => {
     if (!refreshContext.grcPublicMaterials) {
+      runCommand("cargo", [
+        "run",
+        "--locked",
+        "--manifest-path",
+        "../automation/Cargo.toml",
+        "--",
+        "discover-grc-materials",
+        cacheOnlySources ? "--cache-only" : "--refresh",
+      ]);
       refreshContext.grcPublicMaterials = await loadGrcPublicMaterials({
-        forceRefresh: !cacheOnlySources,
+        forceRefresh: false,
         allowSnapshotFallback: true,
-        cacheOnly: cacheOnlySources,
+        cacheOnly: true,
       });
     }
     return refreshContext.grcPublicMaterials;
@@ -1073,7 +1082,15 @@ async function main() {
       case "deadline-refresh": {
         if (!cacheOnlySources) {
           runTrackedStep("Refresh deadline sources", () =>
-            runCommand("node", ["scripts/planner/refresh-deadline-sources.cjs"])
+            runCommand("cargo", [
+              "run",
+              "--offline",
+              "--locked",
+              "--manifest-path",
+              "../automation/Cargo.toml",
+              "--",
+              "refresh-deadlines",
+            ])
           );
         }
         return;
@@ -1090,7 +1107,15 @@ async function main() {
             runCommand("node", ["scripts/planner/ingest-grc-catalog.cjs"])
           );
           runTrackedStep("Ingest UW course catalogs", () =>
-            runCommand("node", ["scripts/planner/ingest-uw-catalog.cjs"])
+            runCommand("cargo", [
+              "run",
+              "--offline",
+              "--locked",
+              "--manifest-path",
+              "../automation/Cargo.toml",
+              "--",
+              "ingest-uw-catalog",
+            ])
           );
         } else {
           reuseCachedArtifact("UW-GRC equivalency guide parse report", EQUIVALENCY_GUIDE_PARSE_REPORT_PATH);

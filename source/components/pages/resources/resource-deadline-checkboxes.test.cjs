@@ -79,6 +79,58 @@ function makeOpportunity({ opportunityId, title, type }) {
   };
 }
 
+test("Resources combines college and academic dates under GRC Deadlines", () => {
+  resetReactNativeTestState();
+  setTranslations({
+    "resources.deadlines": "Deadlines",
+    "resources.collegeDeadlines": "GRC Deadlines",
+    "resources.generalDeadlines": "General deadlines",
+    "resources.academicCalendar": "Academic calendar",
+  });
+  setOpportunities({
+    isHydrated: true,
+    matchedOpportunities: [
+      makeOpportunity({
+        opportunityId: "grc-enrollment-deadline",
+        title: "GRC enrollment deadline",
+        type: "college_deadline",
+      }),
+      makeOpportunity({
+        opportunityId: "grc-quarter-start",
+        title: "GRC quarter starts",
+        type: "quarter-start",
+      }),
+      makeOpportunity({
+        opportunityId: "grc-quarter-end",
+        title: "GRC quarter ends",
+        type: "quarter-end",
+      }),
+      makeOpportunity({
+        opportunityId: "fafsa-deadline",
+        title: "Federal FAFSA deadline",
+        type: "general_deadline",
+      }),
+    ],
+    refreshOpportunitiesIfNeeded: createSpy(async () => undefined),
+    setOpportunityDone: createSpy(async () => undefined),
+  });
+
+  const renderer = render(React.createElement(ResourcesPage));
+  pressByText(renderer, "Deadlines");
+  pressByText(renderer, "GRC Deadlines");
+
+  assert.equal(hasText(renderer, "GRC enrollment deadline"), true);
+  assert.equal(hasText(renderer, "GRC quarter starts"), true);
+  assert.equal(hasText(renderer, "GRC quarter ends"), true);
+  assert.equal(hasText(renderer, "Academic calendar"), false);
+  assert.equal(hasText(renderer, "Federal FAFSA deadline"), false);
+
+  pressByText(renderer, "General deadlines");
+  assert.equal(hasText(renderer, "Federal FAFSA deadline"), true);
+
+  unmount(renderer);
+});
+
 test("Resources hides completion checkboxes for every deadline but retains them for other opportunities", () => {
   resetReactNativeTestState();
   setTranslations({

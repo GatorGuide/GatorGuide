@@ -154,7 +154,7 @@ function applyFlowTranslations() {
     "settings.language": "Language",
     "settings.light": "Light",
     "settings.noNotifications": "No notifications",
-    "settings.notificationTypeCollegeDeadlines": "College deadlines",
+    "settings.notificationTypeCollegeDeadlines": "GRC Deadlines",
     "settings.notificationTypeGeneralDeadlines": "General deadlines",
     "settings.notificationTypeInternships": "Internships",
     "settings.notificationTypeScholarships": "Scholarships",
@@ -442,6 +442,8 @@ test("SettingsPage opens support and notification preference dialogs", async () 
 
   pressByText(renderer, "Automatic notifications");
   assert.equal(hasText(renderer, "Transfer deadlines"), true);
+  assert.equal(hasText(renderer, "GRC Deadlines"), true);
+  assert.equal(hasText(renderer, "College deadlines"), false);
   pressByAccessibilityLabel(renderer, "Transfer deadlines");
   assert.deepEqual(appData.setNotificationPreferences.calls[0], [
     {

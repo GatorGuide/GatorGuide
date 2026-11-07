@@ -1,12 +1,19 @@
 use gator_guide_automation::{
     OpportunityCategory, build_http_client, build_report,
     planner::{
-        GrcAnnualScheduleCandidatesInput, GrcAnnualScheduleFilterInput,
-        GrcCatalogArchiveEntriesInput, GrcCourseCatalogInput, GrcCourseDetailsInput,
-        GrcCurrentCatalogDetailsInput, detect_catalog_page_numbers, discover_grc_public_materials,
+        DerivedRuleSynthesisInput, EquivalencyGuideParseInput, EquivalencyGuideReportInput,
+        EquivalencyRulesOutputInput, GrcAnnualScheduleCandidatesInput,
+        GrcAnnualScheduleFilterInput, GrcCatalogArchiveEntriesInput, GrcCourseCatalogInput,
+        GrcCourseDetailsInput, GrcCurrentCatalogDetailsInput, SequenceCourseCodeInput,
+        SequenceInlineSegmentsInput, build_equivalency_guide_report, detect_catalog_page_numbers,
+        discover_grc_public_materials, expand_sequence_course_codes,
         filter_relevant_annual_schedule_values, parse_annual_schedule_candidates,
-        parse_catalog_archive_entries, parse_current_catalog_details, parse_grc_course_catalog,
-        parse_grc_course_details,
+        parse_catalog_archive_entries, parse_current_catalog_details,
+        parse_equivalency_guide_rows_with_titles, parse_grc_course_catalog,
+        parse_grc_course_details, refresh_deadlines, refresh_uw_catalog,
+        render_equivalency_guide_report_markdown, render_equivalency_guide_typescript,
+        render_transfer_equivalency_catalog_typescript, split_inline_sequence_segments,
+        synthesize_equivalency_rules,
     },
 };
 use serde_json::Value;
@@ -40,9 +47,14 @@ fn run(args: Vec<String>) -> Result<(), String> {
     match command {
         "refresh-planner" => run_planner_refresh(&repository_root),
         "discover-grc-materials" => discover_grc_materials(&repository_root, &args[1..]),
+        "refresh-deadlines" => refresh_deadlines_command(&repository_root, &args[1..]),
+        "ingest-uw-catalog" => ingest_uw_catalog_command(&repository_root, &args[1..]),
+        "parse-equivalency-guide-rows" => parse_equivalency_guide_rows_command(&args[1..]),
         "parse-grc-catalog-page-numbers" => parse_grc_catalog_page_numbers_command(&args[1..]),
         "parse-grc-course-catalog" => parse_grc_course_catalog_command(&args[1..]),
         "parse-grc-course-details" => parse_grc_course_details_command(&args[1..]),
+        "parse-sequence-inline-segments" => parse_sequence_inline_segments_command(&args[1..]),
+        "parse-sequence-course-codes" => parse_sequence_course_codes_command(&args[1..]),
         "parse-grc-annual-schedule-candidates" => {
             parse_grc_annual_schedule_candidates_command(&args[1..])
         }
@@ -53,6 +65,14 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "parse-grc-current-catalog-details" => {
             parse_grc_current_catalog_details_command(&args[1..])
         }
+        "render-equivalency-guide-typescript" => {
+            render_equivalency_guide_typescript_command(&args[1..])
+        }
+        "render-transfer-equivalency-catalog-typescript" => {
+            render_transfer_equivalency_catalog_typescript_command(&args[1..])
+        }
+        "synthesize-uw-grc-derived-rules" => synthesize_uw_grc_derived_rules_command(&args[1..]),
+        "build-equivalency-guide-report" => build_equivalency_guide_report_command(&args[1..]),
         "collect-opportunities" => collect_opportunity_candidates(&repository_root, &args[1..]),
         other => Err(format!(
             "unknown command {other:?}; run with --help for usage"
@@ -81,6 +101,26 @@ fn run_planner_refresh(repository_root: &Path) -> Result<(), String> {
     } else {
         Err(format!("planner refresh exited with status {status}"))
     }
+}
+
+fn parse_equivalency_guide_rows_command(args: &[String]) -> Result<(), String> {
+    if !args.is_empty() {
+        return Err(format!("unexpected arguments: {}", args.join(" ")));
+    }
+    let mut input_json = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input_json)
+        .map_err(|error| {
+            format!("could not read equivalency-guide parser input from stdin: {error}")
+        })?;
+    let input: EquivalencyGuideParseInput = serde_json::from_str(&input_json)
+        .map_err(|error| format!("could not decode equivalency-guide parser input: {error}"))?;
+    let rows = parse_equivalency_guide_rows_with_titles(&input.html, &input.grc_course_titles);
+    let encoded = serde_json::to_vec(&rows)
+        .map_err(|error| format!("could not encode equivalency-guide rows: {error}"))?;
+    std::io::stdout()
+        .write_all(&encoded)
+        .map_err(|error| format!("could not write equivalency-guide rows: {error}"))
 }
 
 fn parse_grc_catalog_page_numbers_command(args: &[String]) -> Result<(), String> {
@@ -141,6 +181,44 @@ fn parse_grc_course_details_command(args: &[String]) -> Result<(), String> {
     std::io::stdout()
         .write_all(&encoded)
         .map_err(|error| format!("could not write GRC course details: {error}"))
+}
+
+fn parse_sequence_inline_segments_command(args: &[String]) -> Result<(), String> {
+    if !args.is_empty() {
+        return Err(format!("unexpected arguments: {}", args.join(" ")));
+    }
+    let mut input_json = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input_json)
+        .map_err(|error| format!("could not read sequence parser input from stdin: {error}"))?;
+    let input: SequenceInlineSegmentsInput = serde_json::from_str(&input_json)
+        .map_err(|error| format!("could not decode sequence parser input: {error}"))?;
+    let segments = split_inline_sequence_segments(&input.texts);
+    let encoded = serde_json::to_vec(&segments)
+        .map_err(|error| format!("could not encode sequence parser output: {error}"))?;
+    std::io::stdout()
+        .write_all(&encoded)
+        .map_err(|error| format!("could not write sequence parser output: {error}"))
+}
+
+fn parse_sequence_course_codes_command(args: &[String]) -> Result<(), String> {
+    if !args.is_empty() {
+        return Err(format!("unexpected arguments: {}", args.join(" ")));
+    }
+    let mut input_json = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input_json)
+        .map_err(|error| {
+            format!("could not read sequence course-code input from stdin: {error}")
+        })?;
+    let input: SequenceCourseCodeInput = serde_json::from_str(&input_json)
+        .map_err(|error| format!("could not decode sequence course-code input: {error}"))?;
+    let course_codes = expand_sequence_course_codes(&input.rows);
+    let encoded = serde_json::to_vec(&course_codes)
+        .map_err(|error| format!("could not encode sequence course-code output: {error}"))?;
+    std::io::stdout()
+        .write_all(&encoded)
+        .map_err(|error| format!("could not write sequence course-code output: {error}"))
 }
 
 fn parse_grc_annual_schedule_candidates_command(args: &[String]) -> Result<(), String> {
@@ -222,6 +300,117 @@ fn parse_grc_current_catalog_details_command(args: &[String]) -> Result<(), Stri
     std::io::stdout()
         .write_all(&encoded)
         .map_err(|error| format!("could not write GRC current-catalog details: {error}"))
+}
+
+fn render_equivalency_guide_typescript_command(args: &[String]) -> Result<(), String> {
+    if !args.is_empty() {
+        return Err(format!("unexpected arguments: {}", args.join(" ")));
+    }
+    let mut input_json = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input_json)
+        .map_err(|error| format!("could not read generated-rule input from stdin: {error}"))?;
+    let input: EquivalencyRulesOutputInput = serde_json::from_str(&input_json)
+        .map_err(|error| format!("could not decode generated-rule input: {error}"))?;
+    let output = render_equivalency_guide_typescript(&input)?;
+    std::io::stdout()
+        .write_all(output.as_bytes())
+        .map_err(|error| format!("could not write generated TypeScript: {error}"))
+}
+
+fn render_transfer_equivalency_catalog_typescript_command(args: &[String]) -> Result<(), String> {
+    if !args.is_empty() {
+        return Err(format!("unexpected arguments: {}", args.join(" ")));
+    }
+    let mut input_json = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input_json)
+        .map_err(|error| {
+            format!("could not read transfer-equivalency catalog input from stdin: {error}")
+        })?;
+    let input: EquivalencyRulesOutputInput = serde_json::from_str(&input_json)
+        .map_err(|error| format!("could not decode transfer-equivalency catalog input: {error}"))?;
+    let output = render_transfer_equivalency_catalog_typescript(&input)?;
+    std::io::stdout()
+        .write_all(output.as_bytes())
+        .map_err(|error| {
+            format!("could not write transfer-equivalency catalog TypeScript: {error}")
+        })
+}
+
+fn synthesize_uw_grc_derived_rules_command(args: &[String]) -> Result<(), String> {
+    if !args.is_empty() {
+        return Err(format!("unexpected arguments: {}", args.join(" ")));
+    }
+    let mut input_json = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input_json)
+        .map_err(|error| format!("could not read derived-rule input from stdin: {error}"))?;
+    let input: DerivedRuleSynthesisInput = serde_json::from_str(&input_json)
+        .map_err(|error| format!("could not decode derived-rule input: {error}"))?;
+    let rules = synthesize_equivalency_rules(&input)?;
+    let encoded = serde_json::to_vec(&rules)
+        .map_err(|error| format!("could not encode derived rules: {error}"))?;
+    std::io::stdout()
+        .write_all(&encoded)
+        .map_err(|error| format!("could not write derived rules: {error}"))
+}
+
+fn build_equivalency_guide_report_command(args: &[String]) -> Result<(), String> {
+    if !args.is_empty() {
+        return Err(format!("unexpected arguments: {}", args.join(" ")));
+    }
+    let mut input_json = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input_json)
+        .map_err(|error| format!("could not read equivalency-report input from stdin: {error}"))?;
+    let input: EquivalencyGuideReportInput = serde_json::from_str(&input_json)
+        .map_err(|error| format!("could not decode equivalency-report input: {error}"))?;
+    let report = build_equivalency_guide_report(&input);
+    let markdown = render_equivalency_guide_report_markdown(&report);
+    let encoded = serde_json::to_vec(&serde_json::json!({"report": report, "markdown": markdown}))
+        .map_err(|error| format!("could not encode equivalency report: {error}"))?;
+    std::io::stdout()
+        .write_all(&encoded)
+        .map_err(|error| format!("could not write equivalency report: {error}"))
+}
+
+fn refresh_deadlines_command(repository_root: &Path, args: &[String]) -> Result<(), String> {
+    if !args.is_empty() {
+        return Err(format!("unexpected arguments: {}", args.join(" ")));
+    }
+    let report = refresh_deadlines(repository_root)?;
+    println!(
+        "Refreshed {} official deadlines: {} created, {} updated, {} unchanged.",
+        report.parsed_count,
+        report.created.len(),
+        report.updated.len(),
+        report.unchanged.len()
+    );
+    println!("Updated opportunity catalog: {}", report.output_path);
+    println!("Refresh report: {}", report.report_path);
+    Ok(())
+}
+
+fn ingest_uw_catalog_command(repository_root: &Path, args: &[String]) -> Result<(), String> {
+    let mut cache_only = env::var("GATORGUIDE_PLANNER_CACHE_ONLY").as_deref() == Ok("1");
+    for argument in args {
+        match argument.as_str() {
+            "--cache-only" => cache_only = true,
+            other => return Err(format!("unexpected argument {other:?}")),
+        }
+    }
+    let report = refresh_uw_catalog(repository_root, cache_only)?;
+    println!(
+        "Parsed {} of {} UW planner-relevant catalog courses across {} campuses.",
+        report.course_count,
+        report.relevant_course_count,
+        report.campuses.len()
+    );
+    println!(
+        "UW catalog reports: source/.tmp/reports/transfer-planner-uw-catalog-ingest.json and .md"
+    );
+    Ok(())
 }
 
 fn discover_grc_materials(repository_root: &Path, args: &[String]) -> Result<(), String> {
@@ -354,18 +543,40 @@ fn print_usage() {
          Usage:\n\
            cargo run --manifest-path automation/Cargo.toml -- refresh-planner\n\
            cargo run --manifest-path automation/Cargo.toml -- discover-grc-materials [--refresh] [--cache-only]\n\
+           cargo run --manifest-path automation/Cargo.toml -- refresh-deadlines\n\
+           cargo run --manifest-path automation/Cargo.toml -- ingest-uw-catalog [--cache-only]\n\
+           cargo run --manifest-path automation/Cargo.toml -- parse-equivalency-guide-rows < parser-input.json\n\
            cargo run --manifest-path automation/Cargo.toml -- parse-grc-catalog-page-numbers < pager-input.json\n\
            cargo run --manifest-path automation/Cargo.toml -- parse-grc-course-catalog < catalog-page.json\n\
            cargo run --manifest-path automation/Cargo.toml -- parse-grc-course-details < course-bodies.json\n\
+           cargo run --manifest-path automation/Cargo.toml -- parse-sequence-inline-segments < sequences.json\n\
+           cargo run --manifest-path automation/Cargo.toml -- parse-sequence-course-codes < sequence-codes.json\n\
            cargo run --manifest-path automation/Cargo.toml -- parse-grc-annual-schedule-candidates < schedule-page.json\n\
            cargo run --manifest-path automation/Cargo.toml -- filter-grc-annual-schedules < schedules.json\n\
            cargo run --manifest-path automation/Cargo.toml -- parse-grc-catalog-archive-entries < catalog-archive.json\n\
            cargo run --manifest-path automation/Cargo.toml -- parse-grc-current-catalog-details < current-catalog.json\n\
+           cargo run --manifest-path automation/Cargo.toml -- render-equivalency-guide-typescript < rules.json\n\
+           cargo run --manifest-path automation/Cargo.toml -- render-transfer-equivalency-catalog-typescript < rules.json\n\
+           cargo run --manifest-path automation/Cargo.toml -- synthesize-uw-grc-derived-rules < derived-input.json\n\
+           cargo run --manifest-path automation/Cargo.toml -- build-equivalency-guide-report < report-input.json\n\
            cargo run --manifest-path automation/Cargo.toml -- collect-opportunities --category scholarships --output <path>\n\n\
-         refresh-planner runs the maintained, deterministic planner source pipeline.\n\
          discover-grc-materials parses Green River's official catalog archive and annual-schedule links.\n\
+         refresh-deadlines fetches the configured official deadline sources and updates the opportunity catalog.\n\
+         ingest-uw-catalog fetches UW catalog pages and writes a deterministic source report.\n\
+         parse-equivalency-guide-rows parses an {{html, grcCourseTitles}} JSON object on stdin and emits generated rules.\n\
+         parse-grc-catalog-page-numbers parses an {{html}} pager fragment and emits a contiguous sorted page-number array.\n\
          parse-grc-course-catalog parses an {{html}} page into ordered course-heading and detail sections.\n\
-         parse-grc-course-details parses raw course bodies into credits, descriptions, requirement sections, and general-education tags.\n\
+         parse-grc-course-details parses a rawBodies array into credits, descriptions, labeled requirement sections, and general-education tags.\n\\
+         parse-sequence-inline-segments splits a texts array into ordered sequence alternatives.\n\\
+         parse-sequence-course-codes expands carried course numbers using supplied explicit-code and subject context.\n\
+         parse-grc-annual-schedule-candidates parses an {{html, baseUrl}} page into sorted annual schedule links.\n\
+         filter-grc-annual-schedules keeps the current and most recent prior schedule year.\n\
+         parse-grc-catalog-archive-entries parses an {{html, baseUrl}} object into sorted archive entries.\n\
+         parse-grc-current-catalog-details parses an {{html, catalogRootUrl, expectedCatalogYearLabel}} object into current catalog details.\n\
+         render-equivalency-guide-typescript emits the generated TypeScript module for officialRules and derivedRules arrays.\n\
+         render-transfer-equivalency-catalog-typescript projects accepted, non-obsolete category rows into the lightweight catalog module.\n\
+         synthesize-uw-grc-derived-rules emits derived rules from officialRules, optional structuredRules, and items containing a spec plus supportRuleSelectors.\n\
+         build-equivalency-guide-report emits the deterministic report object and Markdown from parsed rows and rules.\n\
          collect-opportunities fetches only source URLs already listed in starter-opportunities.json and emits a review-only report; it never edits the catalog."
     );
 }

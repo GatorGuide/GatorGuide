@@ -33,7 +33,7 @@ function findDisplayRoot(projectRoot) {
   while (true) {
     if (
       fs.existsSync(path.join(current, ".git")) ||
-      fs.existsSync(path.join(current, "Course-Planner-Updater.bat"))
+      fs.existsSync(path.join(current, "Course-Planner-Updater.exe"))
     ) {
       return current;
     }

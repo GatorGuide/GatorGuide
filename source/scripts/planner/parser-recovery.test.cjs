@@ -1307,6 +1307,41 @@ test("Requirement parser treats same-subject bare-number alternatives as sequenc
   );
 });
 
+test("Requirement parser preserves inline lettered sequence alternatives through Rust parsing", () => {
+  const owner = buildRecoveryOwnerFixture({
+    ownerId: "uw-seattle-physics",
+    ownerTitle: "Physics",
+    planId: "uw-seattle-physics",
+    campusId: "uw-seattle",
+  });
+  const snapshotLines = [
+    "Physics requirements",
+    "1) Physics sequence (choose one option)",
+    "a) Calculus-based sequence: PHYS 121, 122, 123 or PHYS 135, 136, 137",
+    "b) Algebra-based sequence: PHYS 114, 115, 116 or PHYS 117, 118, 119",
+  ];
+  const groups = parser.buildParsedRequirementGroupsForTest(
+    owner,
+    [
+      "PHYS 121", "PHYS 122", "PHYS 123", "PHYS 135", "PHYS 136", "PHYS 137",
+      "PHYS 114", "PHYS 115", "PHYS 116", "PHYS 117", "PHYS 118", "PHYS 119",
+    ],
+    snapshotLines
+  );
+  const sequenceGroup = groups.find((group) => group.requirementType === "sequence_choice");
+
+  assert.ok(sequenceGroup, "Expected lettered inline alternatives to form one sequence choice.");
+  assert.deepEqual(
+    (sequenceGroup.sequencePaths ?? []).map((path) => path.uwCourses),
+    [
+      ["PHYS 121", "PHYS 122", "PHYS 123"],
+      ["PHYS 135", "PHYS 136", "PHYS 137"],
+      ["PHYS 114", "PHYS 115", "PHYS 116"],
+      ["PHYS 117", "PHYS 118", "PHYS 119"],
+    ]
+  );
+});
+
 test("Requirement parser keeps trailing if-taken prerequisites out of option groups", () => {
   const owner = buildRecoveryOwnerFixture({
     ownerId: "uw-seattle-computer-engineering",

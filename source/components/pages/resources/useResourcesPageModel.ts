@@ -674,10 +674,13 @@ export function useResourcesPageModel() {
     );
     const deadlineSubsections: OpportunitySubsection[] = [
       {
-        key: "college_deadline",
+        key: "grc_deadlines",
         title: t("resources.collegeDeadlines"),
         items: filteredOpportunities.filter(
-          (opportunity) => opportunity.type === OPPORTUNITY_TYPES.collegeDeadline
+          (opportunity) =>
+            opportunity.type === OPPORTUNITY_TYPES.collegeDeadline ||
+            opportunity.type === OPPORTUNITY_TYPES.quarterStart ||
+            opportunity.type === OPPORTUNITY_TYPES.quarterEnd
         ),
       },
       {
@@ -685,15 +688,6 @@ export function useResourcesPageModel() {
         title: t("resources.generalDeadlines"),
         items: filteredOpportunities.filter(
           (opportunity) => opportunity.type === OPPORTUNITY_TYPES.generalDeadline
-        ),
-      },
-      {
-        key: "academic_calendar",
-        title: t("resources.academicCalendar"),
-        items: filteredOpportunities.filter(
-          (opportunity) =>
-            opportunity.type === OPPORTUNITY_TYPES.quarterStart ||
-            opportunity.type === OPPORTUNITY_TYPES.quarterEnd
         ),
       },
     ].filter((subsection) => subsection.items.length > 0);
