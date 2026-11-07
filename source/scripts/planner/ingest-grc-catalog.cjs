@@ -774,9 +774,6 @@ async function fetchTextOnce(url, timeoutMs, fetchPage, options) {
       retryAfterMs
     );
   }
-  if (Array.isArray(response.documentStatuses) && response.documentStatuses.includes(202) && status !== 202) {
-    console.log(`Chrome/Chromium completed the Green River page after HTTP 202: ${url}`);
-  }
   return validateCatalogResponseBody(url, status, response.html);
 }
 
@@ -852,35 +849,86 @@ function readCatalogSnapshot(snapshotPath, fallbackReason) {
   };
 }
 
-async function fetchCatalogHtml(courseDescriptionsExpandedUrl, snapshotPath, options = {}) {
-  try {
-    const firstPageHtml = await fetchText(courseDescriptionsExpandedUrl, {
-      label: "Green River catalog page 1",
-      fetchPage: options.fetchPage,
-      expectCourseListings: true,
-    });
-    const pageNumbers = detectCatalogPageNumbers(firstPageHtml);
-    const pageHtmls = [{ pageNumber: 1, html: firstPageHtml }];
-    console.log(
-      `[1/${pageNumbers.length}] Green River catalog pages fetched - ${courseDescriptionsExpandedUrl}`
-    );
+function createCatalogPageFailuresError(sourceUrl, failedPages) {
+  const details = failedPages
+    .map((failure) => {
+      const catalogLabel = failure.catalogYearLabel ? `${failure.catalogYearLabel} ` : "";
+      const status = failure.status == null ? "" : ` (HTTP ${failure.status})`;
+      return `${catalogLabel}page ${failure.pageNumber}${status}: ${failure.url} — ${failure.message}`;
+    })
+    .join("; ");
+  const error = createFetchError(
+    sourceUrl,
+    `Green River catalog page fetch failed: ${details}`,
+    failedPages[0]?.status ?? null
+  );
+  error.failedPages = failedPages;
+  return error;
+}
 
-    for (let pageIndex = 1; pageIndex < pageNumbers.length; pageIndex += 1) {
-      const pageNumber = pageNumbers[pageIndex];
-      const pageUrl = buildPagedCourseDescriptionUrl(courseDescriptionsExpandedUrl, pageNumber);
-      const html = await fetchText(pageUrl, {
+function formatFailedPagesMarkdown(failedPages = []) {
+  if (!failedPages.length) return [];
+  return [
+    "",
+    "## Failed catalog pages",
+    "",
+    ...failedPages.map((failure) => {
+      const catalogLabel = failure.catalogYearLabel ? `${failure.catalogYearLabel} ` : "";
+      const status = failure.status == null ? "" : ` (HTTP ${failure.status})`;
+      return `- ${catalogLabel}page ${failure.pageNumber}${status}: ${failure.url} — ${failure.message}`;
+    }),
+  ];
+}
+
+async function fetchCatalogHtml(courseDescriptionsExpandedUrl, snapshotPath, options = {}) {
+  const failedPages = [];
+  const detectPageNumbers = options.detectPageNumbers ?? detectCatalogPageNumbers;
+  const parseEntries = options.parseEntries ?? buildCourseEntries;
+  const fetchPageHtml = async (pageNumber, pageUrl) => {
+    try {
+      return await fetchText(pageUrl, {
         label: `Green River catalog page ${pageNumber}`,
         fetchPage: options.fetchPage,
         expectCourseListings: true,
       });
-      pageHtmls.push({ pageNumber, html });
-      console.log(
-        `[${pageIndex + 1}/${pageNumbers.length}] Green River catalog pages fetched - ${pageUrl}`
+    } catch (error) {
+      const failure = {
+        catalogYearLabel: options.catalogYearLabel ?? null,
+        pageNumber,
+        url: pageUrl,
+        status: error.status ?? null,
+        message: error.message ?? String(error),
+      };
+      failedPages.push(failure);
+      options.onPageFailure?.(failure);
+      console.warn(
+        `Failed Green River catalog page ${failure.catalogYearLabel ? `${failure.catalogYearLabel} ` : ""}${pageNumber}${failure.status == null ? "" : ` (HTTP ${failure.status})`}: ${pageUrl} — ${failure.message}`
       );
+      return null;
+    }
+  };
+
+  try {
+    const firstPageHtml = await fetchPageHtml(1, courseDescriptionsExpandedUrl);
+    if (firstPageHtml === null) {
+      throw createCatalogPageFailuresError(courseDescriptionsExpandedUrl, failedPages);
+    }
+
+    const pageNumbers = detectPageNumbers(firstPageHtml);
+    const pageHtmls = [{ pageNumber: 1, html: firstPageHtml }];
+    for (let pageIndex = 1; pageIndex < pageNumbers.length; pageIndex += 1) {
+      const pageNumber = pageNumbers[pageIndex];
+      const pageUrl = buildPagedCourseDescriptionUrl(courseDescriptionsExpandedUrl, pageNumber);
+      const html = await fetchPageHtml(pageNumber, pageUrl);
+      if (html !== null) pageHtmls.push({ pageNumber, html });
+    }
+
+    if (failedPages.length) {
+      throw createCatalogPageFailuresError(courseDescriptionsExpandedUrl, failedPages);
     }
 
     const html = pageHtmls.map((page) => page.html).join("\n");
-    if (!buildCourseEntries(html, "catalog-validation", courseDescriptionsExpandedUrl).length) {
+    if (!parseEntries(html, "catalog-validation", courseDescriptionsExpandedUrl).length) {
       throw new Error(
         `No Green River course descriptions parsed from fetched pages; refusing to save snapshot ${snapshotPath}.`
       );
@@ -890,14 +938,17 @@ async function fetchCatalogHtml(courseDescriptionsExpandedUrl, snapshotPath, opt
     return {
       html,
       pageCount: pageHtmls.length,
+      failedPages,
       usedSnapshotFallback: false,
       snapshotFallbackReason: null,
     };
   } catch (error) {
+    if (failedPages.length && !error.failedPages) error.failedPages = failedPages;
     const fallback = readSnapshotFallback(snapshotPath, error);
     return {
       html: fallback.html,
-      pageCount: detectCatalogPageNumbers(fallback.html).length,
+      pageCount: detectPageNumbers(fallback.html).length,
+      failedPages,
       usedSnapshotFallback: fallback.usedSnapshotFallback,
       snapshotFallbackReason: fallback.snapshotFallbackReason,
     };
@@ -1252,6 +1303,7 @@ function writeMarkdown(report) {
       .join(", ")}`,
     `- Courses with corequisite notes: ${report.coursesWithCorequisiteNotes}`,
     `- Courses with structured corequisite paths: ${report.coursesWithStructuredCorequisitePaths}`,
+    ...formatFailedPagesMarkdown(report.failedPages),
     "",
   ];
 
@@ -1282,7 +1334,7 @@ function getCachedCatalogIngestSource(cachedReport, catalogEntry, fieldName) {
 }
 
 async function fetchCatalogDefinitions(grcPublicMaterials, options = {}) {
-  const { cacheOnly = false, fetchPage, skippedCatalogs = [] } = options;
+  const { cacheOnly = false, fetchPage, skippedCatalogs = [], pageFailures = [] } = options;
   const catalogEntries = [...(grcPublicMaterials.catalogEntries ?? [])]
     .filter((entry) => /^20\d{2}-20\d{2}$/.test(String(entry?.label ?? "")))
     .filter((entry) => /^https?:\/\/catalog\.greenriver\.edu\//i.test(String(entry?.url ?? "")))
@@ -1382,7 +1434,11 @@ async function fetchCatalogDefinitions(grcPublicMaterials, options = {}) {
     const catalogHtml = await fetchCatalogHtml(
       details.courseDescriptionsExpandedUrl,
       snapshotPath,
-      { fetchPage }
+      {
+        fetchPage,
+        catalogYearLabel: details.label,
+        onPageFailure: (failure) => pageFailures.push(failure),
+      }
     );
 
     definitions.push({
@@ -1429,10 +1485,12 @@ async function main() {
     fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
 
     const skippedCatalogs = [];
+    const pageFailures = [];
     const catalogDefinitions = await fetchCatalogDefinitions(grcPublicMaterials, {
       cacheOnly,
       fetchPage,
       skippedCatalogs,
+      pageFailures,
     });
     const rawEntries = [];
     for (const catalogDefinition of catalogDefinitions) {
@@ -1469,6 +1527,7 @@ async function main() {
       ),
       catalogRootCount: catalogDefinitions.length,
       skippedCatalogs,
+      failedPages: pageFailures,
       snapshotPaths: catalogDefinitions.map((catalogDefinition) => catalogDefinition.snapshotPath),
       usedSnapshotFallback: catalogDefinitions.some(
         (catalogDefinition) => catalogDefinition.usedSnapshotFallback
@@ -1536,6 +1595,8 @@ module.exports = {
   buildPagedCourseDescriptionUrl,
   detectCatalogPageNumbers,
   validateCatalogResponseBody,
+  fetchCatalogHtml,
+  formatFailedPagesMarkdown,
 };
 
 if (require.main === module) {

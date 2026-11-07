@@ -1,10 +1,15 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const {
   buildCourseEntries,
   buildPagedCourseDescriptionUrl,
   detectCatalogPageNumbers,
   validateCatalogResponseBody,
+  fetchCatalogHtml,
+  formatFailedPagesMarkdown,
 } = require("./ingest-grc-catalog.cjs");
 
 const courseDescriptionsUrl =
@@ -104,4 +109,84 @@ test("unlinked text candidates are retained and flagged when course links are pr
       note.includes("course codes not linked in this section (retained from official text; review): MATH& 152")
     )
   );
+});
+
+test("successful catalog pages do not emit per-page success messages", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "grc-catalog-page-success-"));
+  const snapshotPath = path.join(directory, "catalog.html");
+  const messages = [];
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  console.log = (...values) => messages.push(values.join(" "));
+  console.warn = (...values) => messages.push(values.join(" "));
+  try {
+    const result = await fetchCatalogHtml(courseDescriptionsUrl, snapshotPath, {
+      fetchPage: async () => ({
+        status: 200,
+        html: "<h3>MATH 121 - Precalculus</h3>",
+        documentStatuses: [202, 200],
+      }),
+      detectPageNumbers: () => [1],
+      parseEntries: () => [{ code: "MATH 121" }],
+    });
+
+    assert.deepEqual(result.failedPages, []);
+    assert.equal(result.usedSnapshotFallback, false);
+    assert.deepEqual(messages, []);
+    assert.equal(fs.existsSync(snapshotPath), true);
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("catalog page failures are reported and later pages are still attempted", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "grc-catalog-page-failure-"));
+  const snapshotPath = path.join(directory, "catalog.html");
+  const cachedHtml = "<html><h3>CACHED 100 - prior snapshot</h3></html>";
+  fs.writeFileSync(snapshotPath, cachedHtml);
+  const requestedUrls = [];
+  const observedFailures = [];
+  const messages = [];
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  console.log = (...values) => messages.push(values.join(" "));
+  console.warn = (...values) => messages.push(values.join(" "));
+  try {
+    const result = await fetchCatalogHtml(courseDescriptionsUrl, snapshotPath, {
+      catalogYearLabel: "2026-2027",
+      fetchPage: async (url) => {
+        requestedUrls.push(url);
+        const page = new URL(url).searchParams.get("filter[cpage]");
+        if (page === "2") return { status: 503, html: "temporarily unavailable" };
+        return { status: 200, html: `<h3>MATH ${page === "3" ? "123" : "121"} - Course</h3>` };
+      },
+      detectPageNumbers: () => [1, 2, 3],
+      parseEntries: () => [{ code: "MATH 121" }],
+      onPageFailure: (failure) => observedFailures.push(failure),
+    });
+
+    assert.deepEqual(
+      requestedUrls.map((url) => new URL(url).searchParams.get("filter[cpage]") ?? "1"),
+      ["1", "2", "3"]
+    );
+    assert.equal(result.usedSnapshotFallback, true);
+    assert.equal(result.html, cachedHtml);
+    assert.equal(result.failedPages.length, 1);
+    assert.equal(result.failedPages[0].catalogYearLabel, "2026-2027");
+    assert.equal(result.failedPages[0].pageNumber, 2);
+    assert.equal(result.failedPages[0].status, 503);
+    assert.equal(result.failedPages[0].url, requestedUrls[1]);
+    assert.deepEqual(observedFailures, result.failedPages);
+    assert.match(messages.join("\n"), /Failed Green River catalog page 2026-2027 2 \(HTTP 503\)/);
+    assert.doesNotMatch(messages.join("\n"), /catalog pages fetched/);
+    assert.match(formatFailedPagesMarkdown(result.failedPages).join("\n"), /page 2 \(HTTP 503\)/);
+    assert.deepEqual(formatFailedPagesMarkdown([]), []);
+    assert.equal(fs.readFileSync(snapshotPath, "utf8"), cachedHtml);
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
