@@ -287,8 +287,8 @@ function writeMarkdown(materials) {
   writePlannerMarkdownReport(OUTPUT_MD_PATH, lines);
 }
 
-async function discoverLiveGrcPublicMaterials() {
-  const classSchedulesHtml = await fetchText(GRC_CLASS_SCHEDULES_URL);
+async function discoverLiveGrcPublicMaterials(fetchPageText = fetchText) {
+  const classSchedulesHtml = await fetchPageText(GRC_CLASS_SCHEDULES_URL);
   const discoveredAnnualSchedules = extractGrcAnnualSchedules(
     classSchedulesHtml,
     GRC_CLASS_SCHEDULES_URL
@@ -297,14 +297,14 @@ async function discoverLiveGrcPublicMaterials() {
     throw new Error(`No Green River annual schedule PDFs were found on ${GRC_CLASS_SCHEDULES_URL}`);
   }
 
-  const catalogArchiveHtml = await fetchText(GRC_CATALOG_ARCHIVE_URL);
+  const catalogArchiveHtml = await fetchPageText(GRC_CATALOG_ARCHIVE_URL);
   const catalogEntries = extractGrcCatalogArchiveEntries(catalogArchiveHtml, GRC_CATALOG_ARCHIVE_URL);
   if (!catalogEntries.length) {
     throw new Error(`No Green River catalog archive entries were found on ${GRC_CATALOG_ARCHIVE_URL}`);
   }
 
   const currentCatalogEntry = catalogEntries[0];
-  const currentCatalogRootHtml = await fetchText(currentCatalogEntry.url);
+  const currentCatalogRootHtml = await fetchPageText(currentCatalogEntry.url);
   const currentCatalog = extractCurrentGrcCatalogDetails(
     currentCatalogRootHtml,
     currentCatalogEntry.url,
@@ -335,6 +335,7 @@ async function loadGrcPublicMaterials(options = {}) {
     forceRefresh = false,
     allowSnapshotFallback = true,
     cacheOnly = process.env.GATORGUIDE_PLANNER_CACHE_ONLY === "1",
+    fetchPageText = fetchText,
   } = options;
   ensureTmpDir();
 
@@ -350,7 +351,7 @@ async function loadGrcPublicMaterials(options = {}) {
   }
 
   try {
-    const materials = await discoverLiveGrcPublicMaterials();
+    const materials = await discoverLiveGrcPublicMaterials(fetchPageText);
     writePlannerJsonReport(OUTPUT_JSON_PATH, materials);
     writeMarkdown(materials);
     return materials;

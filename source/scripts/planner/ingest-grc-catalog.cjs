@@ -1,8 +1,8 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { fetchWithHandling } = require("../lib/fetch-with-handling.cjs");
 const { ensureTmpLayout, getTmpPath } = require("../lib/tmp-layout.cjs");
+const { createGrcBrowserFetcher } = require("./grc-browser-fetch.cjs");
 const {
   buildPagedGrcCourseDescriptionsUrl,
   compareAcademicYearLabels,
@@ -33,7 +33,6 @@ const RETRYABLE_STATUS_CODES = new Set([429]);
 const MAX_RETRY_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 5000;
 const MAX_RETRY_DELAY_MS = 60000;
-const USER_AGENT = "GatorGuideTransferPlannerCatalogIngest/1.0";
 const hostThrottleTails = new Map();
 const hostNextAllowedAt = new Map();
 
@@ -634,10 +633,6 @@ function getUrlHost(value) {
   }
 }
 
-function getHeaderValue(response, name) {
-  return response.headers.get(name) ?? null;
-}
-
 function parseRetryAfterMs(value) {
   const raw = String(value ?? "").trim();
   if (!raw) {
@@ -655,15 +650,6 @@ function parseRetryAfterMs(value) {
   }
 
   return null;
-}
-
-async function fetchWithTimeout(url, timeoutMs) {
-  return fetchWithHandling(url, {
-    operation: "Fetch GRC catalog source",
-    throwOnHttpError: false,
-    timeoutMs,
-    userAgent: USER_AGENT,
-  });
 }
 
 function createFetchError(url, message, status = null, retryAfterMs = null) {
@@ -756,43 +742,55 @@ function runWithHostThrottle(url, task) {
   return resultPromise;
 }
 
-async function fetchTextOnce(url, timeoutMs) {
-  let response;
-  try {
-    response = await fetchWithTimeout(url, timeoutMs);
-  } catch (error) {
-    throw createFetchError(url, error.message ?? `Failed to fetch ${url}`, null, null);
+async function fetchTextOnce(url, timeoutMs, fetchPage, options) {
+  if (typeof fetchPage !== "function") {
+    throw createFetchError(url, "Browser-based Green River page fetching is required; raw HTTP fallback is disabled.");
   }
 
-  const retryAfterMs = parseRetryAfterMs(getHeaderValue(response, "retry-after"));
-  if (!response.ok) {
+  let response;
+  try {
+    response = await fetchPage(url, timeoutMs, {
+      expectCourseListings: Boolean(options.expectCourseListings),
+    });
+  } catch (error) {
     throw createFetchError(
       url,
-      `Failed to fetch ${url}: ${response.status} ${response.statusText}`,
-      response.status,
-      retryAfterMs
+      error.message ?? `Chrome/Chromium failed to fetch ${url}`,
+      error.status ?? null,
+      error.retryAfterMs ?? parseRetryAfterMs(error.retryAfter)
     );
   }
 
-  let body;
-  try {
-    body = await response.text();
-  } catch (error) {
-    throw createFetchError(url, error.message ?? `Failed to read response body for ${url}`, null, retryAfterMs);
+  const status = Number(response?.status);
+  const retryAfterMs = response?.retryAfterMs ?? parseRetryAfterMs(response?.retryAfter);
+  if (!Number.isFinite(status)) {
+    throw createFetchError(url, "Chrome/Chromium did not return a document status for the Green River page.");
   }
-  return validateCatalogResponseBody(url, response.status, body);
+  if (!((status >= 200 && status < 300) || status === 304)) {
+    throw createFetchError(
+      url,
+      `Chrome/Chromium returned HTTP ${status} for the Green River page.`,
+      status,
+      retryAfterMs
+    );
+  }
+  if (Array.isArray(response.documentStatuses) && response.documentStatuses.includes(202) && status !== 202) {
+    console.log(`Chrome/Chromium completed the Green River page after HTTP 202: ${url}`);
+  }
+  return validateCatalogResponseBody(url, status, response.html);
 }
 
 async function fetchText(url, options = {}) {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const label = String(options.label ?? url);
+  const fetchPage = options.fetchPage;
 
   return runWithHostThrottle(url, async (host) => {
     let lastError = null;
 
     for (let attemptIndex = 0; attemptIndex <= MAX_RETRY_ATTEMPTS; attemptIndex += 1) {
       try {
-        return await fetchTextOnce(url, timeoutMs);
+        return await fetchTextOnce(url, timeoutMs, fetchPage, options);
       } catch (error) {
         lastError = error;
         if (!shouldRetryFetch(error) || attemptIndex === MAX_RETRY_ATTEMPTS) {
@@ -801,9 +799,9 @@ async function fetchText(url, options = {}) {
 
         const retryDelayMs = getRetryDelayForErrorMs(error, attemptIndex);
         const retryReason =
-          error.status != null ? `status ${error.status}` : error.message ?? "temporary fetch error";
+          error.status != null ? `status ${error.status}` : error.message ?? "temporary browser fetch error";
         console.log(
-          `Backing off ${Math.ceil(retryDelayMs / 1000)}s before retry ${attemptIndex + 1}/${MAX_RETRY_ATTEMPTS} for ${label} (${retryReason})`
+          `Backing off ${Math.ceil(retryDelayMs / 1000)}s before browser retry ${attemptIndex + 1}/${MAX_RETRY_ATTEMPTS} for ${label} (${retryReason})`
         );
         extendHostCooldown(host, retryDelayMs);
         await sleep(retryDelayMs);
@@ -854,10 +852,12 @@ function readCatalogSnapshot(snapshotPath, fallbackReason) {
   };
 }
 
-async function fetchCatalogHtml(courseDescriptionsExpandedUrl, snapshotPath) {
+async function fetchCatalogHtml(courseDescriptionsExpandedUrl, snapshotPath, options = {}) {
   try {
     const firstPageHtml = await fetchText(courseDescriptionsExpandedUrl, {
       label: "Green River catalog page 1",
+      fetchPage: options.fetchPage,
+      expectCourseListings: true,
     });
     const pageNumbers = detectCatalogPageNumbers(firstPageHtml);
     const pageHtmls = [{ pageNumber: 1, html: firstPageHtml }];
@@ -870,6 +870,8 @@ async function fetchCatalogHtml(courseDescriptionsExpandedUrl, snapshotPath) {
       const pageUrl = buildPagedCourseDescriptionUrl(courseDescriptionsExpandedUrl, pageNumber);
       const html = await fetchText(pageUrl, {
         label: `Green River catalog page ${pageNumber}`,
+        fetchPage: options.fetchPage,
+        expectCourseListings: true,
       });
       pageHtmls.push({ pageNumber, html });
       console.log(
@@ -1280,14 +1282,19 @@ function getCachedCatalogIngestSource(cachedReport, catalogEntry, fieldName) {
 }
 
 async function fetchCatalogDefinitions(grcPublicMaterials, options = {}) {
-  const { cacheOnly = false } = options;
+  const { cacheOnly = false, fetchPage, skippedCatalogs = [] } = options;
   const catalogEntries = [...(grcPublicMaterials.catalogEntries ?? [])]
     .filter((entry) => /^20\d{2}-20\d{2}$/.test(String(entry?.label ?? "")))
     .filter((entry) => /^https?:\/\/catalog\.greenriver\.edu\//i.test(String(entry?.url ?? "")))
-    .sort((left, right) => compareAcademicYearLabels(left.label, right.label));
+    .sort((left, right) => compareAcademicYearLabels(right.label, left.label));
 
   const cachedReport = cacheOnly ? loadCachedCatalogIngestReport() : null;
   const definitions = [];
+  const seenCatoids = new Map();
+  const skipCatalog = (label, catoid, sourceUrl, reason) => {
+    skippedCatalogs.push({ label, catoid, sourceUrl, reason });
+    console.warn(`Skipping Green River catalog ${label}: ${reason}`);
+  };
   for (const catalogEntry of catalogEntries) {
     if (cacheOnly) {
       const snapshotPath = getCatalogSnapshotPath(catalogEntry.label);
@@ -1303,6 +1310,27 @@ async function fetchCatalogDefinitions(grcPublicMaterials, options = {}) {
         getCachedCatalogIngestSource(cachedReport, catalogEntry, "expandedSourceUrls") ??
         currentCatalog?.courseDescriptionsExpandedUrl ??
         sourceUrl;
+      const catoid = new URL(expandedSourceUrl).searchParams.get("catoid");
+      if (!catoid) {
+        skipCatalog(
+          catalogEntry.label,
+          null,
+          sourceUrl,
+          "the cached course-description URL has no catoid, so the archive year cannot be verified"
+        );
+        continue;
+      }
+      const existingLabel = seenCatoids.get(catoid);
+      if (existingLabel) {
+        skipCatalog(
+          catalogEntry.label,
+          catoid,
+          sourceUrl,
+          `catoid ${catoid} is already assigned to ${existingLabel}`
+        );
+        continue;
+      }
+      seenCatoids.set(catoid, catalogEntry.label);
       const catalogHtml = readCatalogSnapshot(
         snapshotPath,
         "No-download mode used cached Green River catalog snapshot."
@@ -1323,16 +1351,38 @@ async function fetchCatalogDefinitions(grcPublicMaterials, options = {}) {
 
     const rootHtml = await fetchText(catalogEntry.url, {
       label: `Green River catalog root ${catalogEntry.label}`,
+      fetchPage,
     });
     const details = extractCurrentGrcCatalogDetails(
       rootHtml,
       catalogEntry.url,
       catalogEntry.label
     );
+    if (!details.catoid) {
+      skipCatalog(
+        details.label,
+        null,
+        details.courseDescriptionsUrl,
+        "the course-description URL has no catoid, so the archive year cannot be verified"
+      );
+      continue;
+    }
+    const existingLabel = seenCatoids.get(details.catoid);
+    if (existingLabel) {
+      skipCatalog(
+        details.label,
+        details.catoid,
+        details.courseDescriptionsUrl,
+        `catoid ${details.catoid} is already assigned to ${existingLabel}`
+      );
+      continue;
+    }
+    seenCatoids.set(details.catoid, details.label);
     const snapshotPath = getCatalogSnapshotPath(details.label);
     const catalogHtml = await fetchCatalogHtml(
       details.courseDescriptionsExpandedUrl,
-      snapshotPath
+      snapshotPath,
+      { fetchPage }
     );
 
     definitions.push({
@@ -1347,6 +1397,7 @@ async function fetchCatalogDefinitions(grcPublicMaterials, options = {}) {
     });
   }
 
+  definitions.sort((left, right) => compareAcademicYearLabels(left.label, right.label));
   return definitions;
 }
 
@@ -1354,104 +1405,127 @@ async function main() {
   const args = new Set(process.argv.slice(2));
   const cacheOnly =
     args.has("--cache-only") || process.env.GATORGUIDE_PLANNER_CACHE_ONLY === "1";
-  const grcPublicMaterials = await loadGrcPublicMaterials({
-    forceRefresh: false,
-    allowSnapshotFallback: true,
-    cacheOnly,
-  });
-  fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
+  const browserFetcher = cacheOnly ? null : await createGrcBrowserFetcher();
+  const fetchPage = browserFetcher
+    ? (url, timeoutMs, fetchOptions) => browserFetcher.fetchPage(url, timeoutMs, fetchOptions)
+    : null;
+  const fetchPageText = browserFetcher
+    ? async (url) => {
+        const response = await browserFetcher.fetchPage(url, 30000);
+        return validateCatalogResponseBody(url, response.status, response.html);
+      }
+    : undefined;
 
-  const catalogDefinitions = await fetchCatalogDefinitions(grcPublicMaterials, {
-    cacheOnly,
-  });
-  const rawEntries = [];
-  for (const catalogDefinition of catalogDefinitions) {
-    const catalogEntries = buildCourseEntries(
-      catalogDefinition.html,
-      catalogDefinition.label,
-      catalogDefinition.courseDescriptionsUrl
-    );
-    if (!catalogEntries.length) {
-      throw new Error(
-        `No Green River course entries parsed for ${catalogDefinition.label}; refusing to write an empty catalog-ingest report.`
-      );
+  try {
+    if (browserFetcher) {
+      console.log("Using a minimized Chromium window and rendered page capture for Green River catalog downloads.");
     }
-    rawEntries.push(...catalogEntries);
-  }
-  if (!rawEntries.length) {
-    throw new Error("No Green River catalog course entries were parsed; refusing to write an empty ingest report.");
-  }
-  const entries = mergeCourseEntries(rawEntries);
-  const sourceFingerprint = sha256Text(
-    catalogDefinitions
-      .map((catalogDefinition) => `${catalogDefinition.label}\n${catalogDefinition.html}`)
-      .join("\n\n")
-  );
-  const report = {
-    generatedAt: new Date().toISOString(),
-    sourceUrls: catalogDefinitions.map((catalogDefinition) => catalogDefinition.courseDescriptionsUrl),
-    expandedSourceUrls: catalogDefinitions.map(
-      (catalogDefinition) => catalogDefinition.courseDescriptionsExpandedUrl
-    ),
-    pageCount: catalogDefinitions.reduce(
-      (sum, catalogDefinition) => sum + catalogDefinition.pageCount,
-      0
-    ),
-    catalogRootCount: catalogDefinitions.length,
-    snapshotPaths: catalogDefinitions.map((catalogDefinition) => catalogDefinition.snapshotPath),
-    usedSnapshotFallback: catalogDefinitions.some(
-      (catalogDefinition) => catalogDefinition.usedSnapshotFallback
-    ),
-    snapshotFallbackYears: catalogDefinitions
-      .filter((catalogDefinition) => catalogDefinition.usedSnapshotFallback)
-      .map((catalogDefinition) => catalogDefinition.label),
-    snapshotFallbackReasons: catalogDefinitions
-      .filter((catalogDefinition) => Boolean(catalogDefinition.snapshotFallbackReason))
-      .map((catalogDefinition) => ({
-        label: catalogDefinition.label,
-        reason: catalogDefinition.snapshotFallbackReason,
-      })),
-    catalogYearLabels: catalogDefinitions.map((catalogDefinition) => catalogDefinition.label),
-    sourceFingerprint,
-    courseCount: entries.length,
-    coursesWithCreditLabels: entries.filter((entry) => Boolean(entry.creditLabel)).length,
-    coursesWithEnrollmentRequirementNotes: entries.filter(
-      (entry) => (entry.prerequisiteNotes ?? []).length > 0
-    ).length,
-    coursesWithStructuredPrerequisitePaths: entries.filter(
-      (entry) =>
-        (entry.prerequisiteCourseCodes ?? []).length > 0 ||
-        (entry.prerequisiteAlternativeCourseCodeSets ?? []).length > 0
-    ).length,
-    coursesWithGrcGeneralEducationCategories: entries.filter(
-      (entry) => (entry.grcGeneralEducationCategories ?? []).length > 0
-    ).length,
-    grcGeneralEducationCategoryCounts: GRC_GENERAL_ED_TAG_ORDER.reduce((counts, tag) => {
-      counts[tag] = entries.filter((entry) =>
-        (entry.grcGeneralEducationCategories ?? []).some((category) =>
-          category.tags.includes(tag)
-        )
-      ).length;
-      return counts;
-    }, {}),
-    coursesWithCorequisiteNotes: entries.filter((entry) => (entry.corequisiteNotes ?? []).length > 0)
-      .length,
-    coursesWithStructuredCorequisitePaths: entries.filter(
-      (entry) =>
-        (entry.corequisiteCourseCodes ?? []).length > 0 ||
-        (entry.corequisiteAlternativeCourseCodeSets ?? []).length > 0
-    ).length,
-    entries,
-  };
+    const grcPublicMaterials = await loadGrcPublicMaterials({
+      forceRefresh: false,
+      allowSnapshotFallback: true,
+      cacheOnly,
+      fetchPageText,
+    });
+    fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
 
-  fs.writeFileSync(OUTPUT_JSON_PATH, `${JSON.stringify(report, null, 2)}\n`);
-  writeMarkdown(report);
+    const skippedCatalogs = [];
+    const catalogDefinitions = await fetchCatalogDefinitions(grcPublicMaterials, {
+      cacheOnly,
+      fetchPage,
+      skippedCatalogs,
+    });
+    const rawEntries = [];
+    for (const catalogDefinition of catalogDefinitions) {
+      const catalogEntries = buildCourseEntries(
+        catalogDefinition.html,
+        catalogDefinition.label,
+        catalogDefinition.courseDescriptionsUrl
+      );
+      if (!catalogEntries.length) {
+        throw new Error(
+          `No Green River course entries parsed for ${catalogDefinition.label}; refusing to write an empty catalog-ingest report.`
+        );
+      }
+      rawEntries.push(...catalogEntries);
+    }
+    if (!rawEntries.length) {
+      throw new Error("No Green River catalog course entries were parsed; refusing to write an empty ingest report.");
+    }
+    const entries = mergeCourseEntries(rawEntries);
+    const sourceFingerprint = sha256Text(
+      catalogDefinitions
+        .map((catalogDefinition) => `${catalogDefinition.label}\n${catalogDefinition.html}`)
+        .join("\n\n")
+    );
+    const report = {
+      generatedAt: new Date().toISOString(),
+      sourceUrls: catalogDefinitions.map((catalogDefinition) => catalogDefinition.courseDescriptionsUrl),
+      expandedSourceUrls: catalogDefinitions.map(
+        (catalogDefinition) => catalogDefinition.courseDescriptionsExpandedUrl
+      ),
+      pageCount: catalogDefinitions.reduce(
+        (sum, catalogDefinition) => sum + catalogDefinition.pageCount,
+        0
+      ),
+      catalogRootCount: catalogDefinitions.length,
+      skippedCatalogs,
+      snapshotPaths: catalogDefinitions.map((catalogDefinition) => catalogDefinition.snapshotPath),
+      usedSnapshotFallback: catalogDefinitions.some(
+        (catalogDefinition) => catalogDefinition.usedSnapshotFallback
+      ),
+      snapshotFallbackYears: catalogDefinitions
+        .filter((catalogDefinition) => catalogDefinition.usedSnapshotFallback)
+        .map((catalogDefinition) => catalogDefinition.label),
+      snapshotFallbackReasons: catalogDefinitions
+        .filter((catalogDefinition) => Boolean(catalogDefinition.snapshotFallbackReason))
+        .map((catalogDefinition) => ({
+          label: catalogDefinition.label,
+          reason: catalogDefinition.snapshotFallbackReason,
+        })),
+      catalogYearLabels: catalogDefinitions.map((catalogDefinition) => catalogDefinition.label),
+      sourceFingerprint,
+      courseCount: entries.length,
+      coursesWithCreditLabels: entries.filter((entry) => Boolean(entry.creditLabel)).length,
+      coursesWithEnrollmentRequirementNotes: entries.filter(
+        (entry) => (entry.prerequisiteNotes ?? []).length > 0
+      ).length,
+      coursesWithStructuredPrerequisitePaths: entries.filter(
+        (entry) =>
+          (entry.prerequisiteCourseCodes ?? []).length > 0 ||
+          (entry.prerequisiteAlternativeCourseCodeSets ?? []).length > 0
+      ).length,
+      coursesWithGrcGeneralEducationCategories: entries.filter(
+        (entry) => (entry.grcGeneralEducationCategories ?? []).length > 0
+      ).length,
+      grcGeneralEducationCategoryCounts: GRC_GENERAL_ED_TAG_ORDER.reduce((counts, tag) => {
+        counts[tag] = entries.filter((entry) =>
+          (entry.grcGeneralEducationCategories ?? []).some((category) =>
+            category.tags.includes(tag)
+          )
+        ).length;
+        return counts;
+      }, {}),
+      coursesWithCorequisiteNotes: entries.filter((entry) => (entry.corequisiteNotes ?? []).length > 0)
+        .length,
+      coursesWithStructuredCorequisitePaths: entries.filter(
+        (entry) =>
+          (entry.corequisiteCourseCodes ?? []).length > 0 ||
+          (entry.corequisiteAlternativeCourseCodeSets ?? []).length > 0
+      ).length,
+      entries,
+    };
 
-  console.log(
-    `Parsed ${report.courseCount} merged Green River catalog courses across ${report.catalogYearLabels.length} catalog years.`
-  );
-  console.log(`Catalog ingest JSON: ${OUTPUT_JSON_PATH}`);
-  console.log(`Catalog ingest Markdown: ${OUTPUT_MD_PATH}`);
+    fs.writeFileSync(OUTPUT_JSON_PATH, `${JSON.stringify(report, null, 2)}\n`);
+    writeMarkdown(report);
+
+    console.log(
+      `Parsed ${report.courseCount} merged Green River catalog courses across ${report.catalogYearLabels.length} catalog years.`
+    );
+    console.log(`Catalog ingest JSON: ${OUTPUT_JSON_PATH}`);
+    console.log(`Catalog ingest Markdown: ${OUTPUT_MD_PATH}`);
+  } finally {
+    if (browserFetcher) await browserFetcher.close();
+  }
 }
 
 module.exports = {
