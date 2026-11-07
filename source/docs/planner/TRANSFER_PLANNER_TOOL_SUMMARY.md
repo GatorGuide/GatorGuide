@@ -21,7 +21,7 @@ The current one-click Windows entrypoints are:
 
 - `npm run planner:windows:maintenance`
 - `npm run planner:full:verify`
-- `..\Course-Planner-Updater.bat`
+- `..\Course-Planner-Updater.exe`
 
 The maintenance launcher is interactive now:
 
@@ -91,7 +91,7 @@ The old `legacy-transfer-planner-service-test.*` artifacts are diagnostic only. 
   - `scripts/planner/audit-transfer-planner-source-backed-coverage.cjs`
   - `scripts/planner/verify-transfer-planner-hardening.cjs`
   - `scripts/planner/refresh-transfer-planner-sources.cjs`
-  - `../Course-Planner-Updater.bat`
+  - `../Course-Planner-Updater.exe`
   - `scripts/run-transfer-planner-maintenance.ps1`
   - `npm run planner:check-sources`
   - `npm run planner:discover-primary-sources`
@@ -320,7 +320,7 @@ This gives the project one script that can check the tracked sources and update 
 
 There is now a one-click Windows launcher at the repo root:
 
-- `Course-Planner-Updater.bat`
+- `Course-Planner-Updater.exe`
 
 It is meant to be double-clicked and now exposes the old refresh variants as built-in choices plus root-level `Edit course links` and `Laymans Diagnosis` entries. The PowerShell launchers still handle dependency repair, timestamped logs in `.tmp/planner-refresh-logs/`, `Laymans Diagnosis`, and the detailed refresh/maintenance flow itself.
 

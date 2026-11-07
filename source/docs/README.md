@@ -65,7 +65,7 @@ For transfer-planner work:
 - The current one-click planner maintenance entrypoints are:
   - `npm run planner:windows:maintenance`
   - `npm run planner:full:verify`
-  - Windows: `..\Course-Planner-Updater.bat`
+  - Windows: `..\Course-Planner-Updater.exe`
   - macOS: `..\Course-Planner-Updater.app`
   - Linux: `..\Course-Planner-Updater.desktop`
 - The same maintenance pass now emits `.tmp/transfer-planner-hardening-report.md`, which is the single artifact that checks source gaps, parser failures, diff classification cleanup, machine-readable availability statuses, source-backed-or-hidden wording, and the coverage audit at `.tmp/transfer-planner-source-backed-coverage-audit.md`.

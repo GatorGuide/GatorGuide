@@ -59,7 +59,7 @@ npm run planner:discover-grc-materials
 Or double-click:
 
 ```text
-..\Course-Planner-Updater.bat
+..\Course-Planner-Updater.exe
 ```
 
 The unified updater now includes the old refresh variants as built-in options:

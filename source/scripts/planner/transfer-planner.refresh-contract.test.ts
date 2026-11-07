@@ -247,8 +247,7 @@ test("Windows planner maintenance launcher runs refresh, installs Chromium, runs
     "scripts/run-transfer-planner-maintenance.ps1",
     "utf8"
   );
-  const updaterBat = readFileSync("scripts/Course-Planner-Updater.bat", "utf8");
-  const rootUpdaterBat = readFileSync("../Course-Planner-Updater.bat", "utf8");
+  const rustLauncher = readFileSync("../windows-launcher/src/main.rs", "utf8");
   const refreshScript = readFileSync("scripts/run-transfer-planner-refresh.ps1", "utf8");
   const maintenanceCommon = readFileSync("scripts/transfer-planner-maintenance-common.ps1", "utf8");
   const diagnosisScript = readFileSync(
@@ -302,24 +301,20 @@ test("Windows planner maintenance launcher runs refresh, installs Chromium, runs
   assert.match(maintenanceScript, /-OnlySection/);
   assert.match(maintenanceScript, /-StartSection/);
 
-  assert.match(updaterBat, /\.\.\\\.\.\\Course-Planner-Updater\.bat/);
-  assert.match(rootUpdaterBat, /run-transfer-planner-maintenance\.ps1/);
-  assert.match(rootUpdaterBat, /run-transfer-planner-refresh\.ps1/);
-  assert.match(rootUpdaterBat, /maintenance-no-downloads/);
-  assert.match(rootUpdaterBat, /refresh-no-downloads/);
-  assert.match(rootUpdaterBat, /cache-summary/);
-  assert.match(rootUpdaterBat, /edit-course-links/);
-  assert.match(rootUpdaterBat, /laymans-diagnosis/);
-  assert.match(rootUpdaterBat, /echo 1\. Course updates \+ tests/);
-  assert.match(rootUpdaterBat, /echo 2\. Course updates only/);
-  assert.match(rootUpdaterBat, /echo 3\. Show cache summary/);
-  assert.match(rootUpdaterBat, /echo 4\. Edit course links/);
-  assert.match(rootUpdaterBat, /echo 5\. Laymans Diagnosis/);
-  assert.match(rootUpdaterBat, /echo 6\. Back/);
-  assert.doesNotMatch(rootUpdaterBat, /echo 2\. Course updates \+ tests \^\(skip downloads\^\)/);
-  assert.doesNotMatch(rootUpdaterBat, /echo 4\. Course updates only \^\(skip downloads\^\)/);
-  assert.match(rootUpdaterBat, /echo 2\. Skip downloads/);
-  assert.match(rootUpdaterBat, /echo B\. Back/);
+  assert.match(rustLauncher, /run-transfer-planner-maintenance\.ps1/);
+  assert.match(rustLauncher, /run-transfer-planner-refresh\.ps1/);
+  assert.match(rustLauncher, /maintenance-no-downloads/);
+  assert.match(rustLauncher, /refresh-no-downloads/);
+  assert.match(rustLauncher, /cache-summary/);
+  assert.match(rustLauncher, /edit-course-links/);
+  assert.match(rustLauncher, /laymans-diagnosis/);
+  assert.match(rustLauncher, /Course updates \+ tests/);
+  assert.match(rustLauncher, /Course updates only/);
+  assert.match(rustLauncher, /Show cache summary/);
+  assert.match(rustLauncher, /Edit course links/);
+  assert.match(rustLauncher, /Laymans Diagnosis/);
+  assert.match(rustLauncher, /Skip downloads/);
+  assert.match(rustLauncher, /Back/);
   assert.match(refreshScript, /--only-section/);
   assert.match(refreshScript, /--start-section/);
   assert.match(refreshScript, /TargetPlanId/);
@@ -336,7 +331,15 @@ test("Windows planner maintenance launcher runs refresh, installs Chromium, runs
   assert.match(linkManagerScript, /--update-current-links/);
   assert.match(linkManagerScript, /manual-source-link-overrides\.data\.ts/);
   assert.match(manualSourceOverrideData, /TRANSFER_PLANNER_MANUAL_LINK_OVERRIDES/);
-  assert.equal(existsSync("../Course-Planner-Updater.bat"), true);
+  assert.equal(existsSync("../Course-Planner-Updater.exe"), true);
+  assert.equal(existsSync("scripts/Course-Planner-Updater.exe"), true);
+  assert.equal(existsSync("../Start-to-run.exe"), true);
+  assert.equal(existsSync("../add-or-remove-resources.exe"), true);
+  assert.equal(existsSync("../Course-Planner-Updater.bat"), false);
+  assert.equal(existsSync("../Start-to-run.bat"), false);
+  assert.equal(existsSync("../add-or-remove-resources.bat"), false);
+  assert.equal(existsSync("scripts/Course-Planner-Updater.bat"), false);
+  assert.equal(existsSync("../windows-toolchain.cmd"), false);
   assert.equal(existsSync("scripts/run-planner-maintenance.cmd"), false);
   assert.equal(existsSync("scripts/run-planner-maintenance.bat"), false);
   assert.equal(existsSync("scripts/run-planner-refresh.cmd"), false);
@@ -358,7 +361,7 @@ test("Windows planner maintenance launcher runs refresh, installs Chromium, runs
   assert.match(readme, /planner:windows:maintenance/);
   assert.match(readme, /transfer-planner-hardening-report\.md/);
   assert.match(readme, /transfer-planner-source-backed-coverage-audit\.md/);
-  assert.match(readme, /Course-Planner-Updater\.bat/);
+  assert.match(readme, /Course-Planner-Updater\.exe/);
   assert.doesNotMatch(readme, /run-planner-maintenance\.cmd/);
   assert.match(readme, /transfer-planner-maintenance-summary\.md/);
 });
@@ -686,12 +689,12 @@ test("Planner docs now use source-gap and language instead of review queues", ()
   assert.doesNotMatch(toolSummary, /advisor review/i);
   assert.doesNotMatch(toolSummary, /review queue/i);
   assert.match(toolSummary, /planner:windows:maintenance/);
-  assert.match(toolSummary, /Course-Planner-Updater\.bat/);
+  assert.match(toolSummary, /Course-Planner-Updater\.exe/);
   assert.doesNotMatch(toolSummary, /run-planner-maintenance\.cmd/);
   assert.doesNotMatch(toolSummary, /run-planner-refresh\.cmd/);
 
   assert.match(docsReadme, /planner:windows:maintenance/);
-  assert.match(docsReadme, /Course-Planner-Updater\.bat/);
+  assert.match(docsReadme, /Course-Planner-Updater\.exe/);
   assert.doesNotMatch(docsReadme, /run-planner-maintenance\.cmd/);
   assert.match(docsReadme, /generated from the planner source layer/i);
 

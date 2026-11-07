@@ -24,7 +24,7 @@ Gator Guide helps students:
 
 ### Quick start
 
-- On Windows, double-click `Start-to-run.bat`
+- On Windows, double-click `Start-to-run.exe` (the Rust launcher)
 - On macOS, double-click `Start-to-run.app`
 - On Linux, double-click `Start-to-run.desktop`
 - After the server comes online, it opens `<http://127.0.0.1:8081>` in your default browser automatically.
@@ -97,7 +97,7 @@ git push origin main
 
 To add new scholarships, internships, or helpful resource links, use the resources launcher for your system:
 
-- Windows: `add-or-remove-resources.bat`
+- Windows: `add-or-remove-resources.exe`
 - macOS: `add-or-remove-resources.app`
 - Linux: `add-or-remove-resources.desktop`
 
@@ -115,8 +115,19 @@ You can also view all of these resources and easily edit them by using the expor
 
 To update all course information in course planner, double-click the course planner updater for your system:
 
-- Windows: `Course-Planner-Updater.bat`
+- Windows: `Course-Planner-Updater.exe`
 - macOS: `Course-Planner-Updater.app`
 - Linux: `Course-Planner-Updater.desktop`
 
 There will be a few options that will walk you through on what to update and how it should do it. After waiting around 20 minutes (hopefully), you are free to commit and push the updates so the new information is added to the repo.
+
+The Windows launchers are compiled from `windows-launcher/`. From the repository root, rebuild them with:
+
+```powershell
+cargo build --release --locked --manifest-path windows-launcher/Cargo.toml --bin gatorguide-windows-launcher
+$launcher = "windows-launcher/target/release/gatorguide-windows-launcher.exe"
+Copy-Item $launcher Course-Planner-Updater.exe
+Copy-Item $launcher Start-to-run.exe
+Copy-Item $launcher add-or-remove-resources.exe
+Copy-Item $launcher source/scripts/Course-Planner-Updater.exe
+```
