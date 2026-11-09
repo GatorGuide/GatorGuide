@@ -229,6 +229,44 @@ mod tests {
     }
 
     #[test]
+    fn push_deployment_skips_planner_preflight_but_checks_pages_actions() {
+        let workflow_path = repo_root().join(".github/workflows/planner-refresh.yml");
+        let planner = fs::read_to_string(workflow_path).unwrap();
+        let planner_check = planner
+            .find("- name: Check planner Rust automation")
+            .unwrap();
+        let workflow_actions_check = planner.find("- name: Check workflow actions").unwrap();
+        let refresh = planner.find("- name: Refresh planner data").unwrap();
+        let export = planner.find("- name: Export static web app").unwrap();
+
+        assert!(planner_check < workflow_actions_check);
+        assert!(workflow_actions_check < refresh);
+        assert!(refresh < export);
+
+        let planner_preflight = &planner[planner_check..workflow_actions_check];
+        assert!(planner_preflight.contains("if: github.event_name != 'push'"));
+        assert!(
+            planner_preflight
+                .contains("cargo fmt --manifest-path automation/Cargo.toml -- --check")
+        );
+        assert!(
+            planner_preflight.contains("cargo test --locked --manifest-path automation/Cargo.toml")
+        );
+
+        let workflow_actions_preflight = &planner[workflow_actions_check..refresh];
+        assert!(workflow_actions_preflight.contains(
+            "cargo fmt --manifest-path automation/workflow-actions/Cargo.toml -- --check"
+        ));
+        assert!(workflow_actions_preflight.contains(
+            "cargo test --locked --manifest-path automation/workflow-actions/Cargo.toml"
+        ));
+        assert!(workflow_actions_preflight.contains(
+            "cargo build --locked --release --manifest-path automation/workflow-actions/Cargo.toml"
+        ));
+        assert!(!workflow_actions_preflight.contains("github.event_name != 'push'"));
+    }
+
+    #[test]
     fn scheduled_workflows_use_rust_for_custom_refresh_publish_and_pages_steps() {
         let workflows = repo_root().join(".github/workflows");
         let equivalencies =

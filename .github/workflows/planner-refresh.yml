@@ -51,10 +51,14 @@ jobs:
         working-directory: source
         run: npm ci
 
-      - name: Check Rust automation
+      - name: Check planner Rust automation
+        if: github.event_name != 'push'
         run: |
           cargo fmt --manifest-path automation/Cargo.toml -- --check
           cargo test --locked --manifest-path automation/Cargo.toml
+
+      - name: Check workflow actions
+        run: |
           cargo fmt --manifest-path automation/workflow-actions/Cargo.toml -- --check
           cargo test --locked --manifest-path automation/workflow-actions/Cargo.toml
           cargo build --locked --release --manifest-path automation/workflow-actions/Cargo.toml
