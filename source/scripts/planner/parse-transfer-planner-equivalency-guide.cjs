@@ -37,6 +37,7 @@ const OUTPUT_CATALOG_TS_PATH = path.resolve(
   "constants",
   "transfer-equivalency-catalog.generated.ts"
 );
+const ENGLISH_LOCALE_PATH = path.resolve(REPO_ROOT, "constants", "locales", "en.json");
 const EQUIVALENCY_AUTOMATION_MANIFEST_PATH = path.resolve(
   REPO_ROOT,
   "..",
@@ -629,6 +630,55 @@ function writeReports({ report, markdown }) {
   fs.writeFileSync(OUTPUT_MD_PATH, markdown);
 }
 
+function formatEquivalencyRefreshDate(date = new Date()) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    throw new Error("Equivalency refresh date must be a valid Date.");
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    month: "long",
+    timeZone: "UTC",
+    year: "numeric",
+  }).format(date);
+}
+
+function replaceEquivalencyGuideRefreshDate(description, date = new Date()) {
+  if (typeof description !== "string") {
+    throw new Error("Equivalency description must be a string.");
+  }
+  const lastUpdatedPattern = /Last updated at (?:____|[A-Z][a-z]+ [0-9]{1,2}, [0-9]{4})[.]/g;
+  const matches = [...description.matchAll(lastUpdatedPattern)];
+  if (matches.length !== 1) {
+    throw new Error("Expected exactly one Equivalency Guide last-updated marker.");
+  }
+  return description.replace(
+    lastUpdatedPattern,
+    `Last updated at ${formatEquivalencyRefreshDate(date)}.`
+  );
+}
+
+function writeEquivalencyGuideLastUpdated(date = new Date()) {
+  const localeSource = fs.readFileSync(ENGLISH_LOCALE_PATH, "utf8");
+  const locale = JSON.parse(localeSource);
+  const description = locale.resources?.transferCategoryEquivalenciesDescription;
+  if (typeof description !== "string") {
+    throw new Error("English transfer-equivalency description is missing.");
+  }
+  const updatedDescription = replaceEquivalencyGuideRefreshDate(description, date);
+  const descriptionKey = '"transferCategoryEquivalenciesDescription": ';
+  const sourceValue = `${descriptionKey}${JSON.stringify(description)}`;
+  const updatedValue = `${descriptionKey}${JSON.stringify(updatedDescription)}`;
+  const sourceIndex = localeSource.indexOf(sourceValue);
+  const duplicateSourceIndex = localeSource.indexOf(sourceValue, sourceIndex + sourceValue.length);
+  if (sourceIndex < 0 || duplicateSourceIndex >= 0) {
+    throw new Error("Could not uniquely locate the English transfer-equivalency description.");
+  }
+  if (sourceValue !== updatedValue) {
+    fs.writeFileSync(ENGLISH_LOCALE_PATH, localeSource.replace(sourceValue, updatedValue));
+  }
+  return formatEquivalencyRefreshDate(date);
+}
+
 async function fetchGuideHtml() {
   const response = await fetchWithHandling(GUIDE_URL, {
     operation: "Fetch UW Green River equivalency guide",
@@ -678,6 +728,7 @@ async function main() {
 
   writeGeneratedRules({ officialRules, derivedRules });
   writeReports({ report, markdown });
+  const lastUpdatedAt = writeEquivalencyGuideLastUpdated();
 
   console.log(
     JSON.stringify(
@@ -691,6 +742,7 @@ async function main() {
         chainRules: report.countsByType["chain-rule"] ?? 0,
         noCreditRules: report.countsByType["no-credit"] ?? 0,
         limitedCreditRules: report.countsByType["limited-credit"] ?? 0,
+        lastUpdatedAt,
         output: path.relative(REPO_ROOT, OUTPUT_TS_PATH).replace(/\\/g, "/"),
         catalogOutput: path.relative(REPO_ROOT, OUTPUT_CATALOG_TS_PATH).replace(/\\/g, "/"),
         report: path.relative(REPO_ROOT, OUTPUT_JSON_PATH).replace(/\\/g, "/"),
@@ -711,4 +763,5 @@ if (require.main === module) {
 module.exports = {
   buildDerivedStructuredEquivalencyRules,
   buildDerivedChainRules,
+  replaceEquivalencyGuideRefreshDate,
 };
