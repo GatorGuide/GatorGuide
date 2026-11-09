@@ -52,7 +52,7 @@ test("resolveRouteAccessRedirect applies unauthenticated and guest guards before
       requireUser: true,
       resolveRedirect: customRedirect,
     }),
-    ROUTES.login
+    ROUTES.tabsResources
   );
 
   assert.equal(
@@ -90,6 +90,6 @@ test("resolveRouteAccessRedirect allows public routes and post-auth custom redir
 
 test("shouldRenderRouteAccessLoading covers hydration and redirect handoff states", () => {
   assert.equal(shouldRenderRouteAccessLoading({ isHydrated: false, redirectTarget: null }), true);
-  assert.equal(shouldRenderRouteAccessLoading({ isHydrated: true, redirectTarget: ROUTES.login }), true);
+  assert.equal(shouldRenderRouteAccessLoading({ isHydrated: true, redirectTarget: ROUTES.tabsResources }), true);
   assert.equal(shouldRenderRouteAccessLoading({ isHydrated: true, redirectTarget: null }), false);
 });

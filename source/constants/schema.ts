@@ -7,6 +7,7 @@ export const STORAGE_KEYS = {
   appDataUserPrefix: "gatorguide:appdata:user:",
   appDataActiveUser: "gatorguide:appdata:active-user:v1",
   hasSeenStartup: "gatorguide:hasSeenStartup",
+  resourceDisclaimerAcknowledged: "gatorguide:resources:disclaimer:v1",
   pendingAccountData: "gatorguide:pending-account-data",
   guestProfileShow: "gatorguide:guestProfile:show",
   guestRoadmapShow: "gatorguide:guestRoadmap:show",

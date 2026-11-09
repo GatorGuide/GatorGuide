@@ -53,7 +53,7 @@ test("RouteAccessBoundary redirects unauthenticated users before rendering prote
 
   const renderer = renderBoundary();
 
-  assert.deepEqual(getRouter().replace.calls, [[ROUTES.login]]);
+  assert.deepEqual(getRouter().replace.calls, [[ROUTES.tabsResources]]);
   assert.equal(hasText(renderer, "Preparing your data"), true);
   assert.equal(hasText(renderer, "Protected dashboard"), false);
 

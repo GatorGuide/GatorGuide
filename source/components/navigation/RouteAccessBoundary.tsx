@@ -26,7 +26,7 @@ export function RouteAccessBoundary({
   requireUser = true,
   allowGuest = true,
   loadingMessage,
-  unauthenticatedRedirect = ROUTES.login,
+  unauthenticatedRedirect = ROUTES.tabsResources,
   guestRedirect = ROUTES.tabsResources,
   resolveRedirect,
 }: RouteAccessBoundaryProps) {

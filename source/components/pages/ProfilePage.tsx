@@ -123,7 +123,7 @@ export default function ProfilePage() {
       };
       await localStorageService.setItem(STORAGE_KEYS.pendingAccountData, JSON.stringify(pendingData));
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      router.push(ROUTES.login);
+      router.push(ROUTES.loginWithQuery("intent=account"));
     } catch {
       Alert.alert(t("general.error"), t("profile.prepareDataError"));
     }
@@ -400,7 +400,7 @@ export default function ProfilePage() {
               title={t("profile.notSignedIn")}
               message={t("profile.notSignedInMessage")}
               actionLabel={t("profile.goToLogin")}
-              onAction={() => router.replace(ROUTES.login)}
+              onAction={() => router.replace(ROUTES.loginWithQuery("intent=account"))}
               className="w-full"
             />
           </View>
@@ -427,7 +427,7 @@ export default function ProfilePage() {
             </View>
 
             <AnimatedChipPressable
-              onPress={() => router.push(ROUTES.login)}
+              onPress={() => router.push(ROUTES.loginWithQuery("intent=account"))}
               className={`${isLight ? "bg-emerald-200" : "bg-emerald-500"} rounded-2xl py-4 px-6 items-center flex-row justify-center`}
             >
               <MaterialIcons name="arrow-forward" size={20} color="#001f0f" />

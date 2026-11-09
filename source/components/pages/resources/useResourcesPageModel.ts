@@ -68,6 +68,9 @@ type InternalToolTarget = {
 
 type Translate = (key: string, options?: Record<string, string | number>) => string;
 
+export const TRANSFER_PLANNER_EXPERIMENTAL_PREFIX =
+  "(EXTREMELEY EXPERIMENTAL! Never got to refining and finishing. Use at your own discretion as project got cut off while it still had plenty of bugs. - Mars)";
+
 function resolveCatalogText(
   entry: Pick<
     ResourceCatalogItem | ResourceCatalogSection | ResourceCatalogSubsection,
@@ -84,9 +87,12 @@ function resolveCatalogText(
 }
 
 function mapCatalogItem(item: ResourceCatalogItem, t: Translate): ResourceItem {
+  const description = resolveCatalogText(item, "description", t);
   return {
     title: resolveCatalogText(item, "title", t),
-    description: resolveCatalogText(item, "description", t),
+    description: isTransferPlannerResourceUrl(item.url)
+      ? `${TRANSFER_PLANNER_EXPERIMENTAL_PREFIX} ${description}`
+      : description,
     url: item.url,
     actionLabel: item.actionLabel,
     sourceLabel: item.sourceLabel,
@@ -170,12 +176,6 @@ export function isTransferPlannerResourceUrl(url: string) {
   const pathname = parseInternalAppUrl(url)?.pathname ?? "";
   const plannerRoot = String(ROUTES.transferPlanner);
   return pathname === plannerRoot || pathname.startsWith(`${plannerRoot}/`);
-}
-
-export function filterVisibleResourceCatalogItems<T extends Pick<ResourceCatalogItem, "url">>(
-  items: readonly T[]
-) {
-  return items.filter((item) => !isTransferPlannerResourceUrl(item.url));
 }
 
 export function preloadTransferPlannerPage() {
@@ -613,15 +613,13 @@ export function useResourcesPageModel() {
         id: section.id,
         title: resolveCatalogText(section, "title", t),
         icon: section.icon,
-        items: filterVisibleResourceCatalogItems(section.items ?? [])
-          .filter((item) => !isExpiredResource(item.expiresAt))
+        items: (section.items ?? []).filter((item) => !isExpiredResource(item.expiresAt))
           .map((item) => mapCatalogItem(item, t)),
         subsections: (section.subsections ?? [])
           .map((subsection) => ({
             id: subsection.id,
             title: resolveCatalogText(subsection, "title", t),
-            items: filterVisibleResourceCatalogItems(subsection.items)
-              .filter((item) => !isExpiredResource(item.expiresAt))
+            items: subsection.items.filter((item) => !isExpiredResource(item.expiresAt))
               .map((item) => mapCatalogItem(item, t)),
           }))
           .filter((subsection) => subsection.items.length > 0),

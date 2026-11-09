@@ -222,7 +222,7 @@ export const APP_ROUTE_METADATA = {
   },
   forgotPassword: {
     href: "/forgot-password",
-    returnTo: "/login",
+    returnTo: "/login?intent=account",
   },
   collegeDetail: {
     href: "/college/[collegeId]",

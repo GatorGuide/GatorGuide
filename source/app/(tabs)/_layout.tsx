@@ -76,7 +76,7 @@ export default function TabLayout() {
   });
 
   return (
-    <RouteAccessBoundary allowGuest>
+    <RouteAccessBoundary allowGuest requireUser={false}>
       <Tabs
         tabBar={(props) => <ResourcesAwareTabBar {...props} variant="glass" />}
         screenOptions={{

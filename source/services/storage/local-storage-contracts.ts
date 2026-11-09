@@ -39,6 +39,7 @@ export type LocalStorageContractId =
   | "app-theme"
   | "app-language"
   | "startup-seen"
+  | "resource-disclaimer-acknowledged"
   | "pending-account-data"
   | "pending-delete-account"
   | "guest-profile-show"
@@ -186,6 +187,16 @@ export const LOCAL_STORAGE_CONTRACTS = [
     exportPolicy: "none",
     id: "startup-seen",
     key: STORAGE_KEYS.hasSeenStartup,
+    match: "exact",
+    valueKind: "boolean-string",
+  },
+  {
+    category: "preference",
+    clearWithCache: false,
+    debugDescription: "First-use resource database disclaimer acknowledgment.",
+    exportPolicy: "none",
+    id: "resource-disclaimer-acknowledged",
+    key: STORAGE_KEYS.resourceDisclaimerAcknowledged,
     match: "exact",
     valueKind: "boolean-string",
   },

@@ -60,6 +60,7 @@ Module._load = function patchedLoad(request, parent, isMain) {
 const {
   LOCAL_STORAGE_KEYS,
 } = require("@/services/storage/local-storage-contracts");
+const { STORAGE_KEYS } = require("@/constants/schema");
 const {
   localStorageService,
 } = require("@/services/storage/local-storage.service");
@@ -68,11 +69,13 @@ test("localStorageService forwards registered keys to AsyncStorage", async () =>
   calls.length = 0;
 
   await localStorageService.setItem(LOCAL_STORAGE_KEYS.appTheme, "dark");
+  await localStorageService.setItem(STORAGE_KEYS.resourceDisclaimerAcknowledged, "true");
   await localStorageService.multiSet([[LOCAL_STORAGE_KEYS.appLanguage, "es"]]);
   await localStorageService.removeItem(LOCAL_STORAGE_KEYS.appTheme);
 
   assert.deepEqual(calls, [
     ["setItem", LOCAL_STORAGE_KEYS.appTheme, "dark"],
+    ["setItem", STORAGE_KEYS.resourceDisclaimerAcknowledged, "true"],
     ["multiSet", [[LOCAL_STORAGE_KEYS.appLanguage, "es"]]],
     ["removeItem", LOCAL_STORAGE_KEYS.appTheme],
   ]);

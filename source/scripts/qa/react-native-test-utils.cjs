@@ -225,6 +225,13 @@ function MockModal({ visible, children, ...props }) {
   return React.createElement("Modal", props, children);
 }
 
+function MockRedirect({ href }) {
+  React.useEffect(() => {
+    testState.router.replace(href);
+  }, [href]);
+  return null;
+}
+
 const platformMock = {
   OS: "ios",
   select: (choices) => choices?.[platformMock.OS] ?? choices?.default,
@@ -406,6 +413,7 @@ if (!globalThis.__GATOR_GUIDE_REACT_NATIVE_TEST_MOCKS__) {
 
     if (request === "expo-router") {
       return {
+        Redirect: MockRedirect,
         router: testState.router,
         useLocalSearchParams: () => testState.localSearchParams,
         useRouter: () => testState.router,

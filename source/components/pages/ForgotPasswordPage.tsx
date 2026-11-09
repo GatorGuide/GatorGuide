@@ -31,7 +31,7 @@ const isEmailValid = (value: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value.
 
 export default function ForgotPasswordPage() {
   const router = useRouter();
-  const back = useBack(ROUTES.login);
+  const back = useBack(ROUTES.loginWithQuery("intent=account"));
   const canNavigateBack = back.canNavigateBack;
   const { t } = useAppLanguage();
   const styles = useThemeStyles();
@@ -152,7 +152,7 @@ export default function ForgotPasswordPage() {
                 </View>
 
                 <AppButton
-                  onPress={() => router.replace(ROUTES.login)}
+                  onPress={() => router.replace(ROUTES.loginWithQuery("intent=account"))}
                   label={t("auth.backToLogin")}
                   style={{ width: "100%", marginTop: 28 }}
                 />

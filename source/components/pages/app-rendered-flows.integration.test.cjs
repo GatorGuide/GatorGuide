@@ -392,7 +392,7 @@ test("HomePage renders the guest account CTA and routes to auth", async () => {
   assert.equal(hasText(renderer, "Create an account to sync your plan across devices."), true);
 
   pressByText(renderer, "Sign up");
-  assert.deepEqual(getRouter().push.calls.at(-1), [ROUTES.login]);
+  assert.deepEqual(getRouter().push.calls.at(-1), [ROUTES.loginWithQuery("intent=account")]);
 
   unmount(renderer);
 });

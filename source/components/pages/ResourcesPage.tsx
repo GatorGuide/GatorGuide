@@ -1,5 +1,7 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
+  Modal,
+  Pressable,
   ScrollView,
   Text,
   TextInput,
@@ -26,7 +28,12 @@ import { PageHeading } from "@/components/ui/PageHeading";
 import { TouchIconButton } from "@/components/ui/TouchPrimitives";
 import { useThemeStyles } from "@/hooks/use-theme-styles";
 import { useResponsiveLayout } from "@/hooks/use-responsive-layout";
+import { STORAGE_KEYS } from "@/constants/schema";
+import { localStorageService } from "@/services/storage/local-storage.service";
 import type { MatchedOpportunity } from "@/services/opportunities/opportunity-matching.service";
+
+const FIRST_USE_DISCLAIMER =
+  "Use everything in this database at your own discretion. Unofficial tool for Green River College students).";
 
 export default function ResourcesPage() {
   const styles = useThemeStyles();
@@ -49,6 +56,30 @@ export default function ResourcesPage() {
   } = useResourcesPageModel();
   const { width } = useWindowDimensions();
   const { getScrollContentPadding } = useResponsiveLayout();
+  const [showFirstUseDisclaimer, setShowFirstUseDisclaimer] = useState(false);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    let mounted = true;
+    void localStorageService
+      .getItem(STORAGE_KEYS.resourceDisclaimerAcknowledged)
+      .then((value) => {
+        if (mounted) setShowFirstUseDisclaimer(value !== "true");
+      })
+      .catch(() => {
+        if (mounted) setShowFirstUseDisclaimer(true);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [isHydrated]);
+
+  const acknowledgeFirstUseDisclaimer = () => {
+    void localStorageService
+      .setItem(STORAGE_KEYS.resourceDisclaimerAcknowledged, "true")
+      .catch(() => {})
+      .finally(() => setShowFirstUseDisclaimer(false));
+  };
 
   const { textClass, secondaryTextClass, borderClass, inactiveButtonClass, placeholderColor } = styles;
   const cardClass = styles.cardBgClass;
@@ -570,6 +601,32 @@ export default function ResourcesPage() {
           )}
         </View>
       </ScrollView>
+      <Modal
+        visible={showFirstUseDisclaimer}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => undefined}
+      >
+        <View className="flex-1 bg-black/60 items-center justify-center px-6">
+          <View
+            className={`${cardClass} border rounded-3xl p-6 w-full`}
+            style={{ maxWidth: 520 }}
+          >
+            <Text className={`${textClass} text-base leading-6`}>
+              {FIRST_USE_DISCLAIMER}
+            </Text>
+            <Pressable
+              onPress={acknowledgeFirstUseDisclaimer}
+              accessibilityRole="button"
+              accessibilityLabel="OK"
+              className="self-end mt-6 px-6 py-3 rounded-xl bg-emerald-600"
+            >
+              <Text className="text-white font-semibold">OK</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </ScreenBackground>
   );
 }

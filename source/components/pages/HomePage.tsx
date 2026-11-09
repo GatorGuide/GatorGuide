@@ -160,7 +160,7 @@ export default function HomePage() {
 
       <View className={`flex-row gap-2 ${desktop ? "mt-5" : "mt-3"}`}>
         <AnimatedChipPressable
-          onPress={() => router.push(ROUTES.login)}
+          onPress={() => router.push(ROUTES.loginWithQuery("intent=account"))}
           className={`${guestCtaPrimaryButtonClass} rounded-lg py-2 items-center justify-center`}
           containerStyle={{ flex: 1 }}
         >

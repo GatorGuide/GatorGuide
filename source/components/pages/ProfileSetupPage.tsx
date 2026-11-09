@@ -238,7 +238,7 @@ export default function ProfileSetupPage() {
     try {
       const userId = state.user?.uid;
       if (!userId) {
-        router.replace(ROUTES.login);
+        router.replace(ROUTES.loginWithQuery("intent=account"));
         return;
       }
 
