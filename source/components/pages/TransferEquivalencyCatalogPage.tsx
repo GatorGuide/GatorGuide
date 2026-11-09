@@ -4,6 +4,7 @@ import React, { useMemo, useState } from "react";
 import { ScrollView, Text, TextInput, useWindowDimensions, View } from "react-native";
 
 import { ScreenBackground } from "@/components/layouts/ScreenBackground";
+import { openExternalLink } from "@/components/transfer-planner/transfer-planner-linking";
 import { AnimatedIconPressable } from "@/components/ui/AnimatedPressables";
 import { PageBackButton } from "@/components/ui/PageBackButton";
 import {
@@ -500,6 +501,22 @@ export default function TransferEquivalencyCatalogPage() {
                     />
                   )}
                 </View>
+                {!isGreenRiverCollegeMode && selectedCampus ? (
+                  <View className="mt-2">
+                    <Text className={`${secondaryTextClass} text-xs`}>
+                      {selectedCampus.summary}
+                    </Text>
+                    <Text
+                      accessibilityRole="link"
+                      className="text-emerald-500 text-xs mt-2 underline"
+                      onPress={() => {
+                        void openExternalLink(selectedCampus.sourceUrl);
+                      }}
+                    >
+                      Source: {selectedCampus.sourceLabel}
+                    </Text>
+                  </View>
+                ) : null}
               </View>
             </View>
 

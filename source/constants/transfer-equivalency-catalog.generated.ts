@@ -8,6 +8,8 @@ export type TransferEquivalencyCatalogCampus = {
   id: TransferPlannerCampusId;
   title: string;
   summary?: string;
+  sourceLabel: string;
+  sourceUrl: string;
 };
 
 export type TransferEquivalencyCatalogEntry = {
@@ -23,17 +25,23 @@ export const TRANSFER_EQUIVALENCY_CATALOG_CAMPUSES: TransferEquivalencyCatalogCa
   {
     "id": "uw-bothell",
     "title": "UW Bothell",
-    "summary": "UW Green River transfer-category rows are sourced from the Equivalency Guide."
+    "summary": "The official Green River table publishes four Bothell-specific category mappings; other course outcomes are not inferred here.",
+    "sourceLabel": "UW Bothell Green River College Equivalency Guide",
+    "sourceUrl": "https://www.uwb.edu/registrar/policies/community-college-course-equivalency-guide/green-river-college"
   },
   {
     "id": "uw-seattle",
     "title": "UW Seattle",
-    "summary": "UW Green River transfer-category rows are sourced from the Equivalency Guide."
+    "summary": "Category rows are sourced from UW's Green River Equivalency Guide.",
+    "sourceLabel": "UW Green River Equivalency Guide",
+    "sourceUrl": "https://admit.washington.edu/apply/transfer/equivalency-guide/green-river/"
   },
   {
     "id": "uw-tacoma",
     "title": "UW Tacoma",
-    "summary": "UW Green River transfer-category rows are sourced from the Equivalency Guide."
+    "summary": "UW Tacoma's campus-specific course equivalency guide is under maintenance; Seattle and Bothell outcomes are not reused for Tacoma.",
+    "sourceLabel": "UW Tacoma Course Equivalency Guide",
+    "sourceUrl": "https://www.tacoma.uw.edu/admissions/course-equivalency-guide"
   }
 ];
 
@@ -827,6 +835,18 @@ export const TRANSFER_EQUIVALENCY_CATALOG_ENTRIES: TransferEquivalencyCatalogEnt
     "sourceCourseLabel": "BUS& 101 (1-5) formerly B A 101",
     "sourceCourseTitle": "Introduction to Business",
     "targetOutcome": "UW 1XX",
+    "tags": [
+      "SSC"
+    ]
+  },
+  {
+    "id": "uwb-grc-guide:business:bus-101",
+    "targetSchoolIds": [
+      "uw-bothell"
+    ],
+    "sourceCourseLabel": "BUS& 101 (5)",
+    "sourceCourseTitle": "Introduction to Business",
+    "targetOutcome": "B BUS 201",
     "tags": [
       "SSC"
     ]
@@ -2683,6 +2703,18 @@ export const TRANSFER_EQUIVALENCY_CATALOG_ENTRIES: TransferEquivalencyCatalogEnt
     ]
   },
   {
+    "id": "uwb-grc-guide:mathematics:math-and-141",
+    "targetSchoolIds": [
+      "uw-bothell"
+    ],
+    "sourceCourseLabel": "MATH& 141 (5)",
+    "sourceCourseTitle": null,
+    "targetOutcome": "B MATH 122 (NSc [RSN])",
+    "tags": [
+      "NSC"
+    ]
+  },
+  {
     "id": "uw-grc-guide:0786:mathematics:mathand-141-5-formerly-math-102",
     "targetSchoolIds": [
       "uw-seattle"
@@ -4165,6 +4197,18 @@ export const TRANSFER_EQUIVALENCY_CATALOG_ENTRIES: TransferEquivalencyCatalogEnt
     ]
   },
   {
+    "id": "uwb-grc-guide:psychology:psyc-and-200",
+    "targetSchoolIds": [
+      "uw-bothell"
+    ],
+    "sourceCourseLabel": "PSYC& 200 (5)",
+    "sourceCourseTitle": "Lifespan Psychology",
+    "targetOutcome": "BIS 220",
+    "tags": [
+      "SSC"
+    ]
+  },
+  {
     "id": "uw-grc-guide:1233:psychology:psycand-200-5-formerly-psych-210",
     "targetSchoolIds": [
       "uw-seattle"
@@ -4172,6 +4216,18 @@ export const TRANSFER_EQUIVALENCY_CATALOG_ENTRIES: TransferEquivalencyCatalogEnt
     "sourceCourseLabel": "PSYC& 200 (5) formerly PSYCH 210",
     "sourceCourseTitle": "Lifespan Psychology",
     "targetOutcome": "PSYCH 2XX",
+    "tags": [
+      "SSC"
+    ]
+  },
+  {
+    "id": "uwb-grc-guide:psychology:psyc-and-220",
+    "targetSchoolIds": [
+      "uw-bothell"
+    ],
+    "sourceCourseLabel": "PSYC& 220 (5)",
+    "sourceCourseTitle": "Abnormal Psychology",
+    "targetOutcome": "BIS 270",
     "tags": [
       "SSC"
     ]

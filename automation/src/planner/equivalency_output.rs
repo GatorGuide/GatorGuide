@@ -8,6 +8,8 @@ const CHUNK_SIZE: usize = 80;
 pub struct EquivalencyRulesOutputInput {
     pub official_rules: Vec<Value>,
     pub derived_rules: Vec<Value>,
+    #[serde(default)]
+    pub campus_specific_rules: Vec<Value>,
 }
 
 pub fn render_equivalency_guide_typescript(
@@ -90,6 +92,7 @@ mod tests {
         let input = EquivalencyRulesOutputInput {
             official_rules: vec![json!({"id": "guide:1", "type": "direct-course"})],
             derived_rules: vec![json!({"id": "derived:1", "type": "sequence"})],
+            campus_specific_rules: Vec::new(),
         };
         let output = render_equivalency_guide_typescript(&input).unwrap();
         assert!(output.contains("const TRANSFER_PLANNER_UW_GRC_EQUIVALENCY_GUIDE_RULE_CHUNK_0: unknown[] = [\n  {\n    \"id\": \"guide:1\",\n    \"type\": \"direct-course\"\n  }\n];"));
@@ -107,6 +110,7 @@ mod tests {
                 .map(|index| json!({"id": format!("rule:{index}")}))
                 .collect(),
             derived_rules: Vec::new(),
+            campus_specific_rules: Vec::new(),
         };
         let output = render_equivalency_guide_typescript(&input).unwrap();
         assert!(output.contains("TRANSFER_PLANNER_UW_GRC_EQUIVALENCY_GUIDE_RULE_CHUNK_0"));

@@ -25,6 +25,7 @@ const GUIDE_URL: &str =
     "https://admit.washington.edu/apply/transfer/equivalency-guide/green-river/";
 const USER_AGENT: &str = "GatorGuideTransferPlannerEquivalencyIngest/1.0";
 const DERIVATION_SPECS: &str = include_str!("derived-specs.json");
+const CAMPUS_SPECIFIC_CATALOG_RULES: &str = include_str!("campus-specific-catalog-rules.json");
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,9 +78,13 @@ pub fn run() -> Result<(), String> {
     };
     let report = build_equivalency_guide_report(&report_input);
     let markdown = render_equivalency_guide_report_markdown(&report);
+    let campus_specific_rules: Vec<Value> = serde_json::from_str(CAMPUS_SPECIFIC_CATALOG_RULES)
+        .map_err(|error| format!("could not parse campus-specific catalog rules: {error}"))?;
+    let campus_specific_rule_count = campus_specific_rules.len();
     let output_input = EquivalencyRulesOutputInput {
         official_rules,
         derived_rules,
+        campus_specific_rules,
     };
 
     write_generated_outputs(&source_root, &output_input)?;
@@ -91,6 +96,7 @@ pub fn run() -> Result<(), String> {
         "officialRules": report["officialRuleCount"],
         "derivedRules": report["derivedRuleCount"],
         "generatedRules": report["ruleCount"],
+        "campusSpecificCatalogRules": campus_specific_rule_count,
         "departments": report["departmentCount"],
         "directCourseRules": report["countsByType"]["direct-course"].as_u64().unwrap_or(0),
         "sequenceRules": report["countsByType"]["sequence"].as_u64().unwrap_or(0),
@@ -394,6 +400,24 @@ mod tests {
 
     fn test_date() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 11, 9, 6, 47, 4).unwrap()
+    }
+
+    #[test]
+    fn campus_specific_catalog_rules_are_only_published_to_the_documented_bothell_campus() {
+        let rules: Vec<Value> = serde_json::from_str(CAMPUS_SPECIFIC_CATALOG_RULES).unwrap();
+        assert_eq!(rules.len(), 4);
+        assert!(
+            rules
+                .iter()
+                .all(|rule| { rule["targetSchoolIds"] == serde_json::json!(["uw-bothell"]) })
+        );
+
+        let math = rules
+            .iter()
+            .find(|rule| rule["sourceCourseLabel"] == "MATH& 141 (5)")
+            .unwrap();
+        assert!(math["sourceCourseTitle"].is_null());
+        assert!(math["sourceNote"].as_str().is_some());
     }
 
     #[test]

@@ -8,6 +8,7 @@ const CAMPUS_IDS: &[&str] = &["uw-bothell", "uw-seattle", "uw-tacoma"];
 const TRACKED_TAG_ORDER: &[&str] = &[
     "SSC", "AH", "NSC", "QSR", "COMM", "VLPA", "DIV", "NW", "IANDS",
 ];
+const SHARED_GENERAL_EDUCATION_TAGS: &[&str] = &["AH", "SSC", "NSC", "DIV"];
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -15,6 +16,8 @@ struct CatalogCampus<'a> {
     id: &'a str,
     title: &'a str,
     summary: &'a str,
+    source_label: &'a str,
+    source_url: &'a str,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -36,17 +39,23 @@ pub fn render_transfer_equivalency_catalog_typescript(
         CatalogCampus {
             id: "uw-bothell",
             title: "UW Bothell",
-            summary: "UW Green River transfer-category rows are sourced from the Equivalency Guide.",
+            summary: "The UW Bothell Green River guide lists four campus-specific course outcomes. No other Bothell course outcomes are inferred here.",
+            source_label: "UW Bothell Green River College Equivalency Guide",
+            source_url: "https://www.uwb.edu/registrar/policies/community-college-course-equivalency-guide/green-river-college",
         },
         CatalogCampus {
             id: "uw-seattle",
             title: "UW Seattle",
-            summary: "UW Green River transfer-category rows are sourced from the Equivalency Guide.",
+            summary: "Category rows are sourced from UW's Green River Equivalency Guide.",
+            source_label: "UW Green River Equivalency Guide",
+            source_url: "https://admit.washington.edu/apply/transfer/equivalency-guide/green-river/",
         },
         CatalogCampus {
             id: "uw-tacoma",
             title: "UW Tacoma",
-            summary: "UW Green River transfer-category rows are sourced from the Equivalency Guide.",
+            summary: "UW Tacoma's course-equivalency guide is under maintenance. Its transfer-credit guidance directs students to the UW Seattle Green River guide for general education; only shared A&H, SSc, NSc and DIV categories are shown, with guide outcomes labeled as references rather than Tacoma course numbers.",
+            source_label: "UW Tacoma Environmental Science Transfer Credits",
+            source_url: "https://www.tacoma.uw.edu/sias/sam/environmental-science-transfer-credits",
         },
     ];
     let campus_json = serde_json::to_string_pretty(&campuses)
@@ -72,7 +81,7 @@ pub fn render_transfer_equivalency_catalog_typescript(
          export const TRANSFER_EQUIVALENCY_CATALOG_CAMPUSES: TransferEquivalencyCatalogCampus[] = {campus_json};\n\
          \n\
          export const TRANSFER_EQUIVALENCY_CATALOG_ENTRIES: TransferEquivalencyCatalogEntry[] = {entries_json};\n",
-        campus_type = "  id: TransferPlannerCampusId;\n  title: string;\n  summary?: string;",
+        campus_type = "  id: TransferPlannerCampusId;\n  title: string;\n  summary?: string;\n  sourceLabel: string;\n  sourceUrl: string;",
         entry_type = "  id: string;\n  targetSchoolIds: TransferPlannerCampusId[];\n  sourceCourseLabel: string;\n  sourceCourseTitle: string | null;\n  targetOutcome: string;\n  tags: TransferEquivalencyTrackedTag[];",
     ))
 }
@@ -84,65 +93,43 @@ fn build_catalog_entries(input: &EquivalencyRulesOutputInput) -> Result<Vec<Cata
         .official_rules
         .iter()
         .chain(input.derived_rules.iter())
+        .chain(input.campus_specific_rules.iter())
     {
-        if rule["isObsoleteSourceCourse"].as_bool() == Some(true) {
-            continue;
+        if let Some(entry) = catalog_entry_from_rule(rule)? {
+            push_unique_entry(&mut entries, &mut seen_ids, entry)?;
         }
-        let status = rule["ruleStatus"].as_str().unwrap_or_default();
-        if !matches!(status, "active" | "legacy") {
-            continue;
-        }
-        let acceptance = rule["acceptanceCategory"].as_str().unwrap_or_default();
-        if !matches!(
-            acceptance,
-            "accepted" | "accepted-with-warning" | "legacy-accepted" | "preferred"
-        ) {
-            continue;
-        }
-        let Some(source_course_label) = rule["sourceCourseLabel"].as_str() else {
+    }
+
+    for rule in &input.official_rules {
+        let Some(base_entry) = catalog_entry_from_rule(rule)? else {
             continue;
         };
-        let source_course_label = source_course_label.trim();
-        if source_course_label.is_empty() {
-            continue;
-        }
-        let tags = canonical_tags(&rule["targetRequirementTags"]);
-        if tags.is_empty() {
-            continue;
-        }
-
-        let id = required_string(rule, "id")?;
-        if !seen_ids.insert(id.clone()) {
-            return Err(format!(
-                "duplicate transfer-equivalency catalog rule id {id:?}"
-            ));
-        }
-        let mut target_school_ids = string_array(&rule["targetSchoolIds"]);
-        target_school_ids.sort();
-        target_school_ids.dedup();
-        if target_school_ids.is_empty() {
-            return Err(format!(
-                "eligible transfer-equivalency rule {id:?} has no targetSchoolIds"
-            ));
-        }
-        if let Some(unknown) = target_school_ids
+        if !base_entry
+            .target_school_ids
             .iter()
-            .find(|school_id| !CAMPUS_IDS.contains(&school_id.as_str()))
+            .any(|campus_id| campus_id == "uw-seattle")
         {
-            return Err(format!(
-                "eligible transfer-equivalency rule {id:?} has unsupported target campus {unknown:?}"
-            ));
+            continue;
         }
-        let target_outcome = required_string(rule, "targetOutcome")?;
+        let shared_tags = base_entry
+            .tags
+            .iter()
+            .filter(|tag| SHARED_GENERAL_EDUCATION_TAGS.contains(&tag.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if shared_tags.is_empty() {
+            continue;
+        }
 
-        entries.push(CatalogEntry {
-            id,
-            target_school_ids,
-            source_course_label: source_course_label.to_string(),
-            source_course_title: rule["sourceCourseTitle"].as_str().map(str::to_string),
-            target_outcome,
-            tags,
-        });
+        let mut entry = base_entry.clone();
+        entry.id = format!("{}:uw-tacoma", entry.id);
+        entry.target_school_ids = vec!["uw-tacoma".to_string()];
+        entry.target_outcome = format!(
+            "UW Seattle guide (general education): {}",
+            entry.target_outcome
+        );
+        entry.tags = shared_tags;
+        push_unique_entry(&mut entries, &mut seen_ids, entry)?;
     }
 
     entries.sort_by(|left, right| {
@@ -152,6 +139,77 @@ fn build_catalog_entries(input: &EquivalencyRulesOutputInput) -> Result<Vec<Cata
             .then_with(|| left.id.cmp(&right.id))
     });
     Ok(entries)
+}
+
+fn catalog_entry_from_rule(rule: &Value) -> Result<Option<CatalogEntry>, String> {
+    if rule["isObsoleteSourceCourse"].as_bool() == Some(true) {
+        return Ok(None);
+    }
+    let status = rule["ruleStatus"].as_str().unwrap_or_default();
+    if !matches!(status, "active" | "legacy") {
+        return Ok(None);
+    }
+    let acceptance = rule["acceptanceCategory"].as_str().unwrap_or_default();
+    if !matches!(
+        acceptance,
+        "accepted" | "accepted-with-warning" | "legacy-accepted" | "preferred"
+    ) {
+        return Ok(None);
+    }
+    let Some(source_course_label) = rule["sourceCourseLabel"].as_str() else {
+        return Ok(None);
+    };
+    let source_course_label = source_course_label.trim();
+    if source_course_label.is_empty() {
+        return Ok(None);
+    }
+    let tags = canonical_tags(&rule["targetRequirementTags"]);
+    if tags.is_empty() {
+        return Ok(None);
+    }
+
+    let id = required_string(rule, "id")?;
+    let mut target_school_ids = string_array(&rule["targetSchoolIds"]);
+    target_school_ids.sort();
+    target_school_ids.dedup();
+    if target_school_ids.is_empty() {
+        return Err(format!(
+            "eligible transfer-equivalency rule {id:?} has no targetSchoolIds"
+        ));
+    }
+    if let Some(unknown) = target_school_ids
+        .iter()
+        .find(|school_id| !CAMPUS_IDS.contains(&school_id.as_str()))
+    {
+        return Err(format!(
+            "eligible transfer-equivalency rule {id:?} has unsupported target campus {unknown:?}"
+        ));
+    }
+    let target_outcome = required_string(rule, "targetOutcome")?;
+
+    Ok(Some(CatalogEntry {
+        id,
+        target_school_ids,
+        source_course_label: source_course_label.to_string(),
+        source_course_title: rule["sourceCourseTitle"].as_str().map(str::to_string),
+        target_outcome,
+        tags,
+    }))
+}
+
+fn push_unique_entry(
+    entries: &mut Vec<CatalogEntry>,
+    seen_ids: &mut HashSet<String>,
+    entry: CatalogEntry,
+) -> Result<(), String> {
+    if !seen_ids.insert(entry.id.clone()) {
+        return Err(format!(
+            "duplicate transfer-equivalency catalog rule id {:?}",
+            entry.id
+        ));
+    }
+    entries.push(entry);
+    Ok(())
 }
 
 fn required_string(rule: &Value, field: &str) -> Result<String, String> {
@@ -227,7 +285,7 @@ mod tests {
                     "sourceCourseLabel": "CHEM& 261 + CHEM& 262 + CHEM& 263",
                     "sourceCourseTitle": null,
                     "targetOutcome": "Full-sequence outcome only.",
-                    "targetRequirementTags": ["NSc", "A&H"]
+                    "targetRequirementTags": ["NSc", "A&H", "QSR"]
                 }),
                 json!({
                     "id": "guide:obsolete",
@@ -270,21 +328,41 @@ mod tests {
                 "targetOutcome": "Retained older full path.",
                 "targetRequirementTags": ["NSc"]
             })],
+            campus_specific_rules: Vec::new(),
         };
 
         let entries = build_catalog_entries(&input).unwrap();
-        assert_eq!(entries.len(), 2);
+        assert_eq!(entries.len(), 3);
+        let seattle = entries
+            .iter()
+            .find(|entry| entry.id == "guide:sequence")
+            .unwrap();
+        let tacoma = entries
+            .iter()
+            .find(|entry| entry.id == "guide:sequence:uw-tacoma")
+            .unwrap();
+        let derived = entries
+            .iter()
+            .find(|entry| entry.id == "derived:legacy-sequence")
+            .unwrap();
+
         assert_eq!(
-            entries[0].source_course_label,
+            seattle.source_course_label,
             "CHEM& 261 + CHEM& 262 + CHEM& 263"
         );
-        assert_eq!(entries[0].target_outcome, "Full-sequence outcome only.");
-        assert_eq!(entries[0].tags, vec!["AH", "NSC"]);
+        assert_eq!(seattle.target_outcome, "Full-sequence outcome only.");
+        assert_eq!(seattle.tags, vec!["AH", "NSC", "QSR"]);
+        assert_eq!(tacoma.target_school_ids, vec!["uw-tacoma"]);
         assert_eq!(
-            entries[1].source_course_label,
+            tacoma.target_outcome,
+            "UW Seattle guide (general education): Full-sequence outcome only."
+        );
+        assert_eq!(tacoma.tags, vec!["AH", "NSC"]);
+        assert_eq!(
+            derived.source_course_label,
             "MATH& 151 + MATH& 152 + MATH& 153 + MATH& 264"
         );
-        assert_eq!(entries[1].tags, vec!["NSC"]);
+        assert_eq!(derived.tags, vec!["NSC"]);
     }
 
     #[test]
@@ -302,6 +380,7 @@ mod tests {
                 "targetRequirementTags": ["SSc"]
             })],
             derived_rules: Vec::new(),
+            campus_specific_rules: Vec::new(),
         };
 
         let output = render_transfer_equivalency_catalog_typescript(&input).unwrap();
@@ -309,6 +388,63 @@ mod tests {
         assert!(output.contains("\"sourceCourseLabel\": \"ACCT& 201 + ACCT& 202\""));
         assert!(output.contains("\"targetOutcome\": \"Full two-course sequence.\""));
         assert!(output.contains("\"tags\": [\n      \"SSC\""));
+        assert!(output.contains("UW Tacoma's course-equivalency guide is under maintenance."));
+        assert!(output.contains("UW Tacoma Environmental Science Transfer Credits"));
+        assert!(
+            output.contains(
+                "https://www.tacoma.uw.edu/sias/sam/environmental-science-transfer-credits"
+            )
+        );
         assert!(output.ends_with('\n'));
+    }
+
+    #[test]
+    fn projects_campus_specific_rules_only_to_their_verified_campus() {
+        let input = EquivalencyRulesOutputInput {
+            official_rules: vec![json!({
+                "id": "guide:bus-101",
+                "ruleStatus": "active",
+                "acceptanceCategory": "accepted",
+                "isObsoleteSourceCourse": false,
+                "targetSchoolIds": ["uw-seattle"],
+                "sourceCourseLabel": "BUS& 101 (1-5) formerly B A 101",
+                "targetOutcome": "UW 1XX",
+                "targetRequirementTags": ["SSc"]
+            })],
+            derived_rules: Vec::new(),
+            campus_specific_rules: vec![json!({
+                "id": "uwb-grc-guide:business:bus-101",
+                "ruleStatus": "active",
+                "acceptanceCategory": "accepted",
+                "isObsoleteSourceCourse": false,
+                "targetSchoolIds": ["uw-bothell"],
+                "sourceCourseLabel": "BUS& 101 (5)",
+                "sourceCourseTitle": "Introduction to Business",
+                "targetOutcome": "B BUS 201",
+                "targetRequirementTags": ["SSc"]
+            })],
+        };
+
+        let entries = build_catalog_entries(&input).unwrap();
+        assert_eq!(entries.len(), 3);
+        let bothell_entries = entries
+            .iter()
+            .filter(|entry| entry.target_school_ids == ["uw-bothell"])
+            .collect::<Vec<_>>();
+        assert_eq!(bothell_entries.len(), 1);
+        assert_eq!(bothell_entries[0].id, "uwb-grc-guide:business:bus-101");
+        assert_eq!(bothell_entries[0].target_outcome, "B BUS 201");
+        assert_eq!(bothell_entries[0].tags, vec!["SSC"]);
+
+        let tacoma = entries
+            .iter()
+            .find(|entry| entry.id == "guide:bus-101:uw-tacoma")
+            .unwrap();
+        assert_eq!(tacoma.target_school_ids, vec!["uw-tacoma"]);
+        assert_eq!(
+            tacoma.target_outcome,
+            "UW Seattle guide (general education): UW 1XX"
+        );
+        assert_eq!(tacoma.tags, vec!["SSC"]);
     }
 }

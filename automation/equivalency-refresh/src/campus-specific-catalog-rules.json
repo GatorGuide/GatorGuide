@@ -1,0 +1,47 @@
+[
+  {
+    "id": "uwb-grc-guide:business:bus-101",
+    "ruleStatus": "active",
+    "acceptanceCategory": "accepted",
+    "isObsoleteSourceCourse": false,
+    "targetSchoolIds": ["uw-bothell"],
+    "sourceCourseLabel": "BUS& 101 (5)",
+    "sourceCourseTitle": "Introduction to Business",
+    "targetOutcome": "B BUS 201",
+    "targetRequirementTags": ["SSc"]
+  },
+  {
+    "id": "uwb-grc-guide:mathematics:math-and-141",
+    "ruleStatus": "active",
+    "acceptanceCategory": "accepted",
+    "isObsoleteSourceCourse": false,
+    "targetSchoolIds": ["uw-bothell"],
+    "sourceCourseLabel": "MATH& 141 (5)",
+    "sourceCourseTitle": null,
+    "targetOutcome": "B MATH 122 (NSc [RSN])",
+    "targetRequirementTags": ["NSc"],
+    "sourceNote": "The official UW Bothell table currently gives this row the title 'Introduction to Business', which conflicts with the course code; the title is omitted rather than repeating the apparent source error."
+  },
+  {
+    "id": "uwb-grc-guide:psychology:psyc-and-200",
+    "ruleStatus": "active",
+    "acceptanceCategory": "accepted",
+    "isObsoleteSourceCourse": false,
+    "targetSchoolIds": ["uw-bothell"],
+    "sourceCourseLabel": "PSYC& 200 (5)",
+    "sourceCourseTitle": "Lifespan Psychology",
+    "targetOutcome": "BIS 220",
+    "targetRequirementTags": ["SSc"]
+  },
+  {
+    "id": "uwb-grc-guide:psychology:psyc-and-220",
+    "ruleStatus": "active",
+    "acceptanceCategory": "accepted",
+    "isObsoleteSourceCourse": false,
+    "targetSchoolIds": ["uw-bothell"],
+    "sourceCourseLabel": "PSYC& 220 (5)",
+    "sourceCourseTitle": "Abnormal Psychology",
+    "targetOutcome": "BIS 270",
+    "targetRequirementTags": ["SSc"]
+  }
+]

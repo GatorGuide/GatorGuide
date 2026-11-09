@@ -384,6 +384,53 @@ test("TransferEquivalencyCatalogPage filters visible catalog rows and clears sea
   unmount(renderer);
 });
 
+test("TransferEquivalencyCatalogPage shows the published UW Bothell campus-specific mappings", () => {
+  resetReactNativeTestState();
+  applyFlowTranslations();
+  setLocalSearchParams({
+    campusId: "uw-bothell",
+    tag: "SSC,NSC",
+  });
+  setAppData(createAppData({ user: null }));
+
+  const renderer = render(React.createElement(TransferEquivalencyCatalogPage));
+
+  assert.equal(hasText(renderer, "B BUS 201"), true);
+  assert.equal(hasText(renderer, "B MATH 122 (NSc [RSN])"), true);
+  assert.equal(hasText(renderer, "BIS 220"), true);
+  assert.equal(hasText(renderer, "BIS 270"), true);
+  assert.equal(hasText(renderer, "UW Bothell Green River College Equivalency Guide"), true);
+
+  unmount(renderer);
+});
+
+test("TransferEquivalencyCatalogPage shows only verified UW Tacoma general-education reference mappings", () => {
+  resetReactNativeTestState();
+  applyFlowTranslations();
+  setLocalSearchParams({
+    campusId: "uw-tacoma",
+    tag: "NSC",
+  });
+  setAppData(createAppData({ user: null }));
+
+  const renderer = render(React.createElement(TransferEquivalencyCatalogPage));
+
+  assert.equal(
+    hasText(renderer, "UW Tacoma's course-equivalency guide is under maintenance."),
+    true
+  );
+  assert.equal(hasText(renderer, "UW Tacoma Environmental Science Transfer Credits"), true);
+  assert.equal(hasText(renderer, "BIOL 100 (5)"), true);
+  assert.equal(
+    hasText(renderer, "UW Seattle guide (general education): BIOL 1XX"),
+    true
+  );
+  assert.equal(hasText(renderer, "ENGL 131"), false);
+  assert.equal(hasText(renderer, "B BUS 201"), false);
+
+  unmount(renderer);
+});
+
 test("HomePage renders the guest account CTA and routes to auth", async () => {
   resetReactNativeTestState();
   applyFlowTranslations();
