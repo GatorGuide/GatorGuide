@@ -23,13 +23,13 @@ test("Login route sends ordinary visits to Resources instead of showing the auth
   unmount(renderer);
 });
 
-test("Login route preserves the auth screen for explicit account actions", () => {
+test("Login route also sends explicit account actions to Resources", () => {
   resetReactNativeTestState();
   setLocalSearchParams({ intent: "account" });
 
   const renderer = render(React.createElement(Login));
 
-  assert.equal(getRouter().replace.calls.length, 0);
-  assert.ok(renderer.root.findAllByType("TextInput").length > 0);
+  assert.deepEqual(getRouter().replace.calls, [[ROUTES.tabsResources]]);
+  assert.equal(renderer.root.findAllByType("TextInput").length, 0);
   unmount(renderer);
 });

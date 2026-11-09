@@ -23,6 +23,7 @@ const {
 const { ROUTES } = require("@/constants/routes");
 const { QUESTIONNAIRE_FIELD_IDS } = require("@/constants/schema");
 const AuthPage = require("@/components/pages/AuthPage").default;
+const AuthCallback = require("@/app/auth").default;
 const DeadlineCalendarPage = require("@/components/pages/DeadlineCalendarPage").default;
 const HomePage = require("@/components/pages/HomePage").default;
 const QuestionnairePage = require("@/components/pages/QuestionnairePage").default;
@@ -426,6 +427,20 @@ test("AuthPage submits an email sign-up and supports guest entry", async () => {
   await flushAsyncWork();
   assert.equal(appData.signInAsGuest.calls.length, 1);
 
+  unmount(renderer);
+});
+
+test("Auth callback route completes sign-in without exposing the email/password form", () => {
+  resetReactNativeTestState();
+  applyFlowTranslations();
+  setAppData(createAppData({ user: null }));
+
+  const renderer = render(React.createElement(AuthCallback));
+
+  assert.equal(hasText(renderer, "Finishing sign-in…"), true);
+  assert.equal(renderer.root.findAllByType("TextInput").length, 0);
+  pressByText(renderer, "Open Resources");
+  assert.deepEqual(getRouter().replace.calls, [[ROUTES.tabsResources]]);
   unmount(renderer);
 });
 

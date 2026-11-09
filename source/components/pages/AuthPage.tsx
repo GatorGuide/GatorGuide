@@ -33,7 +33,7 @@ const ONBOARDING_DEBUG_LOG_KEY = STORAGE_KEYS.onboardingDebugLog;
 const optionalString = (value: unknown) =>
   typeof value === "string" ? value : undefined;
 
-export default function AuthPage() {
+export default function AuthPage({ callbackOnly = false }: { callbackOnly?: boolean } = {}) {
   const { isHydrated, signIn, signInWithAuthUser, signInAsGuest, updateUser, setQuestionnaireAnswers, deleteAccount } = useAppData();
   const { t } = useAppLanguage();
   const styles = useThemeStyles();
@@ -793,6 +793,25 @@ export default function AuthPage() {
       </View>
     </View>
   );
+
+  if (callbackOnly) {
+    return (
+      <ScreenBackground>
+        <View className={containerClass} style={{ paddingHorizontal: shellHorizontalPadding }}>
+          <Text className={`${styles.secondaryTextClass} text-center text-base`}>
+            Finishing sign-in…
+          </Text>
+          <Pressable
+            onPress={() => router.replace(ROUTES.tabsResources)}
+            accessibilityRole="button"
+            className="mt-6 self-center rounded-xl bg-emerald-600 px-6 py-3"
+          >
+            <Text className="font-semibold text-white">Open Resources</Text>
+          </Pressable>
+        </View>
+      </ScreenBackground>
+    );
+  }
 
   return (
     <ScreenBackground>
