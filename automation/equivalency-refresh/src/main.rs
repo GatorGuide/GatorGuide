@@ -15,6 +15,7 @@ mod equivalency_report;
 #[allow(dead_code)]
 #[path = "../../src/planner/equivalency_rows.rs"]
 mod equivalency_rows;
+mod refresh;
 
 fn main() -> ExitCode {
     match run() {
@@ -31,6 +32,7 @@ fn run() -> Result<(), String> {
         .nth(1)
         .ok_or_else(|| "missing equivalency-refresh command".to_string())?;
     match command.as_str() {
+        "refresh-equivalencies" => refresh::run(),
         "parse-equivalency-guide-rows" => {
             let input: equivalency_rows::EquivalencyGuideParseInput = read_json()?;
             let rows = equivalency_rows::parse_equivalency_guide_rows_with_titles(
@@ -63,7 +65,7 @@ fn run() -> Result<(), String> {
         }
         "--help" | "-h" | "help" => {
             println!(
-                "Commands: parse-equivalency-guide-rows, synthesize-uw-grc-derived-rules, build-equivalency-guide-report, render-equivalency-guide-typescript, render-transfer-equivalency-catalog-typescript"
+                "Commands: refresh-equivalencies, parse-equivalency-guide-rows, synthesize-uw-grc-derived-rules, build-equivalency-guide-report, render-equivalency-guide-typescript, render-transfer-equivalency-catalog-typescript"
             );
             Ok(())
         }

@@ -129,19 +129,23 @@ test("Phase 10 refresh pipeline is the single rebuild and verification entry poi
     "scripts/planner/build-transfer-planner-source-fingerprints.cjs",
     "scripts/planner/build-transfer-planner-requirement-diff-report.cjs",
     "scripts/planner/generate-transfer-planner-source-bootstrap.cjs",
-    "scripts/planner/parse-transfer-planner-equivalency-guide.cjs",
+    "../automation/equivalency-refresh/Cargo.toml",
     "scripts/planner/ingest-grc-catalog.cjs",
-    "scripts/planner/ingest-uw-catalog.cjs",
+    "../automation/Cargo.toml",
     "scripts/planner/generate-transfer-planner-course-metadata.cjs",
     "scripts/planner/generate-transfer-planner-grc-availability.cjs",
     "scripts/planner/generate-transfer-planner-student-runtime.cjs",
     "scripts/planner/generate-transfer-planner-docs.ts",
-    "scripts/planner/lib/legacy-service-test-artifacts.cjs",
+    "./lib/legacy-service-test-artifacts.cjs",
   ];
 
   for (const scriptPath of requiredPipelineScripts) {
     assert.match(refreshScript, new RegExp(scriptPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+  assert.match(
+    refreshScript,
+    /runCommand\("cargo",\s*\[\s*"run",\s*"--offline",\s*"--locked",\s*"--manifest-path",\s*"\.\.\/automation\/Cargo\.toml",\s*"--",\s*"ingest-uw-catalog"/
+  );
   assert.match(refreshScript, /--verify-only/);
   assert.match(refreshScript, /tsc",\s*"--noEmit"/);
   assert.match(refreshScript, /Classify hidden source gaps/);

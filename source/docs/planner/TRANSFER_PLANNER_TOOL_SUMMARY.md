@@ -84,7 +84,7 @@ The old `legacy-transfer-planner-service-test.*` artifacts are diagnostic only. 
   - `scripts/planner/build-transfer-planner-source-gap-report.cjs`
   - `scripts/planner/parse-transfer-planner-requirement-sources.cjs`
   - `scripts/planner/build-transfer-planner-source-fingerprints.cjs`
-  - `scripts/planner/parse-transfer-planner-equivalency-guide.cjs`
+  - `../automation/equivalency-refresh/src/refresh.rs` (Rust UW Green River equivalency refresh)
   - `scripts/planner/ingest-grc-catalog.cjs`
   - `scripts/planner/ingest-uw-catalog.cjs`
   - `scripts/planner/generate-transfer-planner-course-metadata.cjs`

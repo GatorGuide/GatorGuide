@@ -114,7 +114,7 @@ test("triage reports exact auto-repair coverage separately from context fallback
     sourceRole: "primary-degree-requirements",
     reportedSourceRole: "primary-degree-requirements",
     canonicalIndexedSourceRole: null,
-    likelyRepairTarget: "source/scripts/planner/parse-transfer-planner-equivalency-guide.cjs",
+    likelyRepairTarget: "automation/equivalency-refresh/src/refresh.rs",
   }));
 
   const report = triage.buildTriage(blockers, { caseCount: 2, ownerCount: 2, planCount: 2 });

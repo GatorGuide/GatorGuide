@@ -333,7 +333,7 @@ function getRecommendedFixForLayer(layer, row) {
       };
     case "mapping":
       return {
-        recommendedFixPath: "source/scripts/planner/parse-transfer-planner-equivalency-guide.cjs",
+        recommendedFixPath: "automation/equivalency-refresh/src/refresh.rs",
         recommendedNonManualFix:
           "Fix official UW-GRC equivalency parsing or mapping normalization, then regenerate planner metadata.",
       };

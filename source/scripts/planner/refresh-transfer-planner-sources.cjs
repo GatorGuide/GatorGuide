@@ -1101,7 +1101,14 @@ async function main() {
         );
         if (!cacheOnlySources) {
           runTrackedStep("Parse UW Green River equivalency guide", () =>
-            runCommand("node", ["scripts/planner/parse-transfer-planner-equivalency-guide.cjs"])
+            runCommand("cargo", [
+              "run",
+              "--locked",
+              "--manifest-path",
+              "../automation/equivalency-refresh/Cargo.toml",
+              "--",
+              "refresh-equivalencies",
+            ])
           );
           runTrackedStep("Ingest Green River course catalog", () =>
             runCommand("node", ["scripts/planner/ingest-grc-catalog.cjs"])

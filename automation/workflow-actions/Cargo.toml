@@ -1,0 +1,6 @@
+[package]
+name = "gator-guide-workflow-actions"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]

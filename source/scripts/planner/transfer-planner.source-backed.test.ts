@@ -3596,7 +3596,7 @@ test("Transcript parsing deduplicates legacy and canonical course-code variants"
 test("Legacy alias maps are parser/ingest only and removed from generators", () => {
   const parserOrIngestScriptPaths = [
     "scripts/planner/ingest-grc-catalog.cjs",
-    "scripts/planner/parse-transfer-planner-equivalency-guide.cjs",
+    "../automation/src/planner/equivalency_rows.rs",
     "scripts/planner/parse-transfer-planner-requirement-sources.cjs",
   ];
   const generatorScriptPaths = [
@@ -3607,8 +3607,11 @@ test("Legacy alias maps are parser/ingest only and removed from generators", () 
 
   for (const scriptPath of parserOrIngestScriptPaths) {
     const contents = readFileSync(scriptPath, "utf8");
+    const hasLegacyAlias = scriptPath.endsWith("equivalency_rows.rs")
+      ? /if code == "MATH& 254"\s*\{\s*"MATH& 264"\.to_string\(\)/.test(contents)
+      : contents.includes('["MATH& 254", "MATH& 264"]');
     assert.ok(
-      contents.includes('["MATH& 254", "MATH& 264"]'),
+      hasLegacyAlias,
       `${scriptPath} is missing the expected parser/ingest legacy alias mapping for Calculus IV.`
     );
   }
