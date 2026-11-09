@@ -27,7 +27,7 @@ Module._load = function loadWithFocusEffect(request, parent, isMain) {
 const ResourcesPage = require("@/components/pages/ResourcesPage").default;
 Module._load = originalModuleLoad;
 
-function makeOpportunity({ opportunityId, title, type }) {
+function makeOpportunity({ opportunityId, title, type, listingKind = "individual" }) {
   const dueAt = new Date();
   dueAt.setDate(dueAt.getDate() + 30);
 
@@ -35,7 +35,7 @@ function makeOpportunity({ opportunityId, title, type }) {
     schemaVersion: 1,
     opportunityId,
     type,
-    listingKind: "individual",
+    listingKind,
     status: "active",
     title,
     organizationName: "GatorGuide",
@@ -84,6 +84,12 @@ function visibleTextOrder(renderer) {
     .findAll((node) => node.type === "Text")
     .map((node) => node.props.children)
     .filter((value) => typeof value === "string");
+}
+
+function completionCheckboxLabels(renderer) {
+  return renderer.root
+    .findAll((node) => node.type === "Pressable" && node.props.accessibilityRole === "checkbox")
+    .map((node) => node.props.accessibilityLabel);
 }
 
 test("Resources places Deadlines before Career Links and AI Resources below STEM Clubs @ GRC", () => {
@@ -215,6 +221,67 @@ test("Resources hides completion checkboxes for every deadline but retains them 
       .map((node) => node.props.accessibilityLabel),
     ["Mark done: Promise Scholarship"]
   );
+
+  unmount(renderer);
+});
+
+test("Resources hides completion checkboxes for scholarship and internship databases", () => {
+  resetReactNativeTestState();
+  setTranslations({
+    "resources.scholarships": "Scholarships",
+    "resources.internships": "Internships",
+    "resources.individualScholarships": "Individual scholarships",
+    "resources.individualInternships": "Individual internships",
+    "resources.actionMarkDone": "Mark done",
+    "resources.actionUndo": "Undo",
+  });
+  setOpportunities({
+    isHydrated: true,
+    matchedOpportunities: [
+      makeOpportunity({
+        opportunityId: "scholarship-database",
+        title: "Scholarship database",
+        type: "scholarship",
+        listingKind: "database",
+      }),
+      makeOpportunity({
+        opportunityId: "individual-scholarship",
+        title: "Individual scholarship",
+        type: "scholarship",
+      }),
+      makeOpportunity({
+        opportunityId: "internship-database",
+        title: "Internship database",
+        type: "internship",
+        listingKind: "database",
+      }),
+      makeOpportunity({
+        opportunityId: "individual-internship",
+        title: "Individual internship",
+        type: "internship",
+      }),
+    ],
+    refreshOpportunitiesIfNeeded: createSpy(async () => undefined),
+    setOpportunityDone: createSpy(async () => undefined),
+  });
+
+  const renderer = render(React.createElement(ResourcesPage));
+  pressByText(renderer, "Scholarships");
+  pressByText(renderer, "Databases");
+  assert.equal(hasText(renderer, "Scholarship database"), true);
+  assert.deepEqual(completionCheckboxLabels(renderer), []);
+
+  pressByText(renderer, "Individual scholarships");
+  assert.deepEqual(completionCheckboxLabels(renderer), ["Mark done: Individual scholarship"]);
+
+  pressByText(renderer, "Scholarships");
+  pressByText(renderer, "Internships");
+  pressByText(renderer, "Databases");
+  assert.equal(hasText(renderer, "Internship database"), true);
+  assert.deepEqual(completionCheckboxLabels(renderer), []);
+
+  pressByText(renderer, "Individual internships");
+  assert.deepEqual(completionCheckboxLabels(renderer), ["Mark done: Individual internship"]);
 
   unmount(renderer);
 });

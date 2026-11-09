@@ -365,7 +365,7 @@ export default function ResourcesPage() {
           <View className={`border-t ${borderClass}`}>
             {renderOpportunityItems(subsection.items, `${section.key}-${subsection.key}`, {
               inset: true,
-              showCompletionToggle: section.key !== "deadlines",
+              showCompletionToggle: section.key !== "deadlines" && subsection.key !== "databases",
             })}
           </View>
         ) : null}
