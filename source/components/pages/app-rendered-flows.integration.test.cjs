@@ -30,6 +30,7 @@ const QuestionnairePage = require("@/components/pages/QuestionnairePage").defaul
 const SettingsPage = require("@/components/pages/SettingsPage").default;
 const TransferEquivalencyCatalogPage =
   require("@/components/pages/TransferEquivalencyCatalogPage").default;
+const { SearchableSelect } = require("@/components/ui/SearchableSelect");
 
 const defaultNotificationPreferences = {
   collegeDeadlines: false,
@@ -361,6 +362,15 @@ test("TransferEquivalencyCatalogPage filters visible catalog rows and clears sea
 
   assert.equal(hasText(renderer, "Transfer equivalencies"), true);
   assert.equal(hasText(renderer, "Category results"), true);
+
+  const collegeSelector = renderer.root
+    .findAllByType(SearchableSelect)
+    .find((selector) => selector.props.value === "University of Washington");
+  assert.ok(collegeSelector);
+  assert.deepEqual(
+    collegeSelector.props.options.map((option) => option.label),
+    ["University of Washington"]
+  );
 
   changeTextByPlaceholder(renderer, "Search courses", "BIOL");
   assert.equal(hasText(renderer, "BIOL 100"), true);

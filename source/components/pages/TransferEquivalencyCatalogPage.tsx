@@ -129,11 +129,6 @@ export default function TransferEquivalencyCatalogPage() {
         label: t("transferEquivalencies.universityOfWashington"),
         description: t("transferEquivalencies.uwDescription"),
       },
-      {
-        id: "grc",
-        label: t("transferEquivalencies.greenRiverCollege"),
-        description: t("transferEquivalencies.grcDescription"),
-      },
     ],
     [t]
   );
