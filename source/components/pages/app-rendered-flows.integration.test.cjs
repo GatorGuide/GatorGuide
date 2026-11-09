@@ -420,6 +420,8 @@ test("TransferEquivalencyCatalogPage shows only verified UW Tacoma general-educa
     true
   );
   assert.equal(hasText(renderer, "UW Tacoma Environmental Science Transfer Credits"), true);
+  assert.equal(hasText(renderer, "UW Tacoma Course Equivalency Guide (under maintenance)"), true);
+  assert.equal(hasText(renderer, "UW Tacoma General Education Requirements"), true);
   assert.equal(hasText(renderer, "BIOL 100 (5)"), true);
   assert.equal(
     hasText(renderer, "UW Seattle guide (general education): BIOL 1XX"),

@@ -159,6 +159,23 @@ export default function TransferEquivalencyCatalogPage() {
 
   const selectedCampus =
     campuses.find((campus) => campus.id === selectedCampusId) ?? null;
+  const selectedCampusSourceLinks = selectedCampus
+    ? [
+        { label: selectedCampus.sourceLabel, url: selectedCampus.sourceUrl },
+        ...(selectedCampus.id === "uw-tacoma"
+          ? [
+              {
+                label: "UW Tacoma Course Equivalency Guide (under maintenance)",
+                url: "https://www.tacoma.uw.edu/admissions/course-equivalency-guide",
+              },
+              {
+                label: "UW Tacoma General Education Requirements",
+                url: "https://www.tacoma.uw.edu/advising/general-education-requirements",
+              },
+            ]
+          : []),
+      ]
+    : [];
   const selectedCampusLabel = selectedCampus?.title ?? "UW Seattle";
   const visibleCampusLabel = isGreenRiverCollegeMode
     ? selectedCollegeLabel
@@ -506,15 +523,18 @@ export default function TransferEquivalencyCatalogPage() {
                     <Text className={`${secondaryTextClass} text-xs`}>
                       {selectedCampus.summary}
                     </Text>
-                    <Text
-                      accessibilityRole="link"
-                      className="text-emerald-500 text-xs mt-2 underline"
-                      onPress={() => {
-                        void openExternalLink(selectedCampus.sourceUrl);
-                      }}
-                    >
-                      Source: {selectedCampus.sourceLabel}
-                    </Text>
+                    {selectedCampusSourceLinks.map((sourceLink) => (
+                      <Text
+                        key={sourceLink.url}
+                        accessibilityRole="link"
+                        className="text-emerald-500 text-xs mt-2 underline"
+                        onPress={() => {
+                          void openExternalLink(sourceLink.url);
+                        }}
+                      >
+                        Source: {sourceLink.label}
+                      </Text>
+                    ))}
                   </View>
                 ) : null}
               </View>
