@@ -12,6 +12,7 @@ mod equivalency_derived;
 mod equivalency_output;
 #[path = "../../src/planner/equivalency_report.rs"]
 mod equivalency_report;
+#[allow(dead_code)]
 #[path = "../../src/planner/equivalency_rows.rs"]
 mod equivalency_rows;
 

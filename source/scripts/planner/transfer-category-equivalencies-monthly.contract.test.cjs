@@ -28,6 +28,7 @@ test("monthly workflow refreshes and publishes only UW-GRC equivalency outputs",
   assert.equal(workflow.jobs["refresh-transfer-equivalencies"].if, "github.ref == 'refs/heads/main'");
   assert.match(allRunText, /parse-transfer-planner-equivalency-guide\.cjs/);
   assert.match(allRunText, /automation\/equivalency-refresh\/Cargo\.toml/);
+  assert.match(allRunText, /cargo build --locked/);
   assert.match(
     allRunText,
     /source\/constants\/transfer-planner-source\/equivalency-guide\.generated\.ts/
