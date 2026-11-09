@@ -27,6 +27,7 @@ test("monthly workflow refreshes and publishes only UW-GRC equivalency outputs",
   assert.equal(workflow.concurrency.group, "gator-guide-refresh-and-pages");
   assert.equal(workflow.jobs["refresh-transfer-equivalencies"].if, "github.ref == 'refs/heads/main'");
   assert.match(allRunText, /parse-transfer-planner-equivalency-guide\.cjs/);
+  assert.match(allRunText, /automation\/equivalency-refresh\/Cargo\.toml/);
   assert.match(
     allRunText,
     /source\/constants\/transfer-planner-source\/equivalency-guide\.generated\.ts/
@@ -43,6 +44,7 @@ test("guide parser regenerates the catalog from rules and keeps the date placeho
     "utf8"
   );
   assert.match(parser, /render-transfer-equivalency-catalog-typescript/);
+  assert.match(parser, /equivalency-refresh/);
   assert.match(parser, /transfer-equivalency-catalog\.generated\.ts/);
 
   const description =

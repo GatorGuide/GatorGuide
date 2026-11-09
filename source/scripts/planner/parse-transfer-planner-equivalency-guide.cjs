@@ -37,6 +37,13 @@ const OUTPUT_CATALOG_TS_PATH = path.resolve(
   "constants",
   "transfer-equivalency-catalog.generated.ts"
 );
+const EQUIVALENCY_AUTOMATION_MANIFEST_PATH = path.resolve(
+  REPO_ROOT,
+  "..",
+  "automation",
+  "equivalency-refresh",
+  "Cargo.toml"
+);
 const GUIDE_URL = "https://admit.washington.edu/apply/transfer/equivalency-guide/green-river/";
 const ENTITY_MAP = {
   amp: "&",
@@ -95,7 +102,7 @@ function sha256Text(value) {
 }
 
 function parseGuideRows(html) {
-  const manifestPath = path.resolve(REPO_ROOT, "..", "automation", "Cargo.toml");
+  const manifestPath = EQUIVALENCY_AUTOMATION_MANIFEST_PATH;
   const result = spawnSync(
     "cargo",
     [
@@ -446,7 +453,7 @@ const CHAIN_RULE_DERIVATION_SPECS = [
 ];
 
 function synthesizeDerivedRulesInRust({ officialRules, structuredRules = [], specs }) {
-  const manifestPath = path.resolve(REPO_ROOT, "..", "automation", "Cargo.toml");
+  const manifestPath = EQUIVALENCY_AUTOMATION_MANIFEST_PATH;
   const result = spawnSync(
     "cargo",
     [
@@ -505,7 +512,7 @@ function buildDerivedChainRules(officialRules, structuredRules) {
 }
 
 function buildEquivalencyGuideReportInRust(input) {
-  const manifestPath = path.resolve(REPO_ROOT, "..", "automation", "Cargo.toml");
+  const manifestPath = EQUIVALENCY_AUTOMATION_MANIFEST_PATH;
   const result = spawnSync(
     "cargo",
     [
@@ -545,7 +552,7 @@ function buildEquivalencyGuideReportInRust(input) {
 }
 
 function renderGeneratedRules(scope) {
-  const manifestPath = path.resolve(REPO_ROOT, "..", "automation", "Cargo.toml");
+  const manifestPath = EQUIVALENCY_AUTOMATION_MANIFEST_PATH;
   const result = spawnSync(
     "cargo",
     [
@@ -577,7 +584,7 @@ function renderGeneratedRules(scope) {
 }
 
 function renderGeneratedCatalog(scope) {
-  const manifestPath = path.resolve(REPO_ROOT, "..", "automation", "Cargo.toml");
+  const manifestPath = EQUIVALENCY_AUTOMATION_MANIFEST_PATH;
   const result = spawnSync(
     "cargo",
     [

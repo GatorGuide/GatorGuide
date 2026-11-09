@@ -42,10 +42,10 @@ jobs:
         working-directory: source
         run: npm ci
 
-      - name: Check Rust automation
+      - name: Check Rust equivalency refresh tool
         run: |
-          cargo fmt --manifest-path automation/Cargo.toml -- --check
-          cargo test --locked --manifest-path automation/Cargo.toml
+          cargo fmt --manifest-path automation/equivalency-refresh/Cargo.toml -- --check
+          cargo test --locked --manifest-path automation/equivalency-refresh/Cargo.toml
 
       - name: Verify monthly refresh contract
         working-directory: source
