@@ -24,6 +24,11 @@ const OUTPUT_VALUE_DIR = path.resolve(
   "transfer-planner-source",
   "course-metadata.generated"
 );
+const GRC_ART_METADATA_VALUE_PATH = path.join(
+  OUTPUT_VALUE_DIR,
+  "entries-by-school-subject",
+  "grc-art.generated.json"
+);
 const LEGACY_OUTPUT_VALUE_PATH = path.resolve(
   __dirname,
   "..",
@@ -197,6 +202,13 @@ function normalizeTitle(value) {
     .trim();
 }
 
+const TRAILING_SCHEDULE_TIME_PATTERN =
+  /\s+(?:(?:0?[1-9]|1[0-2]):[0-5]\d\s*[AP](?:\.?M\.?)?)(?:\s*[-–]\s*(?:0?[1-9]|1[0-2]):[0-5]\d\s*[AP](?:\.?M\.?)?)?$/i;
+
+function stripTrailingScheduleTime(value) {
+  return String(value ?? "").replace(TRAILING_SCHEDULE_TIME_PATTERN, "").trim();
+}
+
 function normalizePdfItems(items) {
   return items
     .map((item) => ({
@@ -246,11 +258,13 @@ function detectCourseCodeFromRow(row) {
 }
 
 function extractTitleFromRow(row) {
-  const title = normalizeTitle(
-    row.items
-      .filter((item) => item.x >= 85 && item.x < 235)
-      .map((item) => item.str.trim())
-      .join(" ")
+  const title = stripTrailingScheduleTime(
+    normalizeTitle(
+      row.items
+        .filter((item) => item.x >= 85 && item.x < 235)
+        .map((item) => item.str.trim())
+        .join(" ")
+    )
   );
 
   if (!title || HEADING_STOP_WORDS.has(title)) {
@@ -944,6 +958,52 @@ function buildScheduleEntries(courseMap) {
     .sort((left, right) => left.code.localeCompare(right.code));
 }
 
+function updateGreenRiverArtScheduleTitles(existingEntries, scheduleEntries) {
+  const scheduleTitles = new Map(
+    scheduleEntries
+      .filter((entry) => entry.schoolId === "grc" && /^ART&?\s+\d/i.test(entry.code))
+      .map((entry) => [normalizeCourseCode(entry.code), entry.title])
+  );
+  if (scheduleTitles.size === 0) {
+    throw new Error("No Green River ART course titles were parsed from the annual schedules.");
+  }
+
+  let updatedCount = 0;
+  const entries = existingEntries.map((entry) => {
+    const code = normalizeCourseCode(entry.code);
+    if (entry.schoolId !== "grc" || !/^ART&?\s+\d/.test(code)) {
+      return entry;
+    }
+
+    const title = scheduleTitles.get(code);
+    if (!title || title === entry.title) {
+      return entry;
+    }
+
+    updatedCount += 1;
+    return { ...entry, title };
+  });
+
+  return { entries, updatedCount };
+}
+
+function refreshGreenRiverArtScheduleTitles(scheduleEntries) {
+  const existingEntries = JSON.parse(fs.readFileSync(GRC_ART_METADATA_VALUE_PATH, "utf8"));
+  if (!Array.isArray(existingEntries)) {
+    throw new Error(`Expected a JSON array in ${GRC_ART_METADATA_VALUE_PATH}.`);
+  }
+
+  const { entries, updatedCount } = updateGreenRiverArtScheduleTitles(
+    existingEntries,
+    scheduleEntries
+  );
+  if (updatedCount > 0) {
+    fs.writeFileSync(GRC_ART_METADATA_VALUE_PATH, `${JSON.stringify(entries)}\n`, "utf8");
+  }
+  console.log(`Updated ${updatedCount} Green River ART schedule titles in ${GRC_ART_METADATA_VALUE_PATH}`);
+  return updatedCount;
+}
+
 async function main() {
   const grcPublicMaterials = await loadGrcPublicMaterials({
     forceRefresh: false,
@@ -959,8 +1019,14 @@ async function main() {
     await parseSchedule(schedule, courseMap);
   }
 
+  const scheduleEntries = buildScheduleEntries(courseMap);
+  if (process.argv.includes("--refresh-grc-art-schedule-titles")) {
+    refreshGreenRiverArtScheduleTitles(scheduleEntries);
+    return;
+  }
+
   const baseEntries = [
-    ...buildScheduleEntries(courseMap),
+    ...scheduleEntries,
     ...readCatalogIngestEntries(GRC_CATALOG_INGEST_PATH, "Green River catalog ingest"),
     ...readCatalogIngestEntries(UW_CATALOG_INGEST_PATH, "UW catalog ingest"),
   ];
@@ -977,7 +1043,14 @@ async function main() {
   console.log(`Wrote generated course metadata values to ${OUTPUT_VALUE_DIR}`);
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  extractTitleFromRow,
+  updateGreenRiverArtScheduleTitles,
+};
