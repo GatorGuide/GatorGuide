@@ -137,7 +137,7 @@ fn unique_in_order(values: &[String]) -> Vec<String> {
 }
 
 fn normalize_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::requirement_shape::normalize_js_whitespace(value)
 }
 
 #[cfg(test)]

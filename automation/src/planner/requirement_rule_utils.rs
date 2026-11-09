@@ -18,11 +18,9 @@ pub fn detect_option_replacement(
     let combined = lines.join(" ");
     let option_acronym = extract_option_acronym(&format!("{context_text} {combined}"))
         .or_else(|| extract_option_acronym(&combined))?;
-    let owner_looks_like_option = dynamic_pattern(&format!(
-        r"(?i)\b{}\b",
-        regex::escape(&option_acronym)
-    ))
-    .is_match(&context_text);
+    let owner_looks_like_option =
+        dynamic_pattern(&format!(r"(?i)\b{}\b", regex::escape(&option_acronym)))
+            .is_match(&context_text);
     if !owner_looks_like_option {
         return None;
     }
@@ -395,9 +393,11 @@ fn get_program_acronym(program_name: &str) -> String {
         .split(|character: char| !character.is_ascii_alphanumeric())
         .filter(|token| {
             !token.is_empty()
-                && !["and", "of", "the", "for", "in", "with", "science", "sciences"]
-                    .iter()
-                    .any(|stop| token.eq_ignore_ascii_case(stop))
+                && ![
+                    "and", "of", "the", "for", "in", "with", "science", "sciences",
+                ]
+                .iter()
+                .any(|stop| token.eq_ignore_ascii_case(stop))
         })
         .collect::<Vec<_>>();
     let acronym = tokens
@@ -444,7 +444,8 @@ fn normalize_requirement_slug(label: &str) -> String {
     let normalized = requirement_slug_the_pattern().replace_all(&normalized, "");
     let normalized = requirement_slug_and_pattern().replace_all(&normalized, " ");
     let normalized = normalize_whitespace(&normalized);
-    let normalized = technical_elective_singular_pattern().replace(&normalized, "technical electives");
+    let normalized =
+        technical_elective_singular_pattern().replace(&normalized, "technical electives");
     let normalized = core_elective_singular_pattern().replace(&normalized, "core elective");
     slugify_parser_rule_value(normalized.trim())
 }
@@ -460,7 +461,7 @@ fn unique_in_order(values: Vec<String>) -> Vec<String> {
 }
 
 fn normalize_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::requirement_shape::normalize_js_whitespace(value)
 }
 
 fn js_string_value(value: &Value) -> String {
@@ -474,7 +475,13 @@ fn js_string_value(value: &Value) -> String {
         Value::String(value) => value.clone(),
         Value::Array(values) => values
             .iter()
-            .map(|value| if value.is_null() { String::new() } else { js_string_value(value) })
+            .map(|value| {
+                if value.is_null() {
+                    String::new()
+                } else {
+                    js_string_value(value)
+                }
+            })
             .collect::<Vec<_>>()
             .join(","),
         Value::Object(_) => "[object Object]".to_string(),
@@ -482,11 +489,7 @@ fn js_string_value(value: &Value) -> String {
 }
 
 fn js_number_string(value: f64) -> String {
-    if value.fract() == 0.0 {
-        format!("{value:.0}")
-    } else {
-        value.to_string()
-    }
+    super::requirement_shape::js_number_f64_to_string(value)
 }
 
 fn js_truthy(value: &Value) -> bool {
@@ -500,37 +503,42 @@ fn js_truthy(value: &Value) -> bool {
 }
 
 fn dynamic_pattern(pattern: &str) -> Regex {
-    Regex::new(pattern).expect("parser-rule evidence pattern")
+    let compatible_pattern = super::requirement_shape::js_regex_compatibility_pattern(pattern);
+    Regex::new(&compatible_pattern).expect("parser-rule evidence pattern")
 }
 
 fn credit_bucket_join_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:list of approved|approved|math/science|math\s*&\s*science|natural science courses for)\b").expect("credit-bucket continuation join pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\b(?:list of approved|approved|math/science|math\s*&\s*science|natural science courses for)\b"))
 }
 fn credit_bucket_page_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^\[Page\s+\d+\]").expect("credit-bucket page continuation pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)^\[Page\s+[0-9]+\]"))
 }
 fn credit_bucket_lowercase_or_parenthesis_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"^[a-z(]").expect("credit-bucket lowercase continuation pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(r"^[a-z(]").expect("credit-bucket lowercase continuation pattern")
+    })
 }
 fn credit_bucket_keyword_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:approved|natural science|Math/Science|Math\s*&\s*Science|Computer Engineering|CSE website|website|STAT|MATH|AMATH)\b").expect("credit-bucket keyword continuation pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\b(?:approved|natural science|Math/Science|Math\s*&\s*Science|Computer Engineering|CSE website|website|STAT|MATH|AMATH)\b"))
 }
 
 fn approved_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bapproved\b").expect("approved bucket pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\bapproved\b"))
 }
 fn natural_science_bucket_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bnatural sciences?\b|\bN\s*Sc\b|\bNSC\b").expect("natural science bucket pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\bnatural sciences?\b|\bN\s*Sc\b|\bNSC\b"))
 }
 fn math_science_bucket_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bmath(?:ematics)?/science\b|\bmath(?:ematics)?\s*&\s*science\b").expect("math science bucket pattern"))
+    VALUE.get_or_init(|| {
+        dynamic_pattern(r"(?i)\bmath(?:ematics)?/science\b|\bmath(?:ematics)?\s*&\s*science\b")
+    })
 }
 fn program_name_patterns() -> &'static [Regex] {
     static VALUE: OnceLock<Vec<Regex>> = OnceLock::new();
@@ -541,17 +549,21 @@ fn program_name_patterns() -> &'static [Regex] {
             r"(?i)\b([A-Z][A-Za-z&/\s-]{2,80}?)\s+(?:natural science|math/science|math\s*&\s*science)\s+(?:requirement|courses?|list)\b",
         ]
         .into_iter()
-        .map(|pattern| Regex::new(pattern).expect("approved program name pattern"))
+        .map(dynamic_pattern)
         .collect()
     })
 }
 fn clean_program_name_tail_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:on|from|at|via|website|course|courses|list|requirement|requirements)\b.*$").expect("program name tail pattern"))
+    VALUE.get_or_init(|| {
+        dynamic_pattern(
+            r"(?i)\b(?:on|from|at|via|website|course|courses|list|requirement|requirements)\b.*$",
+        )
+    })
 }
 fn clean_program_name_suffix_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:degree|major|program)\b$").expect("program name suffix pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\b(?:degree|major|program)\b$"))
 }
 fn clean_program_name_punctuation_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
@@ -560,122 +572,135 @@ fn clean_program_name_punctuation_pattern() -> &'static Regex {
 
 fn after_completing_may_take_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:after|once|when)\s+(?:complet(?:ing|ed)|finish(?:ing|ed))\b.{0,180}\b(?:students?\s+)?(?:may|can)\s+(?:also\s+)?take\b").expect("support-only after-completion pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\b(?:after|once|when)\s+(?:complet(?:ing|ed)|finish(?:ing|ed))\b.{0,180}\b(?:students?\s+)?(?:may|can)\s+(?:also\s+)?take\b"))
 }
 fn fulfill_institution_requirements_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bfulfill(?:ing|ed)?\s+(?:the\s+)?(?:university|college|campus)\s+requirements?\b").expect("support-only institutional requirement pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\bfulfill(?:ing|ed)?\s+(?:the\s+)?(?:university|college|campus)\s+requirements?\b"))
 }
 fn may_also_take_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:students?\s+)?(?:may|can)\s+(?:also\s+)?take\b").expect("support-only may-take pattern"))
+    VALUE
+        .get_or_init(|| dynamic_pattern(r"(?i)\b(?:students?\s+)?(?:may|can)\s+(?:also\s+)?take\b"))
 }
 fn may_take_additional_courses_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bmay\s+have\s+to\s+take\s+additional\s+courses?\b").expect("support-only additional-course pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\bmay\s+have\s+to\s+take\s+additional\s+courses?\b"))
 }
 fn encouraged_take_or_enroll_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bencouraged\s+to\s+(?:take|enroll)\b").expect("support-only encouraged-course pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\bencouraged\s+to\s+(?:take|enroll)\b"))
 }
 fn count_toward_support_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:as well as|which can include|can include|up to)\b.{0,140}\bcount(?:s|ed)?\s+(?:toward|required(?:\s+for\s+graduation)?)\b").expect("support-only count-toward pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\b(?:as well as|which can include|can include|up to)\b.{0,140}\bcount(?:s|ed)?\s+(?:toward|required(?:\s+for\s+graduation)?)\b"))
 }
 fn support_requirement_count_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bcount(?:s|ed)?\s+(?:toward|required(?:\s+for\s+graduation)?)\b.{0,140}\b(?:natural sciences?|additional coursework|elective credits?|requirements?)\b").expect("support-only requirement count pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\bcount(?:s|ed)?\s+(?:toward|required(?:\s+for\s+graduation)?)\b.{0,140}\b(?:natural sciences?|additional coursework|elective credits?|requirements?)\b"))
 }
 fn required_choice_cue_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:one\s+course\s+chosen\s+from|one\s+course\s+from|choose|select|required)\b").expect("required choice cue pattern"))
+    VALUE.get_or_init(|| {
+        dynamic_pattern(
+            r"(?i)\b(?:one\s+course\s+chosen\s+from|one\s+course\s+from|choose|select|required)\b",
+        )
+    })
 }
 fn support_list_or_count_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:approved\s+)?(?:courses?|course|core|capstone|electives?|systems electives?)\s+list\b|\b(?:as well as|which can include|can include|up to)\b.{0,120}\bcount(?:s|ed)?\s+toward\b|\bcount(?:s|ed)?\s+toward\b.{0,120}\b(?:natural sciences?|additional coursework|elective credits?|requirements?)\b").expect("support-only list pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\b(?:approved\s+)?(?:courses?|course|core|capstone|electives?|systems electives?)\s+list\b|\b(?:as well as|which can include|can include|up to)\b.{0,120}\bcount(?:s|ed)?\s+toward\b|\bcount(?:s|ed)?\s+toward\b.{0,120}\b(?:natural sciences?|additional coursework|elective credits?|requirements?)\b"))
 }
 fn list_on_the_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\blist\s+on\s+the\b").expect("support-only list-on pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\blist\s+on\s+the\b"))
 }
 fn generic_support_count_toward_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:as well as|which can include|can include|up to)\b.{0,120}\bcount(?:s|ed)?\s+toward\b").expect("support-only generic count pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\b(?:as well as|which can include|can include|up to)\b.{0,120}\bcount(?:s|ed)?\s+toward\b"))
 }
 fn generic_count_toward_support_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bcount(?:s|ed)?\s+toward\b.{0,120}\b(?:natural sciences?|additional coursework|elective credits?|requirements?)\b").expect("support-only generic requirement pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\bcount(?:s|ed)?\s+toward\b.{0,120}\b(?:natural sciences?|additional coursework|elective credits?|requirements?)\b"))
 }
 
 fn option_acronym_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"\b([A-Z][A-Z0-9&]{1,8})\s+Option\b").expect("option acronym pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"\b([A-Z][A-Z0-9&]{1,8})\s+Option\b"))
 }
 fn except_requirement_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bexcept\b.{0,120}\brequirement\b").expect("replacement exception pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\bexcept\b.{0,120}\brequirement\b"))
 }
 fn in_place_of_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bin place of\b").expect("in-place-of pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\bin place of\b"))
 }
 fn complete_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bcomplete\b").expect("complete requirement pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\bcomplete\b"))
 }
 fn base_replacement_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bexcept\s+the\s+(\d+)\s+credits?\s+(.+?)\s+requirement\b").expect("base replacement pattern"))
+    VALUE.get_or_init(|| {
+        dynamic_pattern(r"(?i)\bexcept\s+the\s+([0-9]+)\s+credits?\s+(.+?)\s+requirement\b")
+    })
 }
 fn replacement_requirement_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bcomplete\s+(?:a\s+|the\s+)?(\d+)\s+credits?\s+(.+?)(?:\s+below|[.;]|$)").expect("replacement requirement pattern"))
+    VALUE.get_or_init(|| {
+        dynamic_pattern(
+            r"(?i)\bcomplete\s+(?:a\s+|the\s+)?([0-9]+)\s+credits?\s+(.+?)(?:\s+below|[.;]|$)",
+        )
+    })
 }
 fn explicit_owner_prefix_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\ball\s+([A-Z]{2,8})\s+degree requirements\b").expect("explicit owner prefix pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\ball\s+([A-Z]{2,8})\s+degree requirements\b"))
 }
 fn replacement_cue_before_requirements_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:in place of|instead of|may be replaced by|replace(?:s|d)?|substitut(?:e|es|ed))\b.{0,140}\brequirements?\b").expect("replacement cue pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\b(?:in place of|instead of|may be replaced by|replace(?:s|d)?|substitut(?:e|es|ed))\b.{0,140}\brequirements?\b"))
 }
 fn replacement_cue_after_requirements_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\brequirements?\b.{0,140}\b(?:in place of|instead of|may be replaced by|replace(?:s|d)?|substitut(?:e|es|ed))\b").expect("replacement cue pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\brequirements?\b.{0,140}\b(?:in place of|instead of|may be replaced by|replace(?:s|d)?|substitut(?:e|es|ed))\b"))
 }
 fn core_and_elective_requirements_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bcore\s+(?:and|&)\s+elective\s+requirements?\b").expect("core and elective requirement pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\bcore\s+(?:and|&)\s+elective\s+requirements?\b"))
 }
 fn elective_credit_requirement_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\belectives?\s*\([^)]*\b\d+\s+credits?\s+required\b").expect("elective credit requirement pattern"))
+    VALUE.get_or_init(|| {
+        dynamic_pattern(r"(?i)\belectives?\s*\([^)]*\b[0-9]+\s+credits?\s+required\b")
+    })
 }
 fn technical_elective_requirements_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\btechnical electives?\s+requirements?\b").expect("technical elective requirement pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\btechnical electives?\s+requirements?\b"))
 }
 fn requirement_slug_credits_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b\d+\s*credits?\b").expect("requirement slug credits pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\b[0-9]+\s*credits?\b"))
 }
 fn requirement_slug_requirements_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\brequirements?\b").expect("requirement slug requirement pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\brequirements?\b"))
 }
 fn requirement_slug_the_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bthe\b").expect("requirement slug article pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\bthe\b"))
 }
 fn requirement_slug_and_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\band\b").expect("requirement slug conjunction pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\band\b"))
 }
 fn technical_elective_singular_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\btechnical elective\b").expect("technical elective slug pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\btechnical elective\b"))
 }
 fn core_elective_singular_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bcore elective\b").expect("core elective slug pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\bcore elective\b"))
 }

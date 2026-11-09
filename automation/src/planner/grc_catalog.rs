@@ -46,8 +46,10 @@ pub struct GrcCourseDetails {
 }
 
 pub fn parse_grc_course_catalog(html: &str) -> Vec<GrcCourseCatalogSection> {
-    let heading_pattern =
-        Regex::new(r"(?is)<h3[^>]*>(.*?)</h3>").expect("GRC course-heading pattern is valid");
+    let heading_pattern = Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+        r"(?is)<h3[^>]*>(.*?)</h3>",
+    ))
+    .expect("GRC course-heading pattern is valid");
     let headings = heading_pattern.captures_iter(html).collect::<Vec<_>>();
     let raw_bodies = headings
         .iter()
@@ -65,12 +67,22 @@ pub fn parse_grc_course_catalog(html: &str) -> Vec<GrcCourseCatalogSection> {
         })
         .collect::<Vec<_>>();
     let details = parse_grc_course_details(&raw_bodies);
-    let strip_html_pattern = Regex::new(r"<[^>]+>").expect("HTML tag pattern is valid");
-    let entity_pattern = Regex::new(r"(?i)&(?:amp|apos|nbsp|quot|#39|#160|#8211|#8212|#8217);")
-        .expect("HTML entity pattern is valid");
-    let course_heading_parts_pattern =
-        Regex::new(r"^(.+?)\s+-\s+(.+)$").expect("GRC course-heading parts pattern is valid");
-    let course_code_syntax_pattern = Regex::new(r"^[A-Z0-9 &]+\s+\d{1,3}(?:\.\d+)?[A-Z]?$")
+    let strip_html_pattern = Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+        r"<[^>]+>",
+    ))
+    .expect("HTML tag pattern is valid");
+    let entity_pattern = Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+        r"(?i)&(?:amp|apos|nbsp|quot|#39|#160|#8211|#8212|#8217);",
+    ))
+    .expect("HTML entity pattern is valid");
+    let course_heading_parts_pattern = Regex::new(
+        &super::requirement_shape::js_regex_compatibility_pattern(r"^(.+?)\s+-\s+(.+)$"),
+    )
+    .expect("GRC course-heading parts pattern is valid");
+    let course_code_syntax_pattern =
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"^[A-Z0-9 &]+\s+\d{1,3}(?:\.\d+)?[A-Z]?$",
+        ))
         .expect("GRC course-code syntax pattern is valid");
 
     headings
@@ -107,63 +119,96 @@ pub fn parse_grc_course_catalog(html: &str) -> Vec<GrcCourseCatalogSection> {
 }
 
 pub fn parse_grc_course_details(raw_bodies: &[String]) -> Vec<GrcCourseDetails> {
-    let credit_pattern =
-        Regex::new(r"(?i)Credits:\s*([^\r\n<]+)").expect("GRC credit-label pattern is valid");
-    let leading_credit_pattern =
-        Regex::new(r"(?i)^\s*Credits:\s*[^<\r\n]+").expect("GRC leading-credit pattern is valid");
-    let requirement_boundary_pattern = Regex::new(
+    let credit_pattern = Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+        r"(?i)Credits:\s*([^\r\n<]+)",
+    ))
+    .expect("GRC credit-label pattern is valid");
+    let leading_credit_pattern = Regex::new(
+        &super::requirement_shape::js_regex_compatibility_pattern(r"(?i)^\s*Credits:\s*[^<\r\n]+"),
+    )
+    .expect("GRC leading-credit pattern is valid");
+    let requirement_boundary_pattern = Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
         r"(?i)<br\s*/?>\s*<br\s*/?>\s*<strong>\s*(?:Enrollment Requirement|Enrollment Prerequisite|Satisfies Requirement|Course Fee|Course Outcomes|Program Outcomes|College-wide Outcomes)\s*:",
-    )
+    ))
     .expect("GRC requirement-boundary pattern is valid");
-    let strip_html_pattern = Regex::new(r"<[^>]+>").expect("HTML tag pattern is valid");
-    let anchor_pattern =
-        Regex::new(r"(?is)<a\b([^>]*)>(.*?)</a>").expect("GRC course-link anchor pattern is valid");
-    let href_attribute_pattern =
-        Regex::new(r"(?i)(?:^|\s)href\s*=").expect("GRC href-attribute pattern is valid");
-    let entity_pattern = Regex::new(r"(?i)&(?:amp|apos|nbsp|quot|#39|#160|#8211|#8212|#8217);")
-        .expect("HTML entity pattern is valid");
-    let numeric_credit_pattern =
-        Regex::new(r"^\d+(?:\.\d+)?$").expect("numeric credit pattern is valid");
-    let simple_requirement_course_pattern =
-        Regex::new(r"\b[A-Z&]{1,8}(?:\s+[A-Z&]{1,8}){0,2}\s+\d{2,3}(?:\.\d+)?[A-Z]?\b")
-            .expect("GRC simple-requirement course-code pattern is valid");
-    let course_code_slash_shorthand_pattern = Regex::new(
-        r"\b([A-Z&]{1,8}(?:\s+[A-Z&]{1,8}){0,2})\s+(\d{2,3}[A-Z]?)(\s*(?:/\s*\d{2,3}[A-Z]?)+)\b",
+    let strip_html_pattern = Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+        r"<[^>]+>",
+    ))
+    .expect("HTML tag pattern is valid");
+    let anchor_pattern = Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+        r"(?is)<a\b([^>]*)>(.*?)</a>",
+    ))
+    .expect("GRC course-link anchor pattern is valid");
+    let href_attribute_pattern = Regex::new(
+        &super::requirement_shape::js_regex_compatibility_pattern(r"(?i)(?:^|\s)href\s*="),
     )
+    .expect("GRC href-attribute pattern is valid");
+    let entity_pattern = Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+        r"(?i)&(?:amp|apos|nbsp|quot|#39|#160|#8211|#8212|#8217);",
+    ))
+    .expect("HTML entity pattern is valid");
+    let numeric_credit_pattern = Regex::new(
+        &super::requirement_shape::js_regex_compatibility_pattern(r"^\d+(?:\.\d+)?$"),
+    )
+    .expect("numeric credit pattern is valid");
+    let simple_requirement_course_pattern =
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"\b[A-Z&]{1,8}(?:\s+[A-Z&]{1,8}){0,2}\s+\d{2,3}(?:\.\d+)?[A-Z]?\b",
+        ))
+        .expect("GRC simple-requirement course-code pattern is valid");
+    let course_code_slash_shorthand_pattern = Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+        r"\b([A-Z&]{1,8}(?:\s+[A-Z&]{1,8}){0,2})\s+(\d{2,3}[A-Z]?)(\s*(?:/\s*\d{2,3}[A-Z]?)+)\b",
+    ))
     .expect("GRC course-code slash-shorthand pattern is valid");
     let ignored_linked_course_prefix_pattern =
-        Regex::new(r"(?i)\b(?:eligible for|equivalent of|admission (?:into|to))\s*$")
-            .expect("GRC linked-course ignored-prefix pattern is valid");
-    let linked_high_school_requirement_pattern = Regex::new(r"(?i)\byears?\s+in high school\b")
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)\b(?:eligible for|equivalent of|admission (?:into|to))\s*$",
+        ))
+        .expect("GRC linked-course ignored-prefix pattern is valid");
+    let linked_high_school_requirement_pattern =
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)\byears?\s+in high school\b",
+        ))
         .expect("GRC linked-course high-school context pattern is valid");
-    let recommended_requirement_pattern = Regex::new(r"(?i)\bRecommended\s*:")
-        .expect("GRC recommended-requirement boundary pattern is valid");
+    let recommended_requirement_pattern = Regex::new(
+        &super::requirement_shape::js_regex_compatibility_pattern(r"(?i)\bRecommended\s*:"),
+    )
+    .expect("GRC recommended-requirement boundary pattern is valid");
     let alternative_boundary_exclusion_patterns = [
-        Regex::new(r"\bor\s+(?:higher|lower|better|concurrent enrollment|instructor(?:'s)?|permission|consent|appropriate|equivalent)\b")
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(r"\bor\s+(?:higher|lower|better|concurrent enrollment|instructor(?:'s)?|permission|consent|appropriate|equivalent)\b"))
             .expect("GRC alternative-boundary context pattern is valid"),
-        Regex::new(r"\bor\s+(?:in\s+)?(?:a\s+|an\s+)?high school\b[^,;)]*")
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(r"\bor\s+(?:in\s+)?(?:a\s+|an\s+)?high school\b[^,;)]*"))
             .expect("GRC high-school alternative pattern is valid"),
-        Regex::new(r"\bor\s+(?:one|two|three|1\s*1/2|1-1/2|\d+)\s+years?\s+of high school\b[^,;)]*")
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(r"\bor\s+(?:one|two|three|1\s*1/2|1-1/2|\d+)\s+years?\s+of high school\b[^,;)]*"))
             .expect("GRC high-school-years alternative pattern is valid"),
-        Regex::new(r"\bor\s+(?:appropriate\s+)?(?:english|math|reading)\s+placement\b[^,;)]*")
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(r"\bor\s+(?:appropriate\s+)?(?:english|math|reading)\s+placement\b[^,;)]*"))
             .expect("GRC placement alternative pattern is valid"),
-        Regex::new(r"\bor\s+eligible for\b[^,;)]*")
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(r"\bor\s+eligible for\b[^,;)]*"))
             .expect("GRC eligibility alternative pattern is valid"),
     ];
-    let alternative_word_pattern =
-        Regex::new(r"\bor\b").expect("GRC alternative-word pattern is valid");
-    let concurrent_enrollment_pattern = Regex::new(r"(?i)\bconcurrent enrollment\b")
-        .expect("GRC concurrent-enrollment pattern is valid");
-    let parenthetical_concurrent_enrollment_pattern =
-        Regex::new(r"(?i)\(\s*([^()]+?)\s+or\s+concurrent enrollment\s*\)")
-            .expect("GRC parenthetical concurrent-enrollment pattern is valid");
-    let concurrent_completion_pattern =
-        Regex::new(r"(?i)(?:at least\s+)?concurrent enrollment in or completion of\s+([^;.,]+)")
-            .expect("GRC concurrent-completion pattern is valid");
-    let concurrent_in_pattern = Regex::new(
-        r"(?i)(?:at least\s+)?concurrent enrollment(?:\s+or\s+completion)? in\s+([^;.,]+)",
+    let alternative_word_pattern = Regex::new(
+        &super::requirement_shape::js_regex_compatibility_pattern(r"\bor\b"),
     )
-    .expect("GRC concurrent-course pattern is valid");
+    .expect("GRC alternative-word pattern is valid");
+    let concurrent_enrollment_pattern = Regex::new(
+        &super::requirement_shape::js_regex_compatibility_pattern(r"(?i)\bconcurrent enrollment\b"),
+    )
+    .expect("GRC concurrent-enrollment pattern is valid");
+    let parenthetical_concurrent_enrollment_pattern =
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)\(\s*([^()]+?)\s+or\s+concurrent enrollment\s*\)",
+        ))
+        .expect("GRC parenthetical concurrent-enrollment pattern is valid");
+    let concurrent_completion_pattern =
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)(?:at least\s+)?concurrent enrollment in or completion of\s+([^;.,]+)",
+        ))
+        .expect("GRC concurrent-completion pattern is valid");
+    let concurrent_in_pattern =
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)(?:at least\s+)?concurrent enrollment(?:\s+or\s+completion)? in\s+([^;.,]+)",
+        ))
+        .expect("GRC concurrent-course pattern is valid");
     let requirement_text_parser = RequirementTextParser {
         course_code_pattern: &simple_requirement_course_pattern,
         slash_shorthand_pattern: &course_code_slash_shorthand_pattern,
@@ -178,32 +223,42 @@ pub fn parse_grc_course_details(raw_bodies: &[String]) -> Vec<GrcCourseDetails> 
         concurrent_completion_pattern: &concurrent_completion_pattern,
         concurrent_in_pattern: &concurrent_in_pattern,
     };
-    let section_boundary_pattern = Regex::new(r"(?i)<br\s*/?>\s*<br\s*/?>\s*<strong>")
+    let section_boundary_pattern =
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)<br\s*/?>\s*<br\s*/?>\s*<strong>",
+        ))
         .expect("GRC labeled-section boundary is valid");
-    let heading_boundary_pattern = Regex::new(
+    let heading_boundary_pattern = Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
         r"(?i)<strong>\s*(?:Course Fee|Course Outcomes|Program Outcomes|College-wide Outcomes)\s*:</strong>",
-    )
+    ))
     .expect("GRC labeled-heading boundary is valid");
     let enrollment_requirement_start_pattern =
-        Regex::new(r"(?i)<strong>\s*Enrollment (?:Requirement|Prerequisite)\s*:</strong>")
-            .expect("GRC enrollment-requirement start pattern is valid");
-    let corequisite_start_pattern = Regex::new(r"(?i)<strong>\s*Corequisite\s*:</strong>")
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)<strong>\s*Enrollment (?:Requirement|Prerequisite)\s*:</strong>",
+        ))
+        .expect("GRC enrollment-requirement start pattern is valid");
+    let corequisite_start_pattern =
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)<strong>\s*Corequisite\s*:</strong>",
+        ))
         .expect("GRC corequisite start pattern is valid");
     let satisfies_requirement_start_pattern =
-        Regex::new(r"(?i)<strong>\s*Satisfies Requirement\s*:</strong>")
-            .expect("GRC satisfies-requirement start pattern is valid");
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)<strong>\s*Satisfies Requirement\s*:</strong>",
+        ))
+        .expect("GRC satisfies-requirement start pattern is valid");
     let general_education_patterns = [
-        Regex::new(r"(?i)\bbasic skills\s*/\s*communication\b|\bwritten communication\b")
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(r"(?i)\bbasic skills\s*/\s*communication\b|\bwritten communication\b"))
             .expect("GRC communication-tag pattern is valid"),
-        Regex::new(r"(?i)\bquantitative\b|\bsymbolic reasoning\b|\bquantitative skills\b|\bbasic skills requirement\b")
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(r"(?i)\bquantitative\b|\bsymbolic reasoning\b|\bquantitative skills\b|\bbasic skills requirement\b"))
             .expect("GRC quantitative-tag pattern is valid"),
-        Regex::new(r"(?i)\bhumanities\b|\bfine arts\b|\benglish\b")
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(r"(?i)\bhumanities\b|\bfine arts\b|\benglish\b"))
             .expect("GRC arts-and-humanities-tag pattern is valid"),
-        Regex::new(r"(?i)\bsocial science\b|\bsocial sciences\b")
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(r"(?i)\bsocial science\b|\bsocial sciences\b"))
             .expect("GRC social-science-tag pattern is valid"),
-        Regex::new(r"(?i)\bnatural science\b|\bnatural sciences\b|\blab science\b")
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(r"(?i)\bnatural science\b|\bnatural sciences\b|\blab science\b"))
             .expect("GRC natural-science-tag pattern is valid"),
-        Regex::new(r"(?i)\bdiversity\b").expect("GRC diversity-tag pattern is valid"),
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(r"(?i)\bdiversity\b")).expect("GRC diversity-tag pattern is valid"),
     ];
 
     raw_bodies

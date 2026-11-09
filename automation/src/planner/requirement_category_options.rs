@@ -105,18 +105,16 @@ pub fn build_category_requirement_option(input: &Value) -> Option<Value> {
         .filter(|descriptor| !descriptor.is_null())
         .cloned()
         .or_else(|| get_requirement_category_option_descriptor(&source_text))?;
-    let category = descriptor_value.get("category").cloned().unwrap_or(Value::Null);
-    let source_category_code = descriptor_value
-        .get("sourceCategoryCode")
-        .cloned()
-        .unwrap_or(Value::Null);
+    if !js_truthy(&descriptor_value) {
+        return None;
+    }
+    let category = descriptor_value.get("category").cloned();
+    let source_category_code = descriptor_value.get("sourceCategoryCode").cloned();
     let long_label = descriptor_value
         .get("longLabel")
         .map(js_string_value)
         .unwrap_or_else(|| "undefined".to_string());
-    let credit_range = input
-        .get("creditRange")
-        .filter(|range| !range.is_null());
+    let credit_range = input.get("creditRange").filter(|range| !range.is_null());
     let parsed_range = if credit_range.is_none() {
         parse_requirement_credit_range(&source_text)
     } else {
@@ -128,14 +126,12 @@ pub fn build_category_requirement_option(input: &Value) -> Option<Value> {
     let credit_min = if let Some(value) = explicit_credit_min {
         value.as_f64()?
     } else {
-        parsed_range
-            .map(|range| range.0)
-            .or_else(|| {
-                parse_category_option_credit_amount(
-                    &source_text,
-                    input.get("fallbackCredits").and_then(Value::as_f64),
-                )
-            })?
+        parsed_range.map(|range| range.0).or_else(|| {
+            parse_category_option_credit_amount(
+                &source_text,
+                input.get("fallbackCredits").and_then(Value::as_f64),
+            )
+        })?
     };
     if !credit_min.is_finite() || credit_min <= 0.0 {
         return None;
@@ -154,9 +150,7 @@ pub fn build_category_requirement_option(input: &Value) -> Option<Value> {
             }
         })
         .unwrap_or_else(|| json!(credit_min));
-    let credit_max_is_same_number = credit_max
-        .as_f64()
-        .is_some_and(|value| value == credit_min);
+    let credit_max_is_same_number = credit_max.as_f64().is_some_and(|value| value == credit_min);
     let credit_text = if js_truthy(&credit_max) && !credit_max_is_same_number {
         format!(
             "{}-{}",
@@ -166,32 +160,49 @@ pub fn build_category_requirement_option(input: &Value) -> Option<Value> {
     } else {
         js_number_string(credit_min)
     };
-    let title = format!(
-        "{credit_text} credits of {long_label} ({})",
-        js_string_value(&source_category_code)
-    );
-    let program_specific = input
+    let source_category_code_text = source_category_code
+        .as_ref()
+        .map(js_string_value)
+        .unwrap_or_else(|| "undefined".to_string());
+    let title = format!("{credit_text} credits of {long_label} ({source_category_code_text})");
+    let program_specific_value = input
         .get("programSpecific")
-        .is_some_and(js_truthy)
+        .filter(|value| !value.is_null())
+        .or_else(|| {
+            descriptor_value
+                .get("programSpecific")
+                .filter(|value| !value.is_null())
+        })
+        .cloned()
+        .unwrap_or_else(|| json!(false));
+    let program_specific = input.get("programSpecific").is_some_and(js_truthy)
         || descriptor_value
             .get("programSpecific")
             .is_some_and(js_truthy);
     let approved_list_key = input
         .get("approvedListKey")
         .filter(|value| !value.is_null())
-        .or_else(|| descriptor_value.get("approvedListKey").filter(|value| !value.is_null()))
+        .or_else(|| {
+            descriptor_value
+                .get("approvedListKey")
+                .filter(|value| !value.is_null())
+        })
         .cloned()
         .unwrap_or(Value::Null);
     let mut category_option = Map::new();
-    category_option.insert("category".into(), category.clone());
-    category_option.insert("sourceCategoryCode".into(), source_category_code.clone());
+    if let Some(category) = &category {
+        category_option.insert("category".into(), category.clone());
+    }
+    if let Some(source_category_code) = &source_category_code {
+        category_option.insert("sourceCategoryCode".into(), source_category_code.clone());
+    }
     category_option.insert("title".into(), json!(title));
     category_option.insert("credits".into(), json!(credit_min));
     category_option.insert("creditMin".into(), json!(credit_min));
     category_option.insert("creditMax".into(), credit_max.clone());
     category_option.insert("sourceText".into(), json!(source_text));
     category_option.insert("approvedListKey".into(), approved_list_key);
-    category_option.insert("programSpecific".into(), json!(program_specific));
+    category_option.insert("programSpecific".into(), program_specific_value);
 
     let mut option = Map::new();
     if let Some(id) = input.get("id") {
@@ -208,7 +219,9 @@ pub fn build_category_requirement_option(input: &Value) -> Option<Value> {
     option.insert("maxCredits".into(), Value::Null);
     option.insert("title".into(), json!(title));
     option.insert("department".into(), Value::Null);
-    option.insert("category".into(), category);
+    if let Some(category) = category {
+        option.insert("category".into(), category);
+    }
     if let Some(source_heading) = input.get("sourceHeading") {
         option.insert("sourceHeading".into(), source_heading.clone());
     }
@@ -303,11 +316,11 @@ fn parse_category_option_credit_amount(text: &str, fallback_credits: Option<f64>
 
 fn category_choice_line_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bor\b|choose|select|one of").expect("category choice line pattern"))
+    VALUE.get_or_init(|| category_js_regex(r"(?i)\bor\b|choose|select|one of"))
 }
 fn category_choice_split_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bor\b|;|•").expect("category choice split pattern"))
+    VALUE.get_or_init(|| category_js_regex(r"(?i)\bor\b|;|•"))
 }
 
 fn category_pattern(category: &str) -> &'static Regex {
@@ -326,51 +339,64 @@ fn category_pattern(category: &str) -> &'static Regex {
 
 fn category_nsc_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:N\s*Sc|natural sciences?|natural science)\b").expect("NSC category pattern"))
+    VALUE.get_or_init(|| category_js_regex(r"(?i)\b(?:N\s*Sc|natural sciences?|natural science)\b"))
 }
 fn category_ah_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:A\s*&\s*H|arts?\s+(?:and|&)\s+humanities|humanities|fine arts?)\b").expect("arts and humanities category pattern"))
+    VALUE.get_or_init(|| {
+        category_js_regex(
+            r"(?i)\b(?:A\s*&\s*H|arts?\s+(?:and|&)\s+humanities|humanities|fine arts?)\b",
+        )
+    })
 }
 fn category_ssc_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:S\s*Sc|social sciences?)\b").expect("SSC category pattern"))
+    VALUE.get_or_init(|| category_js_regex(r"(?i)\b(?:S\s*Sc|social sciences?)\b"))
 }
 fn category_qsr_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bQSR\b|\bquantitative and symbolic reasoning\b").expect("QSR category pattern"))
+    VALUE.get_or_init(|| category_js_regex(r"(?i)\bQSR\b|\bquantitative and symbolic reasoning\b"))
 }
 fn category_vlpa_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bVLPA\b|\bvisual,\s*literary,\s*and performing arts\b").expect("VLPA category pattern"))
+    VALUE.get_or_init(|| {
+        category_js_regex(r"(?i)\bVLPA\b|\bvisual,\s*literary,\s*and performing arts\b")
+    })
 }
 fn category_div_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bDIV\b|\bDiversity\s+Requirement\b|\b(?:\d+(?:\.\d+)?\s+(?:credits?\s+of\s+)?Diversity|Diversity\s*\([^)]*\)|Diversity\s*:\s*\d|Diversity\s+credits?)\b").expect("DIV category pattern"))
+    VALUE.get_or_init(|| category_js_regex(r"(?i)\bDIV\b|\bDiversity\s+Requirement\b|\b(?:\d+(?:\.\d+)?\s+(?:credits?\s+of\s+)?Diversity|Diversity\s*\([^)]*\)|Diversity\s*:\s*\d|Diversity\s+credits?)\b"))
 }
 fn category_nw_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bNW\b|\bnatural world\b").expect("NW category pattern"))
+    VALUE.get_or_init(|| category_js_regex(r"(?i)\bNW\b|\bnatural world\b"))
 }
 fn category_iands_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bI\s*&\s*S\b|\bindividuals\s+and\s+societies\b").expect("IANDS category pattern"))
+    VALUE.get_or_init(|| category_js_regex(r"(?i)\bI\s*&\s*S\b|\bindividuals\s+and\s+societies\b"))
 }
 fn category_never_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"\b\B").expect("never-matching category pattern"))
+    VALUE.get_or_init(|| category_js_regex(r"\b\B"))
 }
 fn parenthetical_credit_amount_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"\(\s*(\d+(?:\.\d+)?)\s*\)").expect("parenthetical category credit amount pattern"))
+    VALUE.get_or_init(|| category_js_regex(r"\(\s*(\d+(?:\.\d+)?)\s*\)"))
 }
 fn explicit_credit_amount_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(\d+(?:\.\d+)?)\s*(?:credits?|cr)\b").expect("explicit category credit amount pattern"))
+    VALUE.get_or_init(|| category_js_regex(r"(?i)\b(\d+(?:\.\d+)?)\s*(?:credits?|cr)\b"))
+}
+
+fn category_js_regex(pattern: &str) -> Regex {
+    Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+        pattern,
+    ))
+    .expect("category option JavaScript regex")
 }
 
 fn normalize_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::requirement_shape::normalize_js_whitespace(value)
 }
 
 fn js_string(value: Option<&Value>) -> String {
@@ -388,7 +414,13 @@ fn js_string_value(value: &Value) -> String {
         Value::String(value) => value.clone(),
         Value::Array(values) => values
             .iter()
-            .map(|value| if value.is_null() { String::new() } else { js_string_value(value) })
+            .map(|value| {
+                if value.is_null() {
+                    String::new()
+                } else {
+                    js_string_value(value)
+                }
+            })
             .collect::<Vec<_>>()
             .join(","),
         Value::Object(_) => "[object Object]".to_string(),
@@ -396,11 +428,7 @@ fn js_string_value(value: &Value) -> String {
 }
 
 fn js_number_string(value: f64) -> String {
-    if value.fract() == 0.0 {
-        format!("{value:.0}")
-    } else {
-        value.to_string()
-    }
+    super::requirement_shape::js_number_f64_to_string(value)
 }
 
 fn js_truthy(value: &Value) -> bool {

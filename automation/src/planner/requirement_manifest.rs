@@ -17,11 +17,17 @@ pub fn preselect_parseable_manifest_entries(
     entries
         .iter()
         .filter(|entry| {
-            let owner_type = entry.get("ownerType").and_then(Value::as_str).unwrap_or_default();
+            let owner_type = entry
+                .get("ownerType")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if !matches!(owner_type, "major" | "pathway") {
                 return false;
             }
-            let campus = entry.get("campusId").and_then(Value::as_str).unwrap_or_default();
+            let campus = entry
+                .get("campusId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if campus.is_empty() || campus == "grc" {
                 return false;
             }
@@ -33,19 +39,26 @@ pub fn preselect_parseable_manifest_entries(
                     return false;
                 }
             }
-            let parser_type = entry.get("parserType").and_then(Value::as_str).unwrap_or_default();
+            let parser_type = entry
+                .get("parserType")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if !is_parseable_parser_type(parser_type) {
                 return false;
             }
-            if js_truthy(entry.get("isPrimaryDegreeRequirementsLink")) {
-                return true;
-            }
-            let role = classify_requirement_source_role(entry);
-            get_requirement_source_role_status(Some(role)) == RequirementSourceRoleStatus::Primary
-                || PARSEABLE_SUPPORT_ROLES.contains(&role)
+            should_parse_requirement_source_entry(entry)
         })
         .cloned()
         .collect()
+}
+
+pub fn should_parse_requirement_source_entry(entry: &Value) -> bool {
+    if js_truthy(entry.get("isPrimaryDegreeRequirementsLink")) {
+        return true;
+    }
+    let role = classify_requirement_source_role(entry);
+    get_requirement_source_role_status(Some(role)) == RequirementSourceRoleStatus::Primary
+        || PARSEABLE_SUPPORT_ROLES.contains(&role)
 }
 
 pub fn normalize_manifest_url_for_dedupe(value: &str) -> String {
@@ -54,9 +67,10 @@ pub fn normalize_manifest_url_for_dedupe(value: &str) -> String {
 
 pub fn normalize_manifest_url_without_hash_for_dedupe(value: &str) -> String {
     normalize_manifest_url(value, false).unwrap_or_else(|| {
-        normalize_whitespace(value)
-            .split_once('#')
-            .map_or_else(|| normalize_whitespace(value), |(base, _)| normalize_whitespace(base))
+        normalize_whitespace(value).split_once('#').map_or_else(
+            || normalize_whitespace(value),
+            |(base, _)| normalize_whitespace(base),
+        )
     })
 }
 
@@ -108,9 +122,17 @@ pub fn dedupe_parseable_primary_entries(entries: &[Value]) -> Vec<Value> {
     }
     let mut output = by_key.into_values().collect::<Vec<_>>();
     output.sort_by(|left, right| {
-        locale_like_compare(&string_field(left, "ownerTitle"), &string_field(right, "ownerTitle"))
-            .then_with(|| locale_like_compare(&string_field(left, "ownerId"), &string_field(right, "ownerId")))
-            .then_with(|| locale_like_compare(&string_field(left, "url"), &string_field(right, "url")))
+        locale_like_compare(
+            &string_field(left, "ownerTitle"),
+            &string_field(right, "ownerTitle"),
+        )
+        .then_with(|| {
+            locale_like_compare(
+                &string_field(left, "ownerId"),
+                &string_field(right, "ownerId"),
+            )
+        })
+        .then_with(|| locale_like_compare(&string_field(left, "url"), &string_field(right, "url")))
     });
     output
 }
@@ -207,11 +229,14 @@ fn locale_like_compare(left: &str, right: &str) -> std::cmp::Ordering {
 }
 
 fn normalize_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::requirement_shape::normalize_js_whitespace(value)
 }
 
 fn nullish_string(value: Option<&Value>) -> String {
-    value.filter(|value| !value.is_null()).map(js_string).unwrap_or_default()
+    value
+        .filter(|value| !value.is_null())
+        .map(js_string)
+        .unwrap_or_default()
 }
 
 fn string_field(value: &Value, key: &str) -> String {
@@ -240,11 +265,17 @@ fn js_string(value: &Value) -> String {
     match value {
         Value::Null => "null".to_string(),
         Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
+        Value::Number(value) => super::requirement_shape::js_number_to_string(value),
         Value::String(value) => value.clone(),
         Value::Array(values) => values
             .iter()
-            .map(|value| if value.is_null() { String::new() } else { js_string(value) })
+            .map(|value| {
+                if value.is_null() {
+                    String::new()
+                } else {
+                    js_string(value)
+                }
+            })
             .collect::<Vec<_>>()
             .join(","),
         Value::Object(_) => "[object Object]".to_string(),

@@ -1,8 +1,8 @@
 use super::requirement_course_codes::CourseCodeParser;
 use super::requirement_shape::{
-    CHOICE_LIST_START_PATTERN_SOURCE, looks_like_standalone_requirement_label_line,
-    looks_like_standalone_requirement_title_line, strip_leading_requirement_glyphs,
-    strip_snapshot_page_prefix,
+    CHOICE_LIST_START_PATTERN_SOURCE, js_regex_compatibility_pattern,
+    looks_like_standalone_requirement_label_line, looks_like_standalone_requirement_title_line,
+    strip_leading_requirement_glyphs, strip_snapshot_page_prefix,
 };
 use regex::Regex;
 use std::sync::OnceLock;
@@ -19,8 +19,8 @@ pub fn strip_non_option_course_evidence_from_choice_line(
     value: &str,
     course_parser: &CourseCodeParser,
 ) -> String {
-    let mut text = normalize_whitespace(
-        &trailing_if_taken_course_pattern().replace_all(
+    let mut text =
+        normalize_whitespace(&trailing_if_taken_course_pattern().replace_all(
             &prerequisite_colon_pattern().replace_all(
                 &not_both_parenthetical_pattern().replace_all(
                     &not_both_bracket_pattern().replace_all(
@@ -35,20 +35,22 @@ pub fn strip_non_option_course_evidence_from_choice_line(
                 "",
             ),
             "",
-        ),
-    );
-    if let Some(index) = embedded_one_of_pattern().find(&text).map(|matched| matched.start()) {
+        ));
+    if let Some(index) = embedded_one_of_pattern()
+        .find(&text)
+        .map(|matched| matched.start())
+    {
         if index > 0 {
             let replacement = {
                 let prefix = &text[..index];
                 let option_tail = &text[index..];
                 let prefix_course_codes = course_parser.extract_from_line(prefix);
-                let prefix_looks_like_required_course_list =
-                    required_course_list_prefix_pattern().is_match(prefix)
-                        || prefix_ends_with_semicolon_pattern().is_match(prefix)
-                        || (prefix_course_codes.len() >= 2
-                            && prefix_has_comma_or_semicolon_pattern().is_match(prefix)
-                            && !contains_or_pattern().is_match(prefix));
+                let prefix_looks_like_required_course_list = required_course_list_prefix_pattern()
+                    .is_match(prefix)
+                    || prefix_ends_with_semicolon_pattern().is_match(prefix)
+                    || (prefix_course_codes.len() >= 2
+                        && prefix_has_comma_or_semicolon_pattern().is_match(prefix)
+                        && !contains_or_pattern().is_match(prefix));
                 if !prefix_course_codes.is_empty()
                     && prefix_looks_like_required_course_list
                     && course_parser.extract_from_line(option_tail).len() >= 2
@@ -115,12 +117,10 @@ pub fn strip_choice_list_line(line: &str) -> String {
 }
 
 pub fn trim_choice_list_continuation_noise(line: &str) -> String {
-    normalize_whitespace(
-        &continuation_section_noise_pattern().replace_all(
-            &continuation_course_annotation_pattern().replace_all(line, ""),
-            "",
-        ),
-    )
+    normalize_whitespace(&continuation_section_noise_pattern().replace_all(
+        &continuation_course_annotation_pattern().replace_all(line, ""),
+        "",
+    ))
 }
 
 pub fn normalize_sequence_source_line(line: &str) -> String {
@@ -149,7 +149,10 @@ pub fn find_nearest_lettered_choose_one_heading(
     let start_index = index.saturating_sub(10);
     for candidate_index in (start_index..index).rev() {
         let candidate_line = normalize_whitespace(&strip_choice_list_line(
-            snapshot_lines.get(candidate_index).map(String::as_str).unwrap_or_default(),
+            snapshot_lines
+                .get(candidate_index)
+                .map(String::as_str)
+                .unwrap_or_default(),
         ));
         if candidate_line.is_empty() {
             continue;
@@ -192,7 +195,11 @@ pub fn can_continue_wrapped_course_number(previous_text: &str, line: &str) -> bo
     wrapped_course_subject_pattern().is_match(&previous)
 }
 
-pub fn looks_like_choice_list_continuation(line: &str, previous_text: &str, course_parser: &CourseCodeParser) -> bool {
+pub fn looks_like_choice_list_continuation(
+    line: &str,
+    previous_text: &str,
+    course_parser: &CourseCodeParser,
+) -> bool {
     let normalized_line = trim_choice_list_continuation_noise(line);
     if normalized_line.is_empty()
         || choice_list_continuation_looks_like_adjacent_requirement(&normalized_line)
@@ -220,10 +227,7 @@ pub fn is_standalone_credit_amount_line(line: &str) -> bool {
     simple_credit_label_pattern().is_match(&strip_choice_list_line(line))
 }
 
-pub fn line_starts_parenthetical_choice_list(
-    line: &str,
-    course_parser: &CourseCodeParser,
-) -> bool {
+pub fn line_starts_parenthetical_choice_list(line: &str, course_parser: &CourseCodeParser) -> bool {
     let normalized_line = normalize_whitespace(&strip_choice_list_line(line));
     if !normalized_line.starts_with('(') {
         return false;
@@ -260,15 +264,13 @@ pub fn build_forward_labeled_choice_requirement_lines(
         let requirement_label = normalize_whitespace(&format!("{label} {credit_line}"));
         let scan_limit = snapshot_lines.len().min(label_index.saturating_add(12));
         for choice_index in label_index + 1..scan_limit {
-            let candidate = normalize_whitespace(&strip_choice_list_line(&snapshot_lines[choice_index]));
+            let candidate =
+                normalize_whitespace(&strip_choice_list_line(&snapshot_lines[choice_index]));
             if candidate.is_empty() {
                 continue;
             }
             if !choice_list_start_pattern().is_match(&candidate)
-                && !line_starts_parenthetical_choice_list(
-                    &candidate,
-                    course_parser,
-                )
+                && !line_starts_parenthetical_choice_list(&candidate, course_parser)
             {
                 continue;
             }
@@ -293,12 +295,10 @@ pub struct InlineLabeledRequirementParts {
 }
 
 pub fn strip_inline_labeled_requirement_marker(line: &str) -> String {
-    normalize_whitespace(
-        &inline_requirement_letter_marker_pattern().replace_all(
-            &inline_requirement_number_marker_pattern().replace_all(&strip_choice_list_line(line), ""),
-            "",
-        ),
-    )
+    normalize_whitespace(&inline_requirement_letter_marker_pattern().replace_all(
+        &inline_requirement_number_marker_pattern().replace_all(&strip_choice_list_line(line), ""),
+        "",
+    ))
 }
 
 pub fn get_inline_labeled_requirement_parts(
@@ -349,8 +349,7 @@ pub fn build_multi_line_choice_requirement_lines(
         }
         let current_course_codes = course_parser.extract_from_line(&current_without_page);
         let has_choice_list_start = choice_list_start_pattern().is_match(&current_without_page);
-        let has_choice_heading_context =
-            has_strong_choice_requirement_context(&requirement_label);
+        let has_choice_heading_context = has_strong_choice_requirement_context(&requirement_label);
         let starts_heading_backed_comma_list = has_choice_heading_context
             && current_course_codes.len() >= 2
             && continuation_delimiter_pattern().is_match(&current_without_page)
@@ -376,8 +375,14 @@ pub fn build_multi_line_choice_requirement_lines(
 
 pub fn choice_list_looks_closed(text: &str) -> bool {
     let normalized_text = normalize_whitespace(text);
-    let open_count = normalized_text.chars().filter(|character| *character == '(').count();
-    let close_count = normalized_text.chars().filter(|character| *character == ')').count();
+    let open_count = normalized_text
+        .chars()
+        .filter(|character| *character == '(')
+        .count();
+    let close_count = normalized_text
+        .chars()
+        .filter(|character| *character == ')')
+        .count();
     open_count > 0 && close_count >= open_count
 }
 
@@ -400,7 +405,8 @@ pub fn build_choice_list_source_line(
         if saw_closing_parenthesis {
             break;
         }
-        let continuation = trim_choice_list_continuation_noise(&strip_choice_list_line(&snapshot_lines[index]));
+        let continuation =
+            trim_choice_list_continuation_noise(&strip_choice_list_line(&snapshot_lines[index]));
         if !looks_like_choice_list_continuation(&continuation, &parts.join(" "), course_parser) {
             continue;
         }
@@ -411,145 +417,250 @@ pub fn build_choice_list_source_line(
 }
 
 fn normalize_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::requirement_shape::normalize_js_whitespace(value)
 }
 
 fn choice_list_start_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
     VALUE.get_or_init(|| {
-        Regex::new(&format!("(?i){CHOICE_LIST_START_PATTERN_SOURCE}")).expect("choice list start pattern")
+        Regex::new(&js_regex_compatibility_pattern(&format!(
+            "(?i){CHOICE_LIST_START_PATTERN_SOURCE}"
+        )))
+        .expect("choice list start pattern")
     })
 }
 
 fn choice_requirement_context_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:choose(?:\s+(?:from|one|two|three|four|five|six|seven|eight|nine|ten|\d+))?|select(?:ed)?(?:\s+(?:one|from|one|two|three|four|five|six|seven|eight|nine|ten|\d+))?|electives?|options?|approved\s+(?:courses?|electives?|list)|elective\s+list|course\s+list|one\s+(?:course\s+)?from|one\s+of(?:\s+the\s+following)?|either)\b").expect("choice requirement context pattern"))
+    VALUE.get_or_init(|| Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:choose(?:\s+(?:from|one|two|three|four|five|six|seven|eight|nine|ten|[0-9]+))?|select(?:ed)?(?:\s+(?:one|from|one|two|three|four|five|six|seven|eight|nine|ten|[0-9]+))?|electives?|options?|approved\s+(?:courses?|electives?|list)|elective\s+list|course\s+list|one\s+(?:course\s+)?from|one\s+of(?:\s+the\s+following)?|either)\b")).expect("choice requirement context pattern"))
 }
 fn strong_choice_requirement_context_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:choose(?:\s+(?:from|one|two|three|four|five|six|seven|eight|nine|ten|\d+))?|select(?:ed)?(?:\s+(?:one|from|one|two|three|four|five|six|seven|eight|nine|ten|\d+))?|approved\s+(?:courses?|electives?|list)|elective\s+list|course\s+list|one\s+(?:course\s+)?from|one\s+of(?:\s+the\s+following)?|either|electives?)\b").expect("strong choice requirement context pattern"))
+    VALUE.get_or_init(|| Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:choose(?:\s+(?:from|one|two|three|four|five|six|seven|eight|nine|ten|[0-9]+))?|select(?:ed)?(?:\s+(?:one|from|one|two|three|four|five|six|seven|eight|nine|ten|[0-9]+))?|approved\s+(?:courses?|electives?|list)|elective\s+list|course\s+list|one\s+(?:course\s+)?from|one\s+of(?:\s+the\s+following)?|either|electives?)\b")).expect("strong choice requirement context pattern"))
 }
 fn prerequisite_bracket_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\[[^\]]*\b(?:pr|pre-?req|prereq(?:uisite)?)[^\]]*\]").expect("prerequisite bracket pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\[[^\]]*\b(?:pr|pre-?req|prereq(?:uisite)?)[^\]]*\]",
+        ))
+        .expect("prerequisite bracket pattern")
+    })
 }
 fn prerequisite_parenthetical_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\([^)]*\b(?:pr|pre-?req|prereq(?:uisite)?)[^)]*\)").expect("prerequisite parenthetical pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\([^)]*\b(?:pr|pre-?req|prereq(?:uisite)?)[^)]*\)",
+        ))
+        .expect("prerequisite parenthetical pattern")
+    })
 }
 fn not_both_bracket_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\[[^\]]*\b(?:may\s+be\s+used|may\s+satisfy|may\s+count|cannot\s+count|but\s+not\s+both|not\s+both)\b[^\]]*\]").expect("non-option bracket pattern"))
+    VALUE.get_or_init(|| Regex::new(&js_regex_compatibility_pattern(r"(?i)\[[^\]]*\b(?:may\s+be\s+used|may\s+satisfy|may\s+count|cannot\s+count|but\s+not\s+both|not\s+both)\b[^\]]*\]")).expect("non-option bracket pattern"))
 }
 fn not_both_parenthetical_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\([^)]*\b(?:may\s+be\s+used|may\s+satisfy|may\s+count|cannot\s+count|but\s+not\s+both|not\s+both)\b[^)]*\)").expect("non-option parenthetical pattern"))
+    VALUE.get_or_init(|| Regex::new(&js_regex_compatibility_pattern(r"(?i)\([^)]*\b(?:may\s+be\s+used|may\s+satisfy|may\s+count|cannot\s+count|but\s+not\s+both|not\s+both)\b[^)]*\)")).expect("non-option parenthetical pattern"))
 }
 fn prerequisite_colon_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:pr|pre-?req|prereq(?:uisite)?):\s*[^.;)\]]+").expect("prerequisite colon pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:pr|pre-?req|prereq(?:uisite)?):\s*[^.;)\]]+",
+        ))
+        .expect("prerequisite colon pattern")
+    })
 }
 fn trailing_if_taken_course_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\s+\d{3}\s+or\s+[A-Z&]{2,8}\s+\d{3}[A-Z]?\s+if\s+taken\)?\.?\s*$").expect("trailing if-taken course annotation pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\s+[0-9]{3}\s+or\s+[A-Z&]{2,8}\s+[0-9]{3}[A-Z]?\s+if\s+taken\)?\.?\s*$",
+        ))
+        .expect("trailing if-taken course annotation pattern")
+    })
 }
 fn embedded_one_of_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:one\s+(?:course\s+)?(?:from|of)(?:\s+the\s+following)?|either)\b").expect("embedded one-of choice pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:one\s+(?:course\s+)?(?:from|of)(?:\s+the\s+following)?|either)\b",
+        ))
+        .expect("embedded one-of choice pattern")
+    })
 }
 fn required_course_list_prefix_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:including|include|following|courses?|requirements?|complete|minimum|gpa|grade)\b").expect("required course list prefix pattern"))
+    VALUE.get_or_init(|| Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:including|include|following|courses?|requirements?|complete|minimum|gpa|grade)\b")).expect("required course list prefix pattern"))
 }
 fn prefix_ends_with_semicolon_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r";\s*$").expect("semicolon-ended prefix pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(r";\s*$"))
+            .expect("semicolon-ended prefix pattern")
+    })
 }
 fn prefix_has_comma_or_semicolon_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"[,;]").expect("comma or semicolon prefix pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(r"[,;]"))
+            .expect("comma or semicolon prefix pattern")
+    })
 }
 fn contains_or_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bor\b").expect("or connector pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(r"(?i)\bor\b")).expect("or connector pattern")
+    })
 }
 fn inline_requirement_number_marker_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"^\d+\s*[\).]\s*").expect("inline requirement numeric marker pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(r"^[0-9]+\s*[\).]\s*"))
+            .expect("inline requirement numeric marker pattern")
+    })
 }
 fn inline_requirement_letter_marker_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^[A-Z]\s*[\).]\s*").expect("inline requirement letter marker pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(r"(?i)^[A-Z]\s*[\).]\s*"))
+            .expect("inline requirement letter marker pattern")
+    })
 }
 fn inline_requirement_label_terminal_punctuation_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"[:.]+$").expect("inline requirement label punctuation pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(r"[:.]+$"))
+            .expect("inline requirement label punctuation pattern")
+    })
 }
 fn simple_credit_label_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^\d+(?:-\d+)?\s*cr$").expect("simple credit label pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^[0-9]+(?:-[0-9]+)?\s*cr$",
+        ))
+        .expect("simple credit label pattern")
+    })
 }
 fn programming_choice_context_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^(?:\[[^\]]+\]\s*)?(?:computer\s+)?(?:programming|computing)\b").expect("programming choice context pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^(?:\[[^\]]+\]\s*)?(?:computer\s+)?(?:programming|computing)\b",
+        ))
+        .expect("programming choice context pattern")
+    })
 }
 fn continuation_course_annotation_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i),\s*[A-Z][A-Za-z&/ -]{2,80}\s+\([A-Z& ]+\s+\d{3}(?:\.\d+)?[A-Z]?[^)]*\)\s*$").expect("choice continuation course annotation pattern"))
+    VALUE.get_or_init(|| Regex::new(&js_regex_compatibility_pattern(r"(?i),\s*[A-Z][A-Za-z&/ -]{2,80}\s+\([A-Z& ]+\s+[0-9]{3}(?:\.[0-9]+)?[A-Z]?[^)]*\)\s*$")).expect("choice continuation course annotation pattern"))
 }
 fn continuation_section_noise_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\s+\b(?:Professional Practice|Capstone and Professional Practice|Engineering Fundamentals|Engineering & Science Electives|Technical Electives|Written Communication|Academic Planning Notes)\b.*$").expect("choice continuation section noise pattern"))
+    VALUE.get_or_init(|| Regex::new(&js_regex_compatibility_pattern(r"(?i)\s+\b(?:Professional Practice|Capstone and Professional Practice|Engineering Fundamentals|Engineering & Science Electives|Technical Electives|Written Communication|Academic Planning Notes)\b.*$")).expect("choice continuation section noise pattern"))
 }
 fn leading_lettered_option_marker_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^[a-z]\)\s*").expect("leading lettered option marker pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(r"(?i)^[a-z]\)\s*"))
+            .expect("leading lettered option marker pattern")
+    })
 }
 fn lettered_option_line_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^[a-z]\)\s+\S").expect("lettered option line pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(r"(?i)^[a-z]\)\s+\S"))
+            .expect("lettered option line pattern")
+    })
 }
 fn numbered_choose_one_option_heading_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^\d+\)\s+\S.+\bchoose\s+one\s+option\b").expect("numbered choose-one heading pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^[0-9]+\)\s+\S.+\bchoose\s+one\s+option\b",
+        ))
+        .expect("numbered choose-one heading pattern")
+    })
 }
 fn numbered_option_heading_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^\d+\)\s+\S").expect("numbered option heading pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(r"(?i)^[0-9]+\)\s+\S"))
+            .expect("numbered option heading pattern")
+    })
 }
 fn combined_choose_one_lettered_option_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^\d+\)\s+\S.+\bchoose\s+one\s+option\b.*:\s*[a-z]\)\s+\S").expect("combined choose-one lettered option pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^[0-9]+\)\s+\S.+\bchoose\s+one\s+option\b.*:\s*[a-z]\)\s+\S",
+        ))
+        .expect("combined choose-one lettered option pattern")
+    })
 }
 fn adjacent_requirement_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:taken\s+[A-Z]{3}|taken\s+in|qtr|senior year|junior year|capstone design course|professional practice)\b").expect("adjacent requirement pattern"))
+    VALUE.get_or_init(|| Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:taken\s+[A-Z]{3}|taken\s+in|qtr|senior year|junior year|capstone design course|professional practice)\b")).expect("adjacent requirement pattern"))
 }
 fn wrapped_course_number_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"^\d{3}(?:\.\d+)?[A-Z]?\b").expect("wrapped course number pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(
+            r"^[0-9]{3}(?:\.[0-9]+)?[A-Z]?\b",
+        ))
+        .expect("wrapped course number pattern")
+    })
 }
 fn wrapped_course_subject_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"\b[A-Z]{2,8}(?:\s+[A-Z]{2,8})?$").expect("wrapped course subject pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(
+            r"\b[A-Z]{2,8}(?:\s+[A-Z]{2,8})?$",
+        ))
+        .expect("wrapped course subject pattern")
+    })
 }
 fn continuation_delimiter_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"[,;]").expect("choice continuation delimiter pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(r"[,;]"))
+            .expect("choice continuation delimiter pattern")
+    })
 }
 fn continuation_and_or_subject_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^(?:or|and)\s+[A-Z]{2,8}").expect("choice continuation and-or pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^(?:or|and)\s+[A-Z]{2,8}",
+        ))
+        .expect("choice continuation and-or pattern")
+    })
 }
 fn continuation_credit_parenthetical_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^\(\s*\d+(?:\.\d+)?\s*cr\b").expect("choice continuation credit pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^\(\s*[0-9]+(?:\.[0-9]+)?\s*cr\b",
+        ))
+        .expect("choice continuation credit pattern")
+    })
 }
 fn continuation_course_code_start_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^[A-Z]{2,8}(?:\s+[A-Z]{2,8})?\s+\d{3}(?:\.\d+)?[A-Z]?\b").expect("choice continuation course-code start pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^[A-Z]{2,8}(?:\s+[A-Z]{2,8})?\s+[0-9]{3}(?:\.[0-9]+)?[A-Z]?\b",
+        ))
+        .expect("choice continuation course-code start pattern")
+    })
 }
 fn continuation_course_code_terminator_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"[,;)]").expect("choice continuation course-code terminator pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(&js_regex_compatibility_pattern(r"[,;)]"))
+            .expect("choice continuation course-code terminator pattern")
+    })
 }

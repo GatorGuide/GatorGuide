@@ -3,6 +3,7 @@ use reqwest::header::{RETRY_AFTER, USER_AGENT};
 use std::collections::HashMap;
 use std::io::{self, Read};
 use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -136,7 +137,10 @@ impl SourceDownloader {
         binary: bool,
     ) -> Result<DownloadedSource, String> {
         let sanitized_url = sanitize_source_url(url);
-        let cache_key = format!("{}::{sanitized_url}", if binary { "binary" } else { "text" });
+        let cache_key = format!(
+            "{}::{sanitized_url}",
+            if binary { "binary" } else { "text" }
+        );
         let cached = {
             let mut cache = self
                 .inner
@@ -215,9 +219,10 @@ impl SourceDownloader {
         let mut last_response = None;
         let mut last_error = None;
         for attempt in 1..=attempts {
-            let response = self.inner.limiter.with_throttle(url, &self.inner.options, || {
-                self.fetch_once(url, timeout)
-            });
+            let response = self
+                .inner
+                .limiter
+                .with_throttle(url, &self.inner.options, || self.fetch_once(url, timeout));
             match response {
                 Ok(response) if (200..300).contains(&response.status) => {
                     self.inner.limiter.clear_rate_limit_penalty(url);
@@ -233,11 +238,9 @@ impl SourceDownloader {
                     );
                     if retryable && attempt < attempts {
                         if matches!(response.status, 429 | 503) {
-                            self.inner.limiter.note_rate_limit(
-                                url,
-                                delay,
-                                &self.inner.options,
-                            );
+                            self.inner
+                                .limiter
+                                .note_rate_limit(url, delay, &self.inner.options);
                         }
                         last_response = Some(response);
                         thread::sleep(Duration::from_millis(delay));
@@ -275,7 +278,10 @@ impl SourceDownloader {
             .send()
             .map_err(|error| error.to_string())?;
         let status = response.status();
-        let status_text = status.canonical_reason().unwrap_or("unknown status").to_string();
+        let status_text = status
+            .canonical_reason()
+            .unwrap_or("unknown status")
+            .to_string();
         let retry_after = response
             .headers()
             .get(RETRY_AFTER)
@@ -316,17 +322,24 @@ impl SourceDownloader {
             timeout_seconds.to_string(),
             url.to_string(),
         ];
-        let output = self.inner.limiter.with_throttle(url, &self.inner.options, || {
-            run_command_bounded(
-                Command::new(&self.inner.options.curl_command).args(args),
-                self.inner.options.max_buffer_bytes,
-            )
-        });
+        let output = self
+            .inner
+            .limiter
+            .with_throttle(url, &self.inner.options, || {
+                run_command_bounded_with_timeout(
+                    Command::new(&self.inner.options.curl_command).args(args),
+                    self.inner.options.max_buffer_bytes,
+                    Some(timeout),
+                )
+            });
         let output = output.map_err(|error| format!("curl failed for {url}: {error}"))?;
         if output.stdout.len() > self.inner.options.max_buffer_bytes
             || output.stderr.len() > self.inner.options.max_buffer_bytes
         {
-            return Err(format!("curl output exceeded the {}-byte buffer limit", self.inner.options.max_buffer_bytes));
+            return Err(format!(
+                "curl output exceeded the {}-byte buffer limit",
+                self.inner.options.max_buffer_bytes
+            ));
         }
         if !output.status.success() {
             let details = normalize_whitespace(&String::from_utf8_lossy(&output.stderr))
@@ -345,7 +358,10 @@ impl SourceDownloader {
 impl HostRateLimiter {
     fn scope_state(&self, url: &str) -> Arc<Mutex<ScopeState>> {
         let scope = get_rate_limit_scope_key(url);
-        let mut scopes = self.scopes.lock().unwrap_or_else(|error| error.into_inner());
+        let mut scopes = self
+            .scopes
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         scopes
             .entry(scope)
             .or_insert_with(|| Arc::new(Mutex::new(ScopeState::default())))
@@ -360,12 +376,15 @@ impl HostRateLimiter {
     ) -> Result<T, String> {
         let state = self.scope_state(url);
         let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
-        let remaining = state.next_allowed_at.saturating_duration_since(Instant::now());
+        let remaining = state
+            .next_allowed_at
+            .saturating_duration_since(Instant::now());
         if !remaining.is_zero() {
             thread::sleep(remaining);
         }
         let result = work();
-        let min_delay = resolve_min_delay_ms(&get_rate_limit_scope_key(url), state.penalty_ms, options);
+        let min_delay =
+            resolve_min_delay_ms(&get_rate_limit_scope_key(url), state.penalty_ms, options);
         state.next_allowed_at = Instant::now() + Duration::from_millis(min_delay);
         result
     }
@@ -377,7 +396,8 @@ impl HostRateLimiter {
         state.next_allowed_at = state
             .next_allowed_at
             .max(Instant::now() + Duration::from_millis(bounded));
-        let minimum = resolve_min_delay_ms(&get_rate_limit_scope_key(url), state.penalty_ms, options);
+        let minimum =
+            resolve_min_delay_ms(&get_rate_limit_scope_key(url), state.penalty_ms, options);
         state.penalty_ms = options
             .max_retry_delay_ms
             .min((minimum.saturating_mul(2)).max(bounded));
@@ -446,15 +466,36 @@ pub fn get_rate_limit_scope_key(url_or_host: &str) -> String {
 }
 
 pub fn parse_retry_after_to_ms(value: Option<&str>) -> Option<u64> {
-    let normalized = normalize_whitespace(value.unwrap_or_default());
+    let normalized = normalize_whitespace(value.unwrap_or_default()).unwrap_or_default();
     if normalized.is_empty() {
         return None;
     }
-    if normalized.chars().all(|character| character.is_ascii_digit()) {
-        return normalized.parse::<u64>().ok()?.checked_mul(1_000);
+    if normalized
+        .chars()
+        .all(|character| character.is_ascii_digit())
+    {
+        let seconds = normalized.parse::<u64>().unwrap_or(u64::MAX);
+        return Some(seconds.saturating_mul(1_000));
     }
-    let retry_at = chrono::DateTime::parse_from_rfc2822(&normalized).ok()?;
-    let delay = retry_at.timestamp_millis() - chrono::Utc::now().timestamp_millis();
+    let retry_at_millis = chrono::DateTime::parse_from_rfc2822(&normalized)
+        .map(|retry_at| retry_at.timestamp_millis())
+        .ok()
+        .or_else(|| {
+            [
+                "%a, %d %b %Y %H:%M:%S GMT",
+                "%A, %d-%b-%y %H:%M:%S GMT",
+                "%a %b %e %H:%M:%S %Y",
+                "%a, %d %b %Y %H:%M:%S UTC",
+                "%A, %d-%b-%y %H:%M:%S UTC",
+            ]
+            .iter()
+            .find_map(|format| {
+                chrono::NaiveDateTime::parse_from_str(&normalized, format)
+                    .ok()
+                    .map(|retry_at| retry_at.and_utc().timestamp_millis())
+            })
+        })?;
+    let delay = retry_at_millis.saturating_sub(chrono::Utc::now().timestamp_millis());
     Some(delay.max(0) as u64)
 }
 
@@ -465,11 +506,19 @@ fn get_retry_delay_ms(
     max_retry_delay_ms: u64,
 ) -> u64 {
     let exponential = host_cooldown_ms
-        .saturating_mul(1u64.checked_shl(attempt.saturating_sub(1).min(63) as u32).unwrap_or(u64::MAX))
+        .saturating_mul(
+            1u64.checked_shl(attempt.saturating_sub(1).min(63) as u32)
+                .unwrap_or(u64::MAX),
+        )
         .max(host_cooldown_ms)
         .min(max_retry_delay_ms);
     parse_retry_after_to_ms(retry_after)
-        .map(|retry_after| retry_after.max(exponential).max(host_cooldown_ms).min(max_retry_delay_ms))
+        .map(|retry_after| {
+            retry_after
+                .max(exponential)
+                .max(host_cooldown_ms)
+                .min(max_retry_delay_ms)
+        })
         .unwrap_or(exponential)
 }
 
@@ -486,8 +535,10 @@ fn resolve_min_delay_ms(
     options.host_cooldown_ms.max(scoped_floor).max(penalty_ms)
 }
 
-fn run_command_bounded(command: &mut Command, max_buffer_bytes: usize) -> Result<Output, String> {
-    run_command_bounded_with_timeout(command, max_buffer_bytes, None)
+pub(crate) struct BoundedCommandOutput {
+    pub(crate) output: Output,
+    pub(crate) timed_out: bool,
+    pub(crate) output_exceeded: bool,
 }
 
 pub(crate) fn run_command_bounded_with_timeout(
@@ -495,6 +546,36 @@ pub(crate) fn run_command_bounded_with_timeout(
     max_buffer_bytes: usize,
     timeout: Option<Duration>,
 ) -> Result<Output, String> {
+    let result = run_command_bounded_with_timeout_output(command, max_buffer_bytes, timeout)?;
+    if result.timed_out {
+        Err(format!(
+            "command timed out after {} ms",
+            timeout.unwrap_or_default().as_millis()
+        ))
+    } else {
+        Ok(result.output)
+    }
+}
+
+pub(crate) fn run_command_bounded_with_timeout_output(
+    command: &mut Command,
+    max_buffer_bytes: usize,
+    timeout: Option<Duration>,
+) -> Result<BoundedCommandOutput, String> {
+    run_command_bounded_with_timeout_output_and_overflow_kill(
+        command,
+        max_buffer_bytes,
+        timeout,
+        false,
+    )
+}
+
+pub(crate) fn run_command_bounded_with_timeout_output_and_overflow_kill(
+    command: &mut Command,
+    max_buffer_bytes: usize,
+    timeout: Option<Duration>,
+    kill_on_overflow: bool,
+) -> Result<BoundedCommandOutput, String> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|error| error.to_string())?;
     let stdout = child
@@ -505,15 +586,30 @@ pub(crate) fn run_command_bounded_with_timeout(
         .stderr
         .take()
         .ok_or_else(|| "command stderr pipe was unavailable".to_string())?;
+    let stdout_exceeded = Arc::new(AtomicBool::new(false));
+    let stderr_exceeded = Arc::new(AtomicBool::new(false));
     thread::scope(|scope| {
-        let stdout_reader = scope.spawn(move || read_bounded_output(stdout, max_buffer_bytes));
-        let stderr_reader = scope.spawn(move || read_bounded_output(stderr, max_buffer_bytes));
+        let stdout_reader_exceeded = Arc::clone(&stdout_exceeded);
+        let stderr_reader_exceeded = Arc::clone(&stderr_exceeded);
+        let stdout_reader = scope
+            .spawn(move || read_bounded_output(stdout, max_buffer_bytes, stdout_reader_exceeded));
+        let stderr_reader = scope
+            .spawn(move || read_bounded_output(stderr, max_buffer_bytes, stderr_reader_exceeded));
         let deadline = timeout.map(|duration| Instant::now() + duration);
         let mut timed_out = false;
+        let mut output_exceeded = false;
         let status = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break Ok(status),
                 Ok(None) => {
+                    if kill_on_overflow
+                        && (stdout_exceeded.load(Ordering::Relaxed)
+                            || stderr_exceeded.load(Ordering::Relaxed))
+                    {
+                        output_exceeded = true;
+                        let _ = child.kill();
+                        break child.wait().map_err(|error| error.to_string());
+                    }
                     if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                         timed_out = true;
                         let _ = child.kill();
@@ -536,18 +632,24 @@ pub(crate) fn run_command_bounded_with_timeout(
             .join()
             .map_err(|_| "command stderr reader failed".to_string())?
             .map_err(|error| error.to_string())?;
-        if timed_out {
-            return Err(format!("command timed out after {} ms", timeout.unwrap_or_default().as_millis()));
-        }
-        Ok(Output {
-            status: status?,
-            stdout,
-            stderr,
+        output_exceeded |= stdout.len() > max_buffer_bytes || stderr.len() > max_buffer_bytes;
+        Ok(BoundedCommandOutput {
+            output: Output {
+                status: status?,
+                stdout,
+                stderr,
+            },
+            timed_out,
+            output_exceeded,
         })
     })
 }
 
-fn read_bounded_output(mut reader: impl Read, max_bytes: usize) -> io::Result<Vec<u8>> {
+fn read_bounded_output(
+    mut reader: impl Read,
+    max_bytes: usize,
+    exceeded: Arc<AtomicBool>,
+) -> io::Result<Vec<u8>> {
     let capture_limit = max_bytes.saturating_add(1);
     let mut captured = Vec::with_capacity(capture_limit.min(8_192));
     let mut buffer = [0u8; 8_192];
@@ -556,6 +658,9 @@ fn read_bounded_output(mut reader: impl Read, max_bytes: usize) -> io::Result<Ve
         if read == 0 {
             break;
         }
+        if captured.len().saturating_add(read) > max_bytes {
+            exceeded.store(true, Ordering::Relaxed);
+        }
         let remaining = capture_limit.saturating_sub(captured.len());
         captured.extend_from_slice(&buffer[..read.min(remaining)]);
     }
@@ -563,6 +668,6 @@ fn read_bounded_output(mut reader: impl Read, max_bytes: usize) -> io::Result<Ve
 }
 
 fn normalize_whitespace(value: &str) -> Option<String> {
-    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = super::requirement_shape::normalize_js_whitespace(value);
     (!normalized.is_empty()).then_some(normalized)
 }

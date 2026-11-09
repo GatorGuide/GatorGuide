@@ -5,11 +5,18 @@ use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 pub fn manifest_entry_can_use_graduate_course_codes(entry: &Value) -> bool {
-    let owner_text = ["ownerTitle", "majorTitle", "title", "label", "sourceLabel", "url"]
-        .into_iter()
-        .map(|key| string_field(entry, key))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let owner_text = [
+        "ownerTitle",
+        "majorTitle",
+        "title",
+        "label",
+        "sourceLabel",
+        "url",
+    ]
+    .into_iter()
+    .map(|key| string_field(entry, key))
+    .collect::<Vec<_>>()
+    .join(" ");
     graduate_owner_pattern().is_match(&owner_text)
 }
 
@@ -34,10 +41,11 @@ pub fn is_graduate_cross_listed_companion_for_undergraduate_source(
         .iter()
         .flat_map(|hint| course_parser.extract_from_line(hint))
         .any(|candidate| {
-            course_subject_and_level(&candidate)
-                .is_some_and(|(candidate_subject, candidate_level)| {
+            course_subject_and_level(&candidate).is_some_and(
+                |(candidate_subject, candidate_level)| {
                     candidate_subject == subject && candidate_level < 500
-                })
+                },
+            )
         })
 }
 
@@ -113,12 +121,16 @@ fn source_line_hints(
 }
 
 fn course_subject_and_level(course_code: &str) -> Option<(String, u16)> {
-    let captures = course_code_pattern().captures(&normalize_course_code(course_code))?;
-    Some((captures.get(1)?.as_str().trim().to_string(), captures.get(2)?.as_str().parse().ok()?))
+    let normalized_course_code = normalize_course_code(course_code);
+    let captures = course_code_pattern().captures(&normalized_course_code)?;
+    Some((
+        captures.get(1)?.as_str().trim().to_string(),
+        captures.get(2)?.as_str().parse().ok()?,
+    ))
 }
 
 fn normalize_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::requirement_shape::normalize_js_whitespace(value)
 }
 
 fn string_field(value: &Value, key: &str) -> String {
@@ -129,38 +141,40 @@ fn string_field(value: &Value, key: &str) -> String {
         .to_string()
 }
 
+fn js_compatible_regex(pattern: &str) -> Regex {
+    let compatible_pattern = super::requirement_shape::js_regex_compatibility_pattern(pattern);
+    Regex::new(&compatible_pattern).expect("JavaScript-compatible course-scoping pattern")
+}
+
 fn graduate_owner_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
     VALUE.get_or_init(|| {
-        Regex::new(r"(?i)\b(?:graduate|master|m\.?s\.?|m\.?a\.?|ph\.?d|doctor|certificate)\b")
-            .expect("graduate source owner")
+        js_compatible_regex(
+            r"(?i)\b(?:graduate|master|m\.?s\.?|m\.?a\.?|ph\.?d|doctor|certificate)\b",
+        )
     })
 }
 
 fn course_code_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| {
-        Regex::new(r"^([A-Z& ]+)\s+(\d{3})[A-Z]?$").expect("course subject and level")
-    })
+    VALUE.get_or_init(|| js_compatible_regex(r"^([A-Z& ]+)\s+(\d{3})[A-Z]?$"))
 }
 
 fn english_composition_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\bEnglish composition\b").expect("English composition"))
+    VALUE.get_or_init(|| js_compatible_regex(r"(?i)\bEnglish composition\b"))
 }
 
 fn english_composition_context_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
     VALUE.get_or_init(|| {
-        Regex::new(r"(?i)\b(5 credits of|five credits of|min(?:imum)?(?:\s+course)? requirements?|prerequisite|admission|complete|completed|required|eligibility|preferred)\b")
-            .expect("English composition context")
+        js_compatible_regex(r"(?i)\b(5 credits of|five credits of|min(?:imum)?(?:\s+course)? requirements?|prerequisite|admission|complete|completed|required|eligibility|preferred)\b")
     })
 }
 
 fn english_composition_exclusion_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
     VALUE.get_or_init(|| {
-        Regex::new(r"(?i)\b(additional english composition|except the 5-?credit english composition requirement|writing-intensive|w course|w courses)\b")
-            .expect("English composition exclusion")
+        js_compatible_regex(r"(?i)\b(additional english composition|except the 5-?credit english composition requirement|writing-intensive|w course|w courses)\b")
     })
 }

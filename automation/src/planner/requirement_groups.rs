@@ -3,12 +3,12 @@ use super::requirement_choice_lists::build_forward_labeled_choice_requirement_li
 use super::requirement_course_codes::{CourseCodeParser, normalize_course_code};
 use super::requirement_ids::slugify_requirement_identifier;
 use super::requirement_parse_helpers::{
-    parse_requirement_credit_amount, parse_requirement_credit_range,
+    parse_requirement_course_count, parse_requirement_credit_amount, parse_requirement_credit_range,
 };
 use super::requirement_shape::{
     CHOICE_COUNT_WORDS_PATTERN, CHOICE_LIST_START_PATTERN_SOURCE,
-    CHOICE_REQUIREMENT_LABEL_PATTERN_SOURCE,
-    detect_option_cue, parse_choice_required_count,
+    CHOICE_REQUIREMENT_LABEL_PATTERN_SOURCE, detect_option_cue, js_regex_compatibility_pattern,
+    parse_choice_required_count,
 };
 use serde_json::{Map, Value, json};
 use std::collections::{HashMap, HashSet};
@@ -18,11 +18,13 @@ pub fn is_numbered_option_row_under_choose_one_heading(
     index: usize,
     course_parser: &CourseCodeParser,
 ) -> bool {
-    let normalized_line = normalize_whitespace(
-        &super::requirement_choice_lists::strip_snapshot_page_prefix(
-            snapshot_lines.get(index).map(String::as_str).unwrap_or_default(),
-        ),
-    );
+    let normalized_line =
+        normalize_whitespace(&super::requirement_shape::strip_snapshot_page_prefix(
+            snapshot_lines
+                .get(index)
+                .map(String::as_str)
+                .unwrap_or_default(),
+        ));
     if !numbered_inline_option_row_pattern().is_match(&normalized_line)
         || course_parser
             .extract_from_requirement_line(&normalized_line)
@@ -32,14 +34,13 @@ pub fn is_numbered_option_row_under_choose_one_heading(
     }
     let start = index.saturating_sub(24);
     for candidate_index in (start..=index).rev() {
-        let candidate_line = normalize_whitespace(
-            &super::requirement_choice_lists::strip_snapshot_page_prefix(
+        let candidate_line =
+            normalize_whitespace(&super::requirement_shape::strip_snapshot_page_prefix(
                 snapshot_lines
                     .get(candidate_index)
                     .map(String::as_str)
                     .unwrap_or_default(),
-            ),
-        );
+            ));
         if choose_one_option_heading_pattern().is_match(&candidate_line) {
             return true;
         }
@@ -47,6 +48,7 @@ pub fn is_numbered_option_row_under_choose_one_heading(
             && !numbered_inline_option_row_pattern().is_match(&candidate_line)
             && super::requirement_shape::looks_like_standalone_requirement_title_line(
                 &candidate_line,
+                |line| course_parser.extract_from_line(line),
             )
         {
             return false;
@@ -71,6 +73,33 @@ pub fn looks_like_degree_total_general_elective_prose(text: &str) -> bool {
 
 pub fn looks_like_credit_summary_for_named_requirement_section(text: &str) -> bool {
     named_requirement_credit_summary_pattern().is_match(&normalize_whitespace(text))
+}
+
+pub fn is_non_requirement_sectioned_course_heading(line: &str) -> bool {
+    let normalized_line = normalize_whitespace(line);
+    looks_like_degree_total_general_elective_prose(&normalized_line)
+        || (non_requirement_sectioned_heading_cue_pattern().is_match(&normalized_line)
+            && !non_requirement_sectioned_heading_exception_pattern().is_match(&normalized_line))
+        || (non_requirement_sectioned_advising_note_pattern().is_match(&normalized_line)
+            && non_requirement_sectioned_distribution_context_pattern().is_match(&normalized_line))
+}
+
+pub fn looks_like_broad_requirement_container_heading(line: &str) -> bool {
+    let normalized_line = normalize_whitespace(
+        &super::requirement_choice_lists::strip_choice_list_line(line),
+    );
+    broad_requirement_container_heading_pattern().is_match(&normalized_line)
+        || generic_requirements_heading_pattern().is_match(&normalized_line)
+}
+
+pub fn looks_like_enumerated_section_heading(line: &str, course_parser: &CourseCodeParser) -> bool {
+    let normalized_line = normalize_whitespace(
+        &super::requirement_choice_lists::strip_choice_list_line(line),
+    );
+    enumerated_section_heading_pattern().is_match(&normalized_line)
+        && course_parser
+            .extract_from_requirement_line(&normalized_line)
+            .is_empty()
 }
 
 pub fn build_category_requirement_options_from_credit_bucket(
@@ -111,33 +140,42 @@ pub fn build_category_requirement_options_from_credit_bucket(
     }
     let positive_text = get_positive_credit_bucket_category_text(text);
     let mut seen = HashSet::new();
-    super::requirement_category_options::get_requirement_category_option_descriptors(
-        &positive_text,
-    )
-    .into_iter()
-    .filter_map(|descriptor| {
-        let source_category_code = descriptor
-            .get("sourceCategoryCode")
-            .map(js_string_value)
-            .unwrap_or_else(|| "undefined".to_string());
-        let id_suffix = slugify_requirement_identifier(&format!("{source_category_code}-{text}"));
-        let option = super::requirement_category_options::build_category_requirement_option(&json!({
-            "id": format!("{owner_id}:requirement-option:category-credit-{id_suffix}"),
-            "sourceText": text,
-            "sourceHeading": text,
-            "sourceCategory": "credit-bucket",
-            "descriptor": descriptor,
-            "creditRange": credit_range_value,
-        }))?;
-        let key = format!(
-            "{}:{}:{}",
-            option.pointer("/categoryOption/category").map(js_string_value).unwrap_or_default(),
-            option.pointer("/categoryOption/creditMin").map(js_string_value).unwrap_or_default(),
-            option.pointer("/categoryOption/creditMax").map(js_string_value).unwrap_or_default(),
-        );
-        seen.insert(key).then_some(option)
-    })
-    .collect()
+    super::requirement_category_options::get_requirement_category_option_descriptors(&positive_text)
+        .into_iter()
+        .filter_map(|descriptor| {
+            let source_category_code = descriptor
+                .get("sourceCategoryCode")
+                .map(js_string_value)
+                .unwrap_or_else(|| "undefined".to_string());
+            let id_suffix =
+                slugify_requirement_identifier(&format!("{source_category_code}-{text}"));
+            let option =
+                super::requirement_category_options::build_category_requirement_option(&json!({
+                    "id": format!("{owner_id}:requirement-option:category-credit-{id_suffix}"),
+                    "sourceText": text,
+                    "sourceHeading": text,
+                    "sourceCategory": "credit-bucket",
+                    "descriptor": descriptor,
+                    "creditRange": credit_range_value,
+                }))?;
+            let key = format!(
+                "{}:{}:{}",
+                option
+                    .pointer("/categoryOption/category")
+                    .map(js_string_value)
+                    .unwrap_or_default(),
+                option
+                    .pointer("/categoryOption/creditMin")
+                    .map(js_string_value)
+                    .unwrap_or_default(),
+                option
+                    .pointer("/categoryOption/creditMax")
+                    .map(js_string_value)
+                    .unwrap_or_default(),
+            );
+            seen.insert(key).then_some(option)
+        })
+        .collect()
 }
 
 pub fn build_generic_credit_bucket_requirement_groups(
@@ -156,7 +194,12 @@ pub fn build_generic_credit_bucket_requirement_groups(
             &super::requirement_choice_lists::strip_choice_list_line(raw_line),
         );
         if !has_credit_bucket_cue(&normalized_line, course_parser)
-            || should_skip_credit_bucket_line(snapshot_lines, index, &normalized_line, course_parser)
+            || should_skip_credit_bucket_line(
+                snapshot_lines,
+                index,
+                &normalized_line,
+                course_parser,
+            )
         {
             continue;
         }
@@ -176,12 +219,8 @@ pub fn build_generic_credit_bucket_requirement_groups(
         ) {
             continue;
         }
-        let source_line = build_credit_bucket_source_line(
-            owner,
-            snapshot_lines,
-            index,
-            course_parser,
-        );
+        let source_line =
+            build_credit_bucket_source_line(owner, snapshot_lines, index, course_parser);
         for source_line in split_credit_bucket_source_lines(&source_line) {
             let course_codes =
                 extract_course_codes_from_credit_bucket_text(&source_line, course_parser);
@@ -201,11 +240,8 @@ pub fn build_generic_credit_bucket_requirement_groups(
                 continue;
             };
             let credit_range = Some((minimum_credits, maximum_credits));
-            let program_descriptor = get_program_specific_credit_bucket_descriptor(
-                owner,
-                &source_line,
-                course_parser,
-            );
+            let program_descriptor =
+                get_program_specific_credit_bucket_descriptor(owner, &source_line, course_parser);
             let approved_list_key = get_approved_list_key_from_credit_bucket_text(
                 owner,
                 &source_line,
@@ -457,7 +493,12 @@ pub fn get_parallel_choose_one_heading_subjects(label: &str) -> Vec<String> {
         return vec!["MATH".to_string(), "Q SCI".to_string(), "QSCI".to_string()];
     }
     if parallel_heading_statistics_pattern().is_match(&normalized_label) {
-        return vec!["STAT".to_string(), "BIOST".to_string(), "Q SCI".to_string(), "QSCI".to_string()];
+        return vec![
+            "STAT".to_string(),
+            "BIOST".to_string(),
+            "Q SCI".to_string(),
+            "QSCI".to_string(),
+        ];
     }
     if parallel_heading_physics_pattern().is_match(&normalized_label) {
         return vec!["PHYS".to_string()];
@@ -507,31 +548,43 @@ pub fn build_parallel_choose_one_requirement_groups(
     let mut seen_group_ids = HashSet::new();
     let mut index = 0usize;
     while index + 1 < snapshot_lines.len() {
-        let first_heading = get_parallel_choose_one_heading_label(&snapshot_lines[index], course_parser);
-        let second_heading = get_parallel_choose_one_heading_label(&snapshot_lines[index + 1], course_parser);
+        let first_heading =
+            get_parallel_choose_one_heading_label(&snapshot_lines[index], course_parser);
+        let second_heading =
+            get_parallel_choose_one_heading_label(&snapshot_lines[index + 1], course_parser);
         if first_heading.is_empty() || second_heading.is_empty() {
             index += 1;
             continue;
         }
         let mut headings = vec![
-            (first_heading.clone(), get_parallel_choose_one_heading_subjects(&first_heading), Vec::<(String, Vec<String>)>::new()),
-            (second_heading.clone(), get_parallel_choose_one_heading_subjects(&second_heading), Vec::<(String, Vec<String>)>::new()),
+            (
+                first_heading.clone(),
+                get_parallel_choose_one_heading_subjects(&first_heading),
+                Vec::<(String, Vec<String>)>::new(),
+            ),
+            (
+                second_heading.clone(),
+                get_parallel_choose_one_heading_subjects(&second_heading),
+                Vec::<(String, Vec<String>)>::new(),
+            ),
         ];
         let scan_limit = snapshot_lines.len().min(index.saturating_add(36));
         for row_index in index.saturating_add(2)..scan_limit {
             if row_index > index.saturating_add(3)
-                && !get_parallel_choose_one_heading_label(&snapshot_lines[row_index], course_parser).is_empty()
+                && !get_parallel_choose_one_heading_label(&snapshot_lines[row_index], course_parser)
+                    .is_empty()
                 && snapshot_lines
                     .get(row_index.saturating_add(1))
-                    .is_some_and(|line| !get_parallel_choose_one_heading_label(line, course_parser).is_empty())
+                    .is_some_and(|line| {
+                        !get_parallel_choose_one_heading_label(line, course_parser).is_empty()
+                    })
             {
                 break;
             }
-            let row = normalize_whitespace(
-                &super::requirement_choice_lists::strip_choice_list_line(
+            let row =
+                normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
                     &snapshot_lines[row_index],
-                ),
-            );
+                ));
             if row.is_empty() {
                 continue;
             }
@@ -550,10 +603,9 @@ pub fn build_parallel_choose_one_requirement_groups(
             if course_codes.is_empty() {
                 continue;
             }
-            if let Some((_, _, rows)) = headings
-                .iter_mut()
-                .find(|(_, subjects, _)| heading_subjects_match_course_codes(subjects, &course_codes))
-            {
+            if let Some((_, _, rows)) = headings.iter_mut().find(|(_, subjects, _)| {
+                heading_subjects_match_course_codes(subjects, &course_codes)
+            }) {
                 rows.push((row, course_codes));
             }
         }
@@ -623,15 +675,9 @@ pub fn build_category_credit_bucket_option(group_id: &str, input: &Value) -> Val
         .get("sourceCategoryCode")
         .map(js_string_value)
         .unwrap_or_else(|| "undefined".to_string());
-    let title = input
-        .get("title")
-        .cloned()
-        .unwrap_or(Value::Null);
+    let title = input.get("title").cloned().unwrap_or(Value::Null);
     let credits = input.get("credits").cloned().unwrap_or(Value::Null);
-    let source_text = input
-        .get("sourceText")
-        .cloned()
-        .unwrap_or(Value::Null);
+    let source_text = input.get("sourceText").cloned().unwrap_or(Value::Null);
     let approved_list_key = input
         .get("approvedListKey")
         .filter(|value| !value.is_null())
@@ -666,6 +712,174 @@ pub fn build_category_credit_bucket_option(group_id: &str, input: &Value) -> Val
     })
 }
 
+pub fn get_sbse_comparison_table_scope_lines(
+    entry: &Value,
+    source_lines: &[String],
+    scoped_lines: &[String],
+    course_parser: &CourseCodeParser,
+) -> Vec<String> {
+    if entry.get("planId").and_then(Value::as_str)
+        != Some("uw-seattle-sustainable-bioresource-systems-engineering")
+        || scoped_lines
+            .iter()
+            .any(|line| sbse_comparison_table_heading_pattern().is_match(line))
+    {
+        return Vec::new();
+    }
+    let Some(start_index) = source_lines.iter().position(|line| {
+        sbse_comparison_table_heading_pattern().is_match(&normalize_whitespace(
+            &super::requirement_choice_lists::strip_choice_list_line(line),
+        ))
+    }) else {
+        return Vec::new();
+    };
+    let mut end_index = source_lines
+        .len()
+        .saturating_sub(1)
+        .min(start_index.saturating_add(120));
+    for index in start_index.saturating_add(20)..=end_index {
+        let line = normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+            &source_lines[index],
+        ));
+        if sbse_comparison_table_end_pattern().is_match(&line) {
+            end_index = index.saturating_sub(1);
+            break;
+        }
+    }
+
+    let comparison_lines = &source_lines[start_index..=end_index];
+    let mut sbse_lines = Vec::new();
+    let mut in_paired_requirement_rows = false;
+    let mut expect_bse_row = true;
+    let mut skip_next_line = false;
+    for index in 0..comparison_lines.len() {
+        if skip_next_line {
+            skip_next_line = false;
+            continue;
+        }
+        let line = normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+            &comparison_lines[index],
+        ));
+        let next_line = comparison_lines
+            .get(index + 1)
+            .map(|next| {
+                normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+                    next,
+                ))
+            })
+            .unwrap_or_default();
+        if line.is_empty() {
+            continue;
+        }
+        if bse_major_requirements_heading_pattern().is_match(&line)
+            && sbse_major_requirements_heading_pattern().is_match(&next_line)
+        {
+            sbse_lines.push(next_line);
+            in_paired_requirement_rows = true;
+            expect_bse_row = true;
+            skip_next_line = true;
+            continue;
+        }
+        if !in_paired_requirement_rows {
+            sbse_lines.push(line);
+            continue;
+        }
+        if course_parser.extract_from_line(&line).is_empty()
+            && sbse_comparison_table_section_label_pattern().is_match(&line)
+        {
+            sbse_lines.push(line);
+            expect_bse_row = true;
+            continue;
+        }
+        if expect_bse_row {
+            expect_bse_row = false;
+        } else {
+            sbse_lines.push(line);
+            expect_bse_row = true;
+        }
+    }
+
+    let course_code_count = sbse_lines
+        .iter()
+        .flat_map(|line| course_parser.extract_from_line(line))
+        .collect::<HashSet<_>>()
+        .len();
+    if course_code_count >= 8 {
+        sbse_lines
+    } else {
+        Vec::new()
+    }
+}
+
+pub fn append_sbse_comparison_table_scope_lines(
+    entry: &Value,
+    source_lines: &[String],
+    scoped_lines: &[String],
+    course_parser: &CourseCodeParser,
+) -> Vec<String> {
+    let supplemental_lines =
+        get_sbse_comparison_table_scope_lines(entry, source_lines, scoped_lines, course_parser);
+    if supplemental_lines.is_empty() {
+        return scoped_lines.to_vec();
+    }
+    scoped_lines
+        .iter()
+        .cloned()
+        .chain(std::iter::once(
+            "[Supplemental official source] SBSE comparison table".to_string(),
+        ))
+        .chain(supplemental_lines)
+        .collect()
+}
+
+fn sbse_comparison_table_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        let pattern = js_regex_compatibility_pattern(r"(?i)Comparison Table:\s*BSE\s+vs\s+SBSE");
+        regex::Regex::new(&pattern).expect("SBSE comparison table heading")
+    })
+}
+
+fn sbse_comparison_table_end_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        let pattern = js_regex_compatibility_pattern(
+            r"(?i)^(?:Expand/contract subsection|Apply to the major|Admissions)\b",
+        );
+        regex::Regex::new(&pattern).expect("SBSE comparison table end")
+    })
+}
+
+fn bse_major_requirements_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^BSE Major Requirements?$",
+        ))
+        .expect("BSE major requirements heading")
+    })
+}
+
+fn sbse_major_requirements_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^SBSE Major Requirements?$",
+        ))
+        .expect("SBSE major requirements heading")
+    })
+}
+
+fn sbse_comparison_table_section_label_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        let pattern = js_regex_compatibility_pattern(
+            r"(?i)^(?:Basic Skills|Areas of Inquiry|Core Engineering Requirements|Elective Requirement|Note:|Back to Top|Students|Undergraduate Programs)\b",
+        );
+        regex::Regex::new(&pattern).expect("SBSE comparison table section label")
+    })
+}
+
 pub fn build_sbse_comparison_table_requirement_groups(
     owner: &Value,
     snapshot_lines: &[String],
@@ -675,9 +889,8 @@ pub fn build_sbse_comparison_table_requirement_groups(
     {
         return Vec::new();
     }
-    let snapshot_text = super::requirement_recovery_scope::normalize_matcher_text(
-        &snapshot_lines.join(" "),
-    );
+    let snapshot_text =
+        super::requirement_recovery_scope::normalize_matcher_text(&snapshot_lines.join(" "));
     if !sbse_comparison_table_snapshot_pattern().is_match(&snapshot_text) {
         return Vec::new();
     }
@@ -691,11 +904,9 @@ pub fn build_sbse_comparison_table_requirement_groups(
         .unwrap_or_else(|| "undefined".to_string());
     let mut groups = Vec::new();
     if let Some(line) = snapshot_lines.iter().find(|line| {
-        sbse_engineering_elective_line_pattern().is_match(
-            &normalize_whitespace(
-                &super::requirement_choice_lists::strip_choice_list_line(line),
-            ),
-        )
+        sbse_engineering_elective_line_pattern().is_match(&normalize_whitespace(
+            &super::requirement_choice_lists::strip_choice_list_line(line),
+        ))
     }) {
         let source_heading = normalize_whitespace(
             &super::requirement_choice_lists::strip_choice_list_line(line),
@@ -819,17 +1030,19 @@ pub fn build_sbse_comparison_table_requirement_groups(
         let group_id = format!("{owner_id}:requirement-group:sbse-statistics");
         let options = ["QSCI 381", "INDE 315", "STAT 390"]
             .into_iter()
-            .map(|course_code| json!({
-                "id": format!(
-                    "{owner_id}:requirement-option:{}",
-                    slugify_requirement_identifier(course_code)
-                ),
-                "uwCourses": [course_code],
-                "displayCourseCodes": [course_code],
-                "label": course_code,
-                "sourceHeading": source_heading,
-                "sourceCategory": "statistics",
-            }))
+            .map(|course_code| {
+                json!({
+                    "id": format!(
+                        "{owner_id}:requirement-option:{}",
+                        slugify_requirement_identifier(course_code)
+                    ),
+                    "uwCourses": [course_code],
+                    "displayCourseCodes": [course_code],
+                    "label": course_code,
+                    "sourceHeading": source_heading,
+                    "sourceCategory": "statistics",
+                })
+            })
             .collect::<Vec<_>>();
         groups.push(build_parsed_requirement_group(&json!({
             "id": group_id,
@@ -879,21 +1092,23 @@ pub fn build_sbse_comparison_table_requirement_groups(
         ]);
         let sequence_options = array(Some(&sequence_paths))
             .iter()
-            .map(|path| json!({
-                "id": format!(
-                    "{owner_id}:requirement-option:{}",
-                    slugify_requirement_identifier(&js_string_nullish(path.get("id")))
-                ),
-                "sequencePathId": path.get("id"),
-                "pathLabel": path.get("label"),
-                "uwCourses": path.get("uwCourses"),
-                "displayCourseCodes": path.get("displayCourseCodes"),
-                "conditionalLabCourses": path.get("conditionalLabCourses"),
-                "notes": path.get("notes"),
-                "label": path.get("label"),
-                "sourceHeading": source_heading,
-                "sourceCategory": "physics",
-            }))
+            .map(|path| {
+                json!({
+                    "id": format!(
+                        "{owner_id}:requirement-option:{}",
+                        slugify_requirement_identifier(&js_string_nullish(path.get("id")))
+                    ),
+                    "sequencePathId": path.get("id"),
+                    "pathLabel": path.get("label"),
+                    "uwCourses": path.get("uwCourses"),
+                    "displayCourseCodes": path.get("displayCourseCodes"),
+                    "conditionalLabCourses": path.get("conditionalLabCourses"),
+                    "notes": path.get("notes"),
+                    "label": path.get("label"),
+                    "sourceHeading": source_heading,
+                    "sourceCategory": "physics",
+                })
+            })
             .collect::<Vec<_>>();
         groups.push(build_parsed_requirement_group(&json!({
             "id": group_id,
@@ -912,8 +1127,7 @@ pub fn build_sbse_comparison_table_requirement_groups(
     groups
         .into_iter()
         .filter(|group| {
-            !array(group.get("options")).is_empty()
-                || !array(group.get("sequencePaths")).is_empty()
+            !array(group.get("options")).is_empty() || !array(group.get("sequencePaths")).is_empty()
         })
         .collect()
 }
@@ -924,11 +1138,12 @@ pub fn find_nearest_supplemental_source_marker(
 ) -> Option<String> {
     let mut index = line_index?;
     loop {
-        let line = normalize_whitespace(
-            &super::requirement_choice_lists::strip_choice_list_line(
-                snapshot_lines.get(index).map(String::as_str).unwrap_or_default(),
-            ),
-        );
+        let line = normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+            snapshot_lines
+                .get(index)
+                .map(String::as_str)
+                .unwrap_or_default(),
+        ));
         if supplemental_official_source_marker_pattern().is_match(&line) {
             return Some(line);
         }
@@ -950,11 +1165,12 @@ pub fn is_requirement_group_under_support_course_list(
     };
     let start_index = line_index.saturating_sub(28);
     for index in (start_index..=line_index).rev() {
-        let line = normalize_whitespace(
-            &super::requirement_choice_lists::strip_choice_list_line(
-                snapshot_lines.get(index).map(String::as_str).unwrap_or_default(),
-            ),
-        );
+        let line = normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+            snapshot_lines
+                .get(index)
+                .map(String::as_str)
+                .unwrap_or_default(),
+        ));
         if line.is_empty() {
             continue;
         }
@@ -1056,7 +1272,8 @@ pub fn find_snapshot_line_index_for_requirement_group(
         let source_heading = js_string_nullish(group.get("sourceHeading"));
         let source_row = js_string_nullish(group.get("sourceRowText"));
         let option_cue = js_string_nullish(group.get("detectedOptionCue"));
-        split_choice_source_pattern().is_match(&format!("{source_heading} {source_row} {option_cue}"))
+        split_choice_source_pattern()
+            .is_match(&format!("{source_heading} {source_row} {option_cue}"))
     };
     if source_looks_like_split_or_choice {
         if let Some((index, _)) = snapshot_lines.iter().enumerate().find(|(index, line)| {
@@ -1094,7 +1311,9 @@ pub fn find_snapshot_line_index_for_requirement_group(
     }
     snapshot_lines.iter().enumerate().find_map(|(index, line)| {
         let current_codes = course_parser
-            .extract_from_line(&super::requirement_choice_lists::strip_choice_list_line(line))
+            .extract_from_line(&super::requirement_choice_lists::strip_choice_list_line(
+                line,
+            ))
             .into_iter()
             .map(|course_code| normalize_course_code(&course_code))
             .collect::<Vec<_>>();
@@ -1131,7 +1350,9 @@ pub fn get_requirement_option_course_code_set(option: &Value) -> HashSet<String>
 pub fn suppress_choice_groups_covered_by_credit_buckets(groups: &[Value]) -> Vec<Value> {
     let credit_bucket_groups = groups
         .iter()
-        .filter(|group| group.get("requirementType").and_then(Value::as_str) == Some("choose_credits"))
+        .filter(|group| {
+            group.get("requirementType").and_then(Value::as_str) == Some("choose_credits")
+        })
         .collect::<Vec<_>>();
     let credit_bucket_groups_by_source = credit_bucket_groups
         .iter()
@@ -1198,10 +1419,14 @@ pub fn suppress_choice_groups_covered_by_credit_buckets(groups: &[Value]) -> Vec
                     .collect::<HashSet<_>>();
                 if !source_key.is_empty()
                     && !code_set.is_empty()
-                    && credit_bucket_groups_by_source.iter().any(|(bucket_source, bucket_codes)| {
-                        bucket_source == &source_key
-                            && code_set.iter().all(|course_code| bucket_codes.contains(course_code))
-                    })
+                    && credit_bucket_groups_by_source
+                        .iter()
+                        .any(|(bucket_source, bucket_codes)| {
+                            bucket_source == &source_key
+                                && code_set
+                                    .iter()
+                                    .all(|course_code| bucket_codes.contains(course_code))
+                        })
                 {
                     return false;
                 }
@@ -1216,10 +1441,14 @@ pub fn suppress_choice_groups_covered_by_credit_buckets(groups: &[Value]) -> Vec
                 .collect::<HashSet<_>>();
             if !source_key.is_empty()
                 && !category_set.is_empty()
-                && credit_bucket_category_sets_by_source.iter().any(|(bucket_source, bucket_categories)| {
-                    bucket_source == &source_key
-                        && category_set.iter().all(|category| bucket_categories.contains(category))
-                })
+                && credit_bucket_category_sets_by_source.iter().any(
+                    |(bucket_source, bucket_categories)| {
+                        bucket_source == &source_key
+                            && category_set
+                                .iter()
+                                .all(|category| bucket_categories.contains(category))
+                    },
+                )
             {
                 return false;
             }
@@ -1232,10 +1461,14 @@ pub fn suppress_choice_groups_covered_by_credit_buckets(groups: &[Value]) -> Vec
             }
             !credit_bucket_option_code_sets.iter().any(|bucket_codes| {
                 bucket_codes.len() == code_set.len()
-                    && code_set.iter().all(|course_code| bucket_codes.contains(course_code))
+                    && code_set
+                        .iter()
+                        .all(|course_code| bucket_codes.contains(course_code))
             }) && !credit_bucket_group_code_sets.iter().any(|bucket_codes| {
                 bucket_codes.len() > code_set.len()
-                    && code_set.iter().all(|course_code| bucket_codes.contains(course_code))
+                    && code_set
+                        .iter()
+                        .all(|course_code| bucket_codes.contains(course_code))
             })
         })
         .cloned()
@@ -1256,7 +1489,11 @@ fn requirement_option_category_matcher_key(option: &Value) -> Option<String> {
     let source = category_option
         .get("sourceCategoryCode")
         .filter(|value| !value.is_null())
-        .or_else(|| category_option.get("category").filter(|value| !value.is_null()))?;
+        .or_else(|| {
+            category_option
+                .get("category")
+                .filter(|value| !value.is_null())
+        })?;
     let category = normalize_whitespace(&js_string_value(source)).to_uppercase();
     (!category.is_empty()).then_some(category)
 }
@@ -1329,12 +1566,14 @@ pub fn suppress_repeated_required_alternative_groups_covered_by_sequence_choices
 ) -> Vec<Value> {
     let sequence_path_source_texts = groups
         .iter()
-        .filter(|group| group.get("requirementType").and_then(Value::as_str) == Some("sequence_choice"))
+        .filter(|group| {
+            group.get("requirementType").and_then(Value::as_str) == Some("sequence_choice")
+        })
         .flat_map(|group| array(group.get("sequencePaths")))
         .map(|path| {
-            super::requirement_recovery_scope::normalize_matcher_text(
-                &js_string_nullish(path.get("sourceText")),
-            )
+            super::requirement_recovery_scope::normalize_matcher_text(&js_string_nullish(
+                path.get("sourceText"),
+            ))
         })
         .filter(|source| !source.is_empty())
         .collect::<HashSet<_>>();
@@ -1344,8 +1583,7 @@ pub fn suppress_repeated_required_alternative_groups_covered_by_sequence_choices
     groups
         .iter()
         .filter(|group| {
-            if group.get("subcategory").and_then(Value::as_str)
-                != Some("required-alternative-slot")
+            if group.get("subcategory").and_then(Value::as_str) != Some("required-alternative-slot")
             {
                 return true;
             }
@@ -1369,7 +1607,12 @@ pub fn get_choice_requirement_group_course_set_key(group: &Value) -> String {
             .flat_map(|option| {
                 ["uwCourses", "equivalentUwCourseCodes", "displayCourseCodes"]
                     .into_iter()
-                    .flat_map(|key| array(option.get(key)).iter().map(js_string_value).collect::<Vec<_>>())
+                    .flat_map(|key| {
+                        array(option.get(key))
+                            .iter()
+                            .map(js_string_value)
+                            .collect::<Vec<_>>()
+                    })
             })
             .map(|course_code| normalize_course_code(&course_code))
             .filter(|course_code| !course_code.is_empty())
@@ -1398,16 +1641,15 @@ pub fn get_source_choice_requirement_group_scope_key(group: &Value) -> String {
     if !is_source_choice_requirement_group(group) {
         return String::new();
     }
-    let label_key = super::requirement_recovery_scope::normalize_matcher_text(
-        &js_string_nullish(group.get("label")),
-    );
+    let label_key = super::requirement_recovery_scope::normalize_matcher_text(&js_string_nullish(
+        group.get("label"),
+    ));
     let source_value = group
         .get("sourceRowText")
         .filter(|value| !value.is_null())
         .or_else(|| group.get("sourceHeading").filter(|value| !value.is_null()));
-    let source_key = super::requirement_recovery_scope::normalize_matcher_text(
-        &js_string_nullish(source_value),
-    );
+    let source_key =
+        super::requirement_recovery_scope::normalize_matcher_text(&js_string_nullish(source_value));
     if label_key.is_empty() || source_key.is_empty() {
         return String::new();
     }
@@ -1422,7 +1664,10 @@ pub fn get_source_choice_requirement_group_scope_key(group: &Value) -> String {
         });
     format!(
         "{}:{}:{}:{}",
-        group.get("requirementType").and_then(Value::as_str).unwrap_or_default(),
+        group
+            .get("requirementType")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
         js_string_nullish(required_count),
         label_key,
         source_key
@@ -1487,7 +1732,10 @@ pub fn looks_like_merged_pdf_choice_fragment_group(group: &Value) -> bool {
     if source_text.is_empty() {
         return false;
     }
-    merged_pdf_labeled_choice_pattern().find_iter(&source_text).count() >= 2
+    merged_pdf_labeled_choice_pattern()
+        .find_iter(&source_text)
+        .count()
+        >= 2
         && merged_pdf_choice_fragment_cue_pattern().is_match(&source_text)
 }
 
@@ -1534,16 +1782,19 @@ pub fn suppress_generic_choice_groups_covered_by_inline_choices(groups: &[Value]
         .collect()
 }
 
-pub fn suppress_owner_specific_requirement_group_leaks(owner: &Value, groups: &[Value]) -> Vec<Value> {
-    if owner.get("planId").and_then(Value::as_str) != Some("uw-seattle-public-health-global-health") {
+pub fn suppress_owner_specific_requirement_group_leaks(
+    owner: &Value,
+    groups: &[Value],
+) -> Vec<Value> {
+    if owner.get("planId").and_then(Value::as_str) != Some("uw-seattle-public-health-global-health")
+    {
         return groups.to_vec();
     }
-    let has_natural_science_subject_choices = groups
-        .iter()
-        .any(|group| public_health_biology_choice_pattern().is_match(&js_string_nullish(group.get("label"))))
-        && groups
-            .iter()
-            .any(|group| public_health_chemistry_choice_pattern().is_match(&js_string_nullish(group.get("label"))));
+    let has_natural_science_subject_choices = groups.iter().any(|group| {
+        public_health_biology_choice_pattern().is_match(&js_string_nullish(group.get("label")))
+    }) && groups.iter().any(|group| {
+        public_health_chemistry_choice_pattern().is_match(&js_string_nullish(group.get("label")))
+    });
     groups
         .iter()
         .filter(|group| {
@@ -1596,34 +1847,44 @@ pub fn coalesce_sectioned_credit_buckets_with_inline_choices(
         if bucket_course_codes.len() < 2 {
             continue;
         }
-        let choice_index = groups.iter().enumerate().position(|(candidate_index, candidate)| {
-            if candidate_index == bucket_index
-                || consumed_indexes.contains(&candidate_index)
-                || candidate.get("requirementType").and_then(Value::as_str) != Some("choose_one")
-                || candidate.get("category").and_then(Value::as_str) != Some("source-choice")
-            {
-                return false;
-            }
-            let source_text = candidate
-                .get("sourceRowText")
-                .filter(|value| !value.is_null())
-                .or_else(|| candidate.get("sourceHeading").filter(|value| !value.is_null()));
-            if !inline_or_cue_pattern().is_match(&js_string_nullish(source_text)) {
-                return false;
-            }
-            let choice_course_codes = unique_in_order(
-                array(candidate.get("options"))
-                    .iter()
-                    .flat_map(|option| array(option.get("uwCourses")).iter().map(js_string_value))
-                    .map(|course_code| normalize_course_code(&course_code))
-                    .filter(|course_code| !course_code.is_empty())
-                    .collect(),
-            );
-            choice_course_codes.len() >= 2
-                && choice_course_codes
-                    .iter()
-                    .any(|course_code| bucket_course_codes.contains(course_code))
-        });
+        let choice_index = groups
+            .iter()
+            .enumerate()
+            .position(|(candidate_index, candidate)| {
+                if candidate_index == bucket_index
+                    || consumed_indexes.contains(&candidate_index)
+                    || candidate.get("requirementType").and_then(Value::as_str)
+                        != Some("choose_one")
+                    || candidate.get("category").and_then(Value::as_str) != Some("source-choice")
+                {
+                    return false;
+                }
+                let source_text = candidate
+                    .get("sourceRowText")
+                    .filter(|value| !value.is_null())
+                    .or_else(|| {
+                        candidate
+                            .get("sourceHeading")
+                            .filter(|value| !value.is_null())
+                    });
+                if !inline_or_cue_pattern().is_match(&js_string_nullish(source_text)) {
+                    return false;
+                }
+                let choice_course_codes = unique_in_order(
+                    array(candidate.get("options"))
+                        .iter()
+                        .flat_map(|option| {
+                            array(option.get("uwCourses")).iter().map(js_string_value)
+                        })
+                        .map(|course_code| normalize_course_code(&course_code))
+                        .filter(|course_code| !course_code.is_empty())
+                        .collect(),
+                );
+                choice_course_codes.len() >= 2
+                    && choice_course_codes
+                        .iter()
+                        .any(|course_code| bucket_course_codes.contains(course_code))
+            });
         let Some(choice_index) = choice_index else {
             continue;
         };
@@ -1732,7 +1993,8 @@ pub fn finalize_parsed_requirement_groups(
         primary_major_titles,
         course_parser,
     );
-    let groups = coalesce_sectioned_credit_buckets_with_inline_choices(owner, &groups, course_parser);
+    let groups =
+        coalesce_sectioned_credit_buckets_with_inline_choices(owner, &groups, course_parser);
     let groups = suppress_inline_required_groups_covered_by_choice_options(&groups);
     let groups = suppress_repeated_required_alternative_groups_covered_by_sequence_choices(&groups);
     let groups = suppress_generic_choice_groups_covered_by_inline_choices(&groups);
@@ -1762,12 +2024,11 @@ pub fn get_credit_bucket_dedupe_key(group: &Value) -> Option<String> {
         .filter(|value| !value.is_null())
         .or_else(|| group.get("sourceHeading").filter(|value| !value.is_null()))
         .or_else(|| group.get("label").filter(|value| !value.is_null()));
-    let normalized_text = super::requirement_recovery_scope::normalize_matcher_text(
-        &js_string_nullish(source_value),
-    )
-    .chars()
-    .take(100)
-    .collect::<String>();
+    let normalized_text =
+        super::requirement_recovery_scope::normalize_matcher_text(&js_string_nullish(source_value))
+            .chars()
+            .take(100)
+            .collect::<String>();
     if normalized_text.is_empty() {
         return None;
     }
@@ -1811,35 +2072,53 @@ pub fn choose_preferred_requirement_group(existing: &Value, candidate: &Value) -
             existing.clone()
         };
     }
-    let existing_program_specific = requirement_group_has_program_specific_category_option(existing);
-    let candidate_program_specific = requirement_group_has_program_specific_category_option(candidate);
+    let existing_program_specific =
+        requirement_group_has_program_specific_category_option(existing);
+    let candidate_program_specific =
+        requirement_group_has_program_specific_category_option(candidate);
     if existing_program_specific != candidate_program_specific {
-        return if candidate_program_specific { candidate.clone() } else { existing.clone() };
+        return if candidate_program_specific {
+            candidate.clone()
+        } else {
+            existing.clone()
+        };
     }
-    let existing_category_option = array(existing.get("options")).iter().any(|option| {
-        option.get("categoryOption").is_some_and(js_truthy)
-    });
-    let candidate_category_option = array(candidate.get("options")).iter().any(|option| {
-        option.get("categoryOption").is_some_and(js_truthy)
-    });
+    let existing_category_option = array(existing.get("options"))
+        .iter()
+        .any(|option| option.get("categoryOption").is_some_and(js_truthy));
+    let candidate_category_option = array(candidate.get("options"))
+        .iter()
+        .any(|option| option.get("categoryOption").is_some_and(js_truthy));
     if existing_category_option != candidate_category_option
         && (candidate_program_specific || existing_program_specific)
     {
-        return if candidate_category_option { candidate.clone() } else { existing.clone() };
+        return if candidate_category_option {
+            candidate.clone()
+        } else {
+            existing.clone()
+        };
     }
     let existing_approved = existing.get("approvedListKey").is_some_and(js_truthy);
     let candidate_approved = candidate.get("approvedListKey").is_some_and(js_truthy);
     if existing_approved != candidate_approved
         && (candidate_program_specific || existing_program_specific)
     {
-        return if candidate_approved { candidate.clone() } else { existing.clone() };
+        return if candidate_approved {
+            candidate.clone()
+        } else {
+            existing.clone()
+        };
     }
     let existing_placeholder = existing.get("canCreatePlaceholder").is_some_and(js_truthy);
     let candidate_placeholder = candidate.get("canCreatePlaceholder").is_some_and(js_truthy);
     if existing_placeholder != candidate_placeholder
         && (candidate_program_specific || existing_program_specific)
     {
-        return if candidate_placeholder { candidate.clone() } else { existing.clone() };
+        return if candidate_placeholder {
+            candidate.clone()
+        } else {
+            existing.clone()
+        };
     }
     let existing_option_count = array(existing.get("options")).len();
     let candidate_option_count = array(candidate.get("options")).len();
@@ -1875,7 +2154,8 @@ fn has_parenthetical_sequence_choice_candidate(
     source_line: &str,
     course_parser: &CourseCodeParser,
 ) -> bool {
-    let normalized_line = super::requirement_choice_lists::normalize_sequence_source_line(source_line);
+    let normalized_line =
+        super::requirement_choice_lists::normalize_sequence_source_line(source_line);
     if !parenthetical_sequence_or_marker_pattern().is_match(&normalized_line) {
         return false;
     }
@@ -1887,7 +2167,10 @@ fn has_parenthetical_sequence_choice_candidate(
         if left_courses.len() < 2 {
             continue;
         }
-        let Some(subject) = left_courses[0].rsplit_once(' ').map(|(subject, _)| subject.to_string()) else {
+        let Some(subject) = left_courses[0]
+            .rsplit_once(' ')
+            .map(|(subject, _)| subject.to_string())
+        else {
             continue;
         };
         let right_explicit_courses = course_parser.extract_from_line(right_text.as_str());
@@ -1918,7 +2201,9 @@ pub fn extract_course_codes_from_credit_bucket_text(
     let mut course_codes = Vec::new();
     for captures in credit_bucket_explicit_course_pattern().captures_iter(text) {
         if let (Some(subject), Some(number)) = (captures.get(1), captures.get(2)) {
-            if let Some(course_code) = course_parser.normalize_code(subject.as_str(), number.as_str()) {
+            if let Some(course_code) =
+                course_parser.normalize_code(subject.as_str(), number.as_str())
+            {
                 course_codes.push(course_code);
             }
         }
@@ -1994,8 +2279,7 @@ pub fn build_credit_bucket_source_line(
         vec![initial_line.clone()]
     };
     let first_line = normalize_pdf_requirement_heading_line(&parts.join(" "));
-    let first_line_was_trimmed =
-        first_line != normalize_whitespace(&initial_line);
+    let first_line_was_trimmed = first_line != normalize_whitespace(&initial_line);
     if !super::requirement_rule_utils::should_join_credit_bucket_continuation(&first_line)
         || first_line_was_trimmed
     {
@@ -2040,7 +2324,10 @@ pub fn split_credit_bucket_source_lines(source_line: &str) -> Vec<String> {
         {
             let previous = parts.pop().unwrap_or_default();
             let continuation = credit_bucket_leading_and_pattern().replace(&part, "");
-            parts.push(format!("{previous}, {}", normalize_whitespace(&continuation)));
+            parts.push(format!(
+                "{previous}, {}",
+                normalize_whitespace(&continuation)
+            ));
         } else {
             parts.push(part);
         }
@@ -2074,10 +2361,7 @@ pub fn split_credit_bucket_source_lines(source_line: &str) -> Vec<String> {
         .collect()
 }
 
-fn looks_like_sibling_credit_bucket_boundary(
-    line: &str,
-    course_parser: &CourseCodeParser,
-) -> bool {
+fn looks_like_sibling_credit_bucket_boundary(line: &str, course_parser: &CourseCodeParser) -> bool {
     let normalized_line = normalize_whitespace(
         &super::requirement_choice_lists::strip_choice_list_line(line),
     );
@@ -2172,12 +2456,9 @@ pub fn get_program_specific_credit_bucket_descriptor(
     course_parser: &CourseCodeParser,
 ) -> Option<Value> {
     let normalized_text = normalize_whitespace(text);
-    super::requirement_rule_utils::detect_program_approved_credit_bucket(
-        &normalized_text,
-        owner,
-    )
-    .or_else(|| detect_subject_prefix_credit_bucket(owner, &normalized_text, course_parser))
-    .or_else(|| detect_program_elective_credit_bucket(owner, &normalized_text))
+    super::requirement_rule_utils::detect_program_approved_credit_bucket(&normalized_text, owner)
+        .or_else(|| detect_subject_prefix_credit_bucket(owner, &normalized_text, course_parser))
+        .or_else(|| detect_program_elective_credit_bucket(owner, &normalized_text))
 }
 
 pub fn detect_subject_prefix_credit_bucket(
@@ -2192,8 +2473,8 @@ pub fn detect_subject_prefix_credit_bucket(
     let subject_prefix =
         extract_subject_prefix_from_credit_bucket_text(&normalized_text, course_parser)?;
     let campus_id = js_string_nullish(owner.get("campusId"));
-    let approved_courses = course_parser
-        .metadata_course_codes_for_subject_prefix(&campus_id, &subject_prefix);
+    let approved_courses =
+        course_parser.metadata_course_codes_for_subject_prefix(&campus_id, &subject_prefix);
     if approved_courses.is_empty() {
         return None;
     }
@@ -2255,8 +2536,8 @@ pub fn get_approved_list_key_from_credit_bucket_text(
 
 pub fn get_positive_credit_bucket_category_text(text: &str) -> String {
     let normalized_text = normalize_whitespace(text);
-    let without_overlap_note = credit_bucket_overlap_note_pattern()
-        .replace_all(&normalized_text, "");
+    let without_overlap_note =
+        credit_bucket_overlap_note_pattern().replace_all(&normalized_text, "");
     let positive_text = normalize_whitespace(
         &credit_bucket_overlap_tail_pattern().replace(&without_overlap_note, ""),
     );
@@ -2272,11 +2553,12 @@ pub fn next_line_looks_like_course_list_for_heading(
     index: usize,
     course_parser: &CourseCodeParser,
 ) -> bool {
-    let next_line = normalize_whitespace(
-        &super::requirement_choice_lists::strip_choice_list_line(
-            snapshot_lines.get(index.saturating_add(1)).map(String::as_str).unwrap_or_default(),
-        ),
-    );
+    let next_line = normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+        snapshot_lines
+            .get(index.saturating_add(1))
+            .map(String::as_str)
+            .unwrap_or_default(),
+    ));
     course_parser.extract_from_line(&next_line).len() >= 2
         && next_line_course_list_delimiter_pattern().is_match(&next_line)
 }
@@ -2299,9 +2581,9 @@ pub fn is_approved_list_placeholder_without_immediate_course_list(
         .skip(index.saturating_add(1))
         .take(3)
         .map(|candidate| {
-            normalize_whitespace(
-                &super::requirement_choice_lists::strip_choice_list_line(candidate),
-            )
+            normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+                candidate,
+            ))
         })
         .find(|candidate| !candidate.is_empty())
         .unwrap_or_default();
@@ -2508,9 +2790,9 @@ pub fn should_skip_raw_partial_choice_line(
     if !has_own_choice_context {
         return true;
     }
-    choice_list_start_pattern().is_match(
-        &super::requirement_choice_lists::strip_choice_list_line(normalized_line),
-    ) && !choice_line_trailing_parenthesis_pattern().is_match(normalized_line)
+    choice_list_start_pattern().is_match(&super::requirement_choice_lists::strip_choice_list_line(
+        normalized_line,
+    )) && !choice_line_trailing_parenthesis_pattern().is_match(normalized_line)
 }
 
 pub fn get_choice_requirement_group_label(
@@ -2518,7 +2800,8 @@ pub fn get_choice_requirement_group_label(
     course_codes: &[String],
     course_parser: &CourseCodeParser,
 ) -> String {
-    let line_without_page = super::requirement_choice_lists::strip_choice_list_line(normalized_line);
+    let line_without_page =
+        super::requirement_choice_lists::strip_choice_list_line(normalized_line);
     if let Some(match_start) = parenthetical_choice_group_label_pattern()
         .find(&line_without_page)
         .map(|matched| matched.start())
@@ -2542,7 +2825,9 @@ pub fn get_choice_requirement_group_label(
             && course_parser.extract_from_line(&prefix).is_empty()
             && choice_requirement_label_pattern().is_match(&prefix)
         {
-            return normalize_whitespace(&trailing_group_label_punctuation_pattern().replace_all(&prefix, ""));
+            return normalize_whitespace(
+                &trailing_group_label_punctuation_pattern().replace_all(&prefix, ""),
+            );
         }
     }
     if normalized_line.encode_utf16().count() <= 120 {
@@ -2568,7 +2853,8 @@ pub fn build_forward_labeled_choice_requirement_groups(
         .get("ownerId")
         .map(js_string_value)
         .unwrap_or_else(|| "undefined".to_string());
-    for source_line in build_forward_labeled_choice_requirement_lines(snapshot_lines, course_parser) {
+    for source_line in build_forward_labeled_choice_requirement_lines(snapshot_lines, course_parser)
+    {
         let normalized_line = normalize_whitespace(
             &super::requirement_choice_lists::strip_choice_list_line(&source_line),
         );
@@ -2637,7 +2923,11 @@ pub fn build_forward_labeled_choice_requirement_groups(
         group_input.insert("category".into(), json!("source-choice"));
         group_input.insert(
             "requirementType".into(),
-            json!(if required_count > 1 { "choose_n" } else { "choose_one" }),
+            json!(if required_count > 1 {
+                "choose_n"
+            } else {
+                "choose_one"
+            }),
         );
         group_input.insert("minCourses".into(), json!(required_count));
         group_input.insert("maxCourses".into(), json!(required_count));
@@ -2645,6 +2935,318 @@ pub fn build_forward_labeled_choice_requirement_groups(
         group_input.insert("requiredCount".into(), json!(required_count));
         group_input.insert("options".into(), json!(options));
         let group = build_parsed_requirement_group(&Value::Object(group_input));
+        if array(group.get("options")).is_empty() {
+            continue;
+        }
+        let group_id = group.get("id").map(js_string_value).unwrap_or_default();
+        seen_group_ids.insert(group_id);
+        groups.push(group);
+    }
+    groups
+}
+
+pub fn build_generic_choice_requirement_groups(
+    owner: &Value,
+    parsed_course_codes: &[String],
+    snapshot_lines: &[String],
+    course_parser: &CourseCodeParser,
+) -> Vec<Value> {
+    let parsed_course_code_set = parsed_course_codes
+        .iter()
+        .map(|course_code| normalize_course_code(course_code))
+        .collect::<HashSet<_>>();
+    let owner_id = owner
+        .get("ownerId")
+        .map(js_string_value)
+        .unwrap_or_else(|| "undefined".to_string());
+    let mut choice_source_lines =
+        super::requirement_choice_lists::build_multi_line_choice_requirement_lines(
+            snapshot_lines,
+            course_parser,
+        )
+        .into_iter()
+        .map(|line| (line, true, None, String::new()))
+        .collect::<Vec<_>>();
+    choice_source_lines.extend(snapshot_lines.iter().enumerate().map(|(index, line)| {
+        (
+            line.clone(),
+            false,
+            Some(index),
+            super::requirement_choice_lists::find_nearby_requirement_choice_label(
+                snapshot_lines,
+                index,
+                course_parser,
+            ),
+        )
+    }));
+
+    let mut seen_group_ids = HashSet::new();
+    let mut groups = Vec::new();
+    for (line, is_combined_choice_line, source_index, nearby_requirement_label) in
+        choice_source_lines
+    {
+        let normalized_line = normalize_whitespace(
+            &super::requirement_choice_lists::strip_choice_list_line(&line),
+        );
+        if super::requirement_recovery_scope::is_graduate_career_planning_note(&normalized_line)
+            || super::requirement_choice_lists::is_combined_choose_one_heading_with_lettered_option(
+                &normalized_line,
+            )
+            || source_index.map_or(false, |index| {
+                super::requirement_recovery_scope::is_graduate_career_planning_continuation_line(
+                snapshot_lines,
+                index,
+                course_parser,
+            ) || super::requirement_choice_lists::is_lettered_option_line_under_choose_one_heading(
+                snapshot_lines,
+                index,
+            )
+            })
+        {
+            continue;
+        }
+        let option_extraction_line =
+            super::requirement_choice_lists::strip_non_option_course_evidence_from_choice_line(
+                &normalized_line,
+                course_parser,
+            );
+        if has_course_question_support_cue(&option_extraction_line, course_parser)
+            || has_non_requirement_course_exclusion_cue(&option_extraction_line, course_parser)
+        {
+            continue;
+        }
+        let repeated_required_alternative_groups = build_repeated_required_alternative_groups(
+            owner,
+            &normalized_line,
+            &option_extraction_line,
+            &nearby_requirement_label,
+            course_parser,
+        );
+        if !repeated_required_alternative_groups.is_empty() {
+            for group in repeated_required_alternative_groups {
+                let group_id = group.get("id").map(js_string_value).unwrap_or_default();
+                if array(group.get("options")).is_empty() || !seen_group_ids.insert(group_id) {
+                    continue;
+                }
+                groups.push(group);
+            }
+            continue;
+        }
+
+        let extracted_course_codes =
+            course_parser.extract_from_requirement_line(&option_extraction_line);
+        let has_explicit_or = explicit_or_pattern().is_match(&option_extraction_line);
+        let has_own_choice_context =
+            super::requirement_choice_lists::has_choice_requirement_context(&normalized_line);
+        let has_own_strong_choice_context =
+            super::requirement_choice_lists::has_strong_choice_requirement_context(
+                &normalized_line,
+            );
+        let nearby_heading_indicates_strong_choice_or_elective =
+            super::requirement_choice_lists::has_strong_choice_requirement_context(
+                &nearby_requirement_label,
+            );
+        let has_programming_choice_context = programming_choice_context_pattern()
+            .is_match(&normalized_line)
+            || programming_choice_context_pattern().is_match(&nearby_requirement_label);
+        let has_strong_choice_context = has_own_strong_choice_context
+            || nearby_heading_indicates_strong_choice_or_elective
+            || has_programming_choice_context;
+        let has_non_choice_course_list_context = non_choice_course_list_context_pattern()
+            .is_match(&normalized_line)
+            || sequence_alternative_choice_line_pattern().is_match(&normalized_line);
+        let inline_parts_for_choice =
+            super::requirement_choice_lists::get_inline_labeled_requirement_parts(
+                &normalized_line,
+                course_parser,
+            );
+        let has_mixed_required_course_list = inline_parts_for_choice
+            .as_ref()
+            .and_then(|parts| get_mixed_required_course_list_parts(parts, course_parser))
+            .is_some();
+        let has_embedded_alternative_required_sequence =
+            embedded_alternative_required_sequence_pattern().is_match(&normalized_line)
+                && embedded_alternative_required_course_list_pattern().is_match(&normalized_line)
+                && extracted_course_codes.len() >= 4
+                && !has_programming_choice_context
+                && !embedded_alternative_choice_cue_pattern().is_match(&normalized_line);
+        let has_multiple_courses = extracted_course_codes.len() >= 2;
+        let has_explicit_choose_count = explicit_choose_count_pattern().is_match(&normalized_line);
+        let is_heading_backed_single_elective_list = is_combined_choice_line
+            && singular_elective_pattern().is_match(&normalized_line)
+            && !plural_elective_pattern().is_match(&normalized_line)
+            && heading_credit_colon_pattern().is_match(&normalized_line);
+        let looks_like_credit_course_bucket = !has_explicit_choose_count
+            && !is_heading_backed_single_elective_list
+            && (credits_from_pattern().is_match(&normalized_line)
+                || credit_range_pattern().is_match(&normalized_line)
+                || credit_colon_course_pattern().is_match(&normalized_line));
+        let has_course_level_range_or =
+            course_level_range_or_pattern().is_match(&option_extraction_line);
+        let has_generic_category_credit_options =
+            !build_category_requirement_options_from_credit_bucket(
+                owner,
+                &normalized_line,
+                parse_requirement_credit_range(&normalized_line),
+                None,
+            )
+            .is_empty();
+        let looks_like_category_credit_bucket = !has_explicit_choose_count
+            && (!has_explicit_or || has_course_level_range_or)
+            && !has_multiple_courses
+            && parse_requirement_credit_range(&normalized_line).is_some()
+            && has_generic_category_credit_options;
+        if has_non_choice_course_list_context
+            || has_mixed_required_course_list
+            || has_embedded_alternative_required_sequence
+            || (looks_like_credit_course_bucket && has_multiple_courses)
+            || looks_like_category_credit_bucket
+            || (!has_explicit_or && !(has_multiple_courses && has_strong_choice_context))
+            || should_skip_raw_partial_choice_line(
+                is_combined_choice_line,
+                has_explicit_or,
+                has_own_choice_context || has_own_strong_choice_context,
+                &normalized_line,
+            )
+        {
+            continue;
+        }
+
+        let explicit_course_row_choice = has_explicit_or
+            && has_multiple_courses
+            && super::requirement_hint_safety::source_line_starts_with_course_code(
+                &option_extraction_line,
+            );
+        let course_codes = extracted_course_codes
+            .into_iter()
+            .filter(|course_code| {
+                let has_parsed_context = parsed_course_code_set.contains(course_code)
+                    || (has_strong_choice_context && has_multiple_courses)
+                    || explicit_course_row_choice;
+                if !has_parsed_context {
+                    return false;
+                }
+                let source_line_hints = super::requirement_atoms::get_source_line_hints(
+                    snapshot_lines,
+                    course_code,
+                    course_parser,
+                );
+                source_line_hints.is_empty()
+                    || source_line_hints.iter().any(|hint| {
+                        !super::requirement_hint_safety::is_unsafe_requirement_course_hint(
+                            owner,
+                            course_code,
+                            hint,
+                            snapshot_lines,
+                            course_parser,
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        let credits = parse_requirement_credit_amount(&normalized_line);
+        let required_count = parse_choice_required_count(&option_extraction_line);
+        let requirement_type = if required_count > 1 {
+            "choose_n"
+        } else {
+            "choose_one"
+        };
+        let category_options = build_category_requirement_options_from_choice_line(
+            owner,
+            &option_extraction_line,
+            credits,
+            course_parser,
+        );
+        if course_codes.len() < 2 && category_options.is_empty()
+            || course_codes.len() + category_options.len() < 2
+        {
+            continue;
+        }
+
+        let group_id = if category_options.is_empty()
+            && is_equivalent_number_alias_line(&option_extraction_line, &course_codes)
+        {
+            format!(
+                "{owner_id}:requirement-group:{}",
+                slugify_requirement_identifier(&course_codes.join("-"))
+            )
+        } else {
+            format!(
+                "{owner_id}:requirement-group:{}",
+                slugify_requirement_identifier(&course_codes.join("-or-"))
+            )
+        };
+        if seen_group_ids.contains(&group_id) {
+            continue;
+        }
+        let group = if category_options.is_empty()
+            && is_equivalent_number_alias_line(&option_extraction_line, &course_codes)
+        {
+            let option_id = format!(
+                "{owner_id}:requirement-option:{}",
+                slugify_requirement_identifier(&course_codes.join("-"))
+            );
+            build_parsed_requirement_group(&json!({
+                "id": group_id,
+                "label": course_codes.join(" / "),
+                "sourceHeading": normalized_line,
+                "sourceRowText": normalized_line,
+                "sourceSection": nearby_requirement_label,
+                "detectedOptionCue": super::requirement_shape::detect_option_cue(&option_extraction_line),
+                "category": "course-alias",
+                "requirementType": "all_required",
+                "minCourses": 1,
+                "maxCourses": 1,
+                "options": [{
+                    "id": option_id,
+                    "uwCourses": [course_codes[0]],
+                    "equivalentUwCourseCodes": course_codes.iter().skip(1).collect::<Vec<_>>(),
+                    "credits": credits,
+                    "label": normalized_line,
+                }],
+            }))
+        } else {
+            let mut options = course_codes
+                .iter()
+                .map(|course_code| {
+                    let credit_range = course_parser.credit_range_for(course_code);
+                    json!({
+                        "id": format!(
+                            "{owner_id}:requirement-option:{}",
+                            slugify_requirement_identifier(course_code)
+                        ),
+                        "uwCourses": [course_code],
+                        "label": course_code,
+                        "credits": credit_range.credits,
+                        "creditMin": credit_range.credit_min,
+                        "creditMax": credit_range.credit_max,
+                        "creditText": credit_range.credit_text,
+                    })
+                })
+                .collect::<Vec<_>>();
+            options.extend(category_options);
+            build_parsed_requirement_group(&json!({
+                "id": group_id,
+                "label": get_choice_requirement_group_label(
+                    &option_extraction_line,
+                    &course_codes,
+                    course_parser,
+                ),
+                "sourceHeading": normalized_line,
+                "sourceRowText": normalized_line,
+                "sourceSection": nearby_requirement_label,
+                "detectedOptionCue": super::requirement_shape::detect_option_cue(&option_extraction_line),
+                "category": "source-choice",
+                "requirementType": requirement_type,
+                "minCourses": required_count,
+                "maxCourses": required_count,
+                "selectionCount": required_count,
+                "requiredCount": required_count,
+                "minCredits": credits,
+                "maxCredits": credits,
+                "creditText": credits.map(js_number_string),
+                "options": options,
+            }))
+        };
         if array(group.get("options")).is_empty() {
             continue;
         }
@@ -2671,14 +3273,12 @@ pub fn extract_option_course_codes_from_sectioned_line(
         .and_then(|captures| captures.get(1))
         .map(|capture| capture.as_str())
         .unwrap_or(&without_prerequisite_parentheticals);
-    let leading_codes = extract_course_codes_from_joint_course_line(leading_course_text, course_parser);
+    let leading_codes =
+        extract_course_codes_from_joint_course_line(leading_course_text, course_parser);
     if !leading_codes.is_empty() {
         return leading_codes;
     }
-    extract_course_codes_from_joint_course_line(
-        &without_prerequisite_parentheticals,
-        course_parser,
-    )
+    extract_course_codes_from_joint_course_line(&without_prerequisite_parentheticals, course_parser)
 }
 
 pub fn build_sectioned_option_course_option(
@@ -2720,7 +3320,8 @@ pub fn build_sectioned_option_course_option(
         .get("ownerId")
         .map(js_string_value)
         .unwrap_or_else(|| "undefined".to_string());
-    let normalized_course_line = normalize_whitespace(&trailing_asterisks_pattern().replace(&course_line, ""));
+    let normalized_course_line =
+        normalize_whitespace(&trailing_asterisks_pattern().replace(&course_line, ""));
     let section_slug = super::requirement_rule_utils::slugify_parser_rule_value(
         &js_string_nullish(input.get("sectionHeading")),
     );
@@ -2748,8 +3349,16 @@ pub fn build_sectioned_option_course_option(
             credit_range.get(key).cloned().unwrap_or(Value::Null),
         );
     }
-    option.insert("title".into(), title.map(|title| json!(title)).unwrap_or(Value::Null));
-    option.insert("department".into(), department.map(|department| json!(department)).unwrap_or(Value::Null));
+    option.insert(
+        "title".into(),
+        title.map(|title| json!(title)).unwrap_or(Value::Null),
+    );
+    option.insert(
+        "department".into(),
+        department
+            .map(|department| json!(department))
+            .unwrap_or(Value::Null),
+    );
     option.insert("category".into(), nullish_value(input.get("category")));
     option.insert(
         "label".into(),
@@ -2759,15 +3368,29 @@ pub fn build_sectioned_option_course_option(
             normalized_course_line
         }),
     );
-    option.insert("sourceHeading".into(), nullish_value(input.get("sourceHeading")));
-    option.insert("sourceCategory".into(), nullish_value(input.get("sectionHeading")));
+    option.insert(
+        "sourceHeading".into(),
+        nullish_value(input.get("sourceHeading")),
+    );
+    option.insert(
+        "sourceCategory".into(),
+        nullish_value(input.get("sectionHeading")),
+    );
     option.insert(
         "notes".into(),
-        input.get("notes").filter(|value| !value.is_null()).cloned().unwrap_or_else(|| json!([])),
+        input
+            .get("notes")
+            .filter(|value| !value.is_null())
+            .cloned()
+            .unwrap_or_else(|| json!([])),
     );
     option.insert(
         "constraints".into(),
-        input.get("constraints").filter(|value| !value.is_null()).cloned().unwrap_or_else(|| json!([])),
+        input
+            .get("constraints")
+            .filter(|value| !value.is_null())
+            .cloned()
+            .unwrap_or_else(|| json!([])),
     );
     Some(build_parsed_requirement_option(&Value::Object(option)))
 }
@@ -2796,11 +3419,7 @@ pub fn parse_sectioned_course_credit_list_line(line: &str) -> Option<Value> {
             .and_then(|value| value.as_str().parse::<f64>().ok())
             .filter(|maximum| *maximum >= minimum)
             .unwrap_or(minimum);
-        if !minimum.is_finite()
-            || minimum <= 0.0
-            || minimum > 30.0
-            || maximum > 30.0
-        {
+        if !minimum.is_finite() || minimum <= 0.0 || minimum > 30.0 || maximum > 30.0 {
             return None;
         }
         ranges.push((minimum, maximum));
@@ -2830,6 +3449,880 @@ pub fn parse_section_heading_credit_range(line: &str) -> Option<Value> {
     parse_requirement_credit_amount(line)
         .filter(|credits| credits.is_finite())
         .map(|credits| json!({"minCredits": credits, "maxCredits": credits}))
+}
+
+pub fn get_sectioned_course_heading_descriptor(
+    owner: &Value,
+    snapshot_lines: &[String],
+    index: usize,
+    option_acronym: Option<&str>,
+    primary_major_titles: &HashMap<String, String>,
+    course_parser: &CourseCodeParser,
+) -> Option<Value> {
+    if super::requirement_recovery_scope::is_graduate_or_applied_masters_requirement_context(
+        owner,
+        snapshot_lines,
+        index,
+    ) {
+        return None;
+    }
+    let raw_line = normalize_pdf_requirement_heading_line(
+        snapshot_lines
+            .get(index)
+            .map(String::as_str)
+            .unwrap_or_default(),
+    );
+    if is_approved_list_placeholder_without_immediate_course_list(
+        snapshot_lines,
+        index,
+        &raw_line,
+        course_parser,
+    ) {
+        return None;
+    }
+    let previous_start = index.saturating_sub(3);
+    let previous_meaningful_line = snapshot_lines
+        .get(previous_start..index.min(snapshot_lines.len()))
+        .unwrap_or_default()
+        .iter()
+        .map(|line| {
+            normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+                line,
+            ))
+        })
+        .filter(|line| !line.is_empty())
+        .last();
+    let previous_is_course_row = previous_meaningful_line.as_deref().is_some_and(|line| {
+        super::requirement_hint_safety::source_line_starts_with_course_code(line)
+    });
+    let looks_like_course_description_after_course_row = previous_is_course_row
+        && previous_meaningful_line.as_deref().is_some_and(|previous| {
+            looks_like_title_and_credit_line_for_previous_course(previous, &raw_line, course_parser)
+                || (raw_line.encode_utf16().count() >= 80
+                    && sentence_ending_pattern().is_match(&raw_line)
+                    && !super::requirement_recovery_scope::has_primary_requirement_section_cue(
+                        &raw_line,
+                    )
+                    && !super::requirement_recovery_scope::has_sectioned_course_list_requirement_cue(
+                        &raw_line,
+                    ))
+        });
+    let matches_extracted_heading = owner
+        .get("extractedHeadings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|heading| normalize_whitespace(heading) == raw_line);
+    let has_strong_adjacent_section_cue = matches_extracted_heading
+        || super::requirement_recovery_scope::has_sectioned_course_list_requirement_cue(&raw_line)
+        || strong_adjacent_section_heading_cue_pattern().is_match(&raw_line);
+    let has_adjacent_course_list_evidence = has_strong_adjacent_section_cue
+        || super::requirement_recovery_scope::has_upcoming_sectioned_course_rows(
+            snapshot_lines,
+            index,
+            2,
+            course_parser,
+        );
+    let looks_like_adjacent_credit_section_heading = previous_is_course_row
+        && parse_section_heading_credit_range(&raw_line).is_some()
+        && super::requirement_recovery_scope::looks_like_short_named_course_section_heading(
+            &raw_line,
+            course_parser,
+        )
+        && has_adjacent_course_list_evidence
+        && super::requirement_recovery_scope::has_upcoming_sectioned_course_rows(
+            snapshot_lines,
+            index,
+            1,
+            course_parser,
+        );
+    let extracted_course_codes = course_parser.extract_from_requirement_line(&raw_line);
+    if raw_line.is_empty()
+        || looks_like_course_description_after_course_row
+        || is_non_requirement_sectioned_course_heading(&raw_line)
+        || looks_like_degree_total_general_elective_prose(&raw_line)
+        || looks_like_credit_summary_for_named_requirement_section(&raw_line)
+        || looks_like_elective_timing_or_sample_plan_note(&raw_line)
+        || super::requirement_hint_safety::source_line_starts_with_course_code(&raw_line)
+        || (previous_is_course_row
+            && previous_meaningful_line
+                .as_deref()
+                .is_some_and(|_| previous_credit_row_parenthetical_pattern().is_match(&raw_line))
+            && !looks_like_adjacent_credit_section_heading)
+        || (!extracted_course_codes.is_empty()
+            && !course_level_reference_heading_pattern().is_match(&raw_line))
+    {
+        return None;
+    }
+    if leading_section_credit_only_pattern().is_match(&raw_line)
+        || is_sectioned_course_credit_list_line(&raw_line)
+        || total_heading_pattern().is_match(&raw_line)
+    {
+        return None;
+    }
+    if credit_total_heading_pattern().is_match(&raw_line)
+        && !credit_total_selection_context_pattern().is_match(&raw_line)
+    {
+        return None;
+    }
+
+    let following_credit_line = snapshot_lines
+        .get(index.saturating_add(1))
+        .map(|line| {
+            normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+                line,
+            ))
+        })
+        .unwrap_or_default();
+    let following_has_course =
+        super::requirement_hint_safety::source_line_starts_with_course_code(&following_credit_line)
+            || !course_parser
+                .extract_from_requirement_line(&following_credit_line)
+                .is_empty();
+    let following_leading_credit_range =
+        if !following_credit_line.is_empty() && !following_has_course {
+            parse_leading_section_heading_credit_range(&following_credit_line)
+        } else {
+            None
+        };
+    let next_after_following_credit_line =
+        get_next_meaningful_section_line(snapshot_lines, index.saturating_add(1));
+    let following_credit_line_without_credit = normalize_whitespace(
+        &following_credit_line_credit_amount_pattern().replace(&following_credit_line, ""),
+    );
+    let following_credit_line_has_blocking_requirement_cue =
+        blocking_following_credit_requirement_pattern()
+            .is_match(&following_credit_line_without_credit)
+            && !additional_writing_requirement_pattern()
+                .is_match(&following_credit_line_without_credit);
+    if let Some(credit_range) = following_leading_credit_range.as_ref() {
+        let minimum = credit_range.get("minCredits").and_then(Value::as_f64);
+        let maximum = credit_range.get("maxCredits").and_then(Value::as_f64);
+        let eligible_heading = !looks_like_broad_requirement_container_heading(&raw_line)
+            && !prerequisite_heading_pattern().is_match(&raw_line)
+            && (split_heading_core_elective_cue_pattern().is_match(&raw_line)
+                || super::requirement_recovery_scope::looks_like_short_named_course_section_heading(
+                    &raw_line,
+                    course_parser,
+                ))
+            && (!following_credit_line_has_blocking_requirement_cue
+                || get_sectioned_option_course_line(&next_after_following_credit_line).is_some())
+            && (split_heading_course_list_cue_pattern()
+                .is_match(&format!("{raw_line} {following_credit_line}"))
+                || super::requirement_recovery_scope::looks_like_short_named_course_section_heading(
+                    &raw_line,
+                    course_parser,
+                ))
+            && (get_sectioned_option_course_line(&next_after_following_credit_line).is_some()
+                || is_standalone_section_choice_cue_line(
+                    &next_after_following_credit_line,
+                    course_parser,
+                ))
+            && super::requirement_recovery_scope::has_upcoming_sectioned_course_rows(
+                snapshot_lines,
+                index.saturating_add(1),
+                2,
+                course_parser,
+            );
+        if eligible_heading {
+            let minimum = minimum?;
+            return Some(json!({
+                "label": normalize_sectioned_course_group_label(&raw_line),
+                "category": build_sectioned_course_category(&raw_line),
+                "requirementType": "choose_credits",
+                "minCredits": minimum,
+                "maxCredits": maximum,
+                "creditText": maximum
+                    .filter(|maximum| *maximum != minimum)
+                    .map(|maximum| format!("{}-{}", js_number_string(minimum), js_number_string(maximum)))
+                    .unwrap_or_else(|| js_number_string(minimum)),
+                "detectedOptionCue": "sectioned split-heading credit list",
+            }));
+        }
+    }
+
+    let immediate_course_rows =
+        collect_immediate_section_course_lines(snapshot_lines, index, 6, course_parser);
+    let immediate_course_credits = immediate_course_rows
+        .iter()
+        .filter_map(|(_, row)| {
+            parse_credit_bearing_course_row_credit_range(row)
+                .and_then(|value| value.get("credits").and_then(Value::as_f64))
+        })
+        .filter(|credits| credits.is_finite())
+        .collect::<Vec<_>>();
+    let mut unique_immediate_course_credits = Vec::new();
+    for credits in immediate_course_credits {
+        if !unique_immediate_course_credits.contains(&credits) {
+            unique_immediate_course_credits.push(credits);
+        }
+    }
+    if super::requirement_recovery_scope::looks_like_short_named_course_section_heading(
+        &raw_line,
+        course_parser,
+    ) && data_analysis_heading_pattern().is_match(&raw_line)
+        && immediate_course_rows.len() >= 2
+        && unique_immediate_course_credits.len() == 1
+        && super::requirement_recovery_scope::has_upcoming_sectioned_course_rows(
+            snapshot_lines,
+            index,
+            2,
+            course_parser,
+        )
+    {
+        let credits = unique_immediate_course_credits[0];
+        return Some(json!({
+            "label": normalize_sectioned_course_group_label(&raw_line),
+            "category": build_sectioned_course_category(&raw_line),
+            "requirementType": "choose_credits",
+            "minCredits": credits,
+            "maxCredits": credits,
+            "creditText": js_number_string(credits),
+            "detectedOptionCue": "sectioned inferred equal-credit course choice",
+        }));
+    }
+
+    if let Some(option_acronym) = option_acronym.filter(|value| !value.is_empty()) {
+        let pattern = format!(r"(?i)\b{option_acronym}\b");
+        let pattern = js_regex_compatibility_pattern(&pattern);
+        if regex::Regex::new(&pattern).ok().is_some_and(|pattern| {
+            pattern.is_match(&raw_line)
+                && sectioned_core_or_elective_heading_pattern().is_match(&raw_line)
+        }) {
+            return None;
+        }
+    }
+    let required_count = parse_sectioned_course_required_count(&raw_line);
+    let has_explicit_course_count_choice_cue =
+        explicit_course_count_choice_pattern().is_match(&raw_line);
+    let minimum_credit_match = minimum_credits_heading_pattern()
+        .captures(&raw_line)
+        .and_then(|captures| captures.get(1))
+        .and_then(|value| value.as_str().parse::<f64>().ok());
+    let maximum_credit_match = maximum_credits_heading_pattern()
+        .captures(&raw_line)
+        .and_then(|captures| captures.get(1))
+        .and_then(|value| value.as_str().parse::<f64>().ok());
+    let exact_credit_range = parse_section_heading_credit_range(&raw_line);
+    if both_courses_credit_heading_pattern().is_match(&raw_line) {
+        if let Some(range) = exact_credit_range.as_ref() {
+            let minimum = range.get("minCredits").and_then(Value::as_f64)?;
+            let maximum = range
+                .get("maxCredits")
+                .filter(|value| !value.is_null())
+                .and_then(Value::as_f64)
+                .unwrap_or(minimum);
+            return Some(json!({
+                "label": normalize_sectioned_course_group_label(&raw_line),
+                "category": build_sectioned_course_category(&raw_line),
+                "requirementType": "choose_credits",
+                "minCredits": minimum,
+                "maxCredits": maximum,
+                "creditText": if maximum != minimum {
+                    format!("{}-{}", js_number_string(minimum), js_number_string(maximum))
+                } else {
+                    js_number_string(minimum)
+                },
+                "detectedOptionCue": "sectioned credit list",
+            }));
+        }
+    }
+
+    if concentration_courses_heading_pattern().is_match(&raw_line) {
+        let concentration_credit_line = snapshot_lines
+            .get(index.saturating_sub(80)..index.min(snapshot_lines.len()))
+            .unwrap_or_default()
+            .iter()
+            .map(|line| {
+                normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+                    line,
+                ))
+            })
+            .rev()
+            .find(|line| concentration_minimum_credit_context_pattern().is_match(line));
+        let concentration_credits = concentration_credit_line.as_deref().and_then(|line| {
+            concentration_credit_minimum_pattern()
+                .captures(line)
+                .or_else(|| concentration_credit_minimum_prefix_pattern().captures(line))
+                .and_then(|captures| captures.get(1))
+                .and_then(|value| value.as_str().parse::<f64>().ok())
+        });
+        if let Some(credits) = concentration_credits.filter(|credits| {
+            credits.is_finite()
+                && super::requirement_recovery_scope::has_upcoming_sectioned_course_rows(
+                    snapshot_lines,
+                    index,
+                    1,
+                    course_parser,
+                )
+        }) {
+            return Some(json!({
+                "label": normalize_sectioned_course_group_label(&raw_line),
+                "category": build_sectioned_course_category(&raw_line),
+                "requirementType": "choose_credits",
+                "minCredits": credits,
+                "maxCredits": null,
+                "creditText": format!("{}+", js_number_string(credits)),
+                "detectedOptionCue": "sectioned concentration credit list",
+            }));
+        }
+    }
+
+    if !owner.get("pathwayId").is_some_and(js_truthy)
+        && core_courses_heading_pattern().is_match(&raw_line)
+    {
+        let core_credit_line = snapshot_lines
+            .get(index.saturating_sub(8)..snapshot_lines.len().min(index.saturating_add(2)))
+            .unwrap_or_default()
+            .iter()
+            .map(|line| {
+                normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+                    line,
+                ))
+            })
+            .find(|line| core_course_credit_context_pattern().is_match(line));
+        let core_credits = core_credit_line
+            .as_deref()
+            .and_then(parse_requirement_credit_amount);
+        let core_course_count = core_credit_line
+            .as_deref()
+            .and_then(parse_requirement_course_count);
+        if let Some(credits) = core_credits.filter(|credits| {
+            credits.is_finite()
+                && super::requirement_recovery_scope::has_upcoming_sectioned_course_rows(
+                    snapshot_lines,
+                    index,
+                    2,
+                    course_parser,
+                )
+        }) {
+            let course_count = core_course_count.filter(|count| *count > 0);
+            return Some(json!({
+                "label": normalize_sectioned_course_group_label(&raw_line),
+                "category": build_sectioned_course_category(&raw_line),
+                "requirementType": "all_required",
+                "minCourses": course_count,
+                "maxCourses": course_count,
+                "minCredits": credits,
+                "maxCredits": credits,
+                "creditText": js_number_string(credits),
+                "detectedOptionCue": "sectioned core course list",
+            }));
+        }
+    }
+
+    if owner.get("pathwayId").is_some_and(js_truthy)
+        && super::requirement_recovery_scope::line_matches_selected_pathway_identity(
+            owner,
+            &raw_line,
+            primary_major_titles,
+        )
+        && super::requirement_recovery_scope::normalize_matcher_text(&raw_line)
+            .split_whitespace()
+            .count()
+            <= 12
+        && !terminal_heading_punctuation_pattern().is_match(&raw_line)
+        && super::requirement_recovery_scope::has_upcoming_sectioned_course_rows(
+            snapshot_lines,
+            index,
+            1,
+            course_parser,
+        )
+    {
+        let concentration_credit_line = snapshot_lines
+            .get(index.saturating_sub(24)..index.min(snapshot_lines.len()))
+            .unwrap_or_default()
+            .iter()
+            .map(|line| {
+                normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+                    line,
+                ))
+            })
+            .rev()
+            .find(|line| pathway_concentration_credit_context_pattern().is_match(line));
+        let concentration_credits = concentration_credit_line
+            .as_deref()
+            .and_then(parse_requirement_credit_amount);
+        let concentration_course_count = concentration_credit_line
+            .as_deref()
+            .and_then(parse_requirement_course_count);
+        if let Some(credits) =
+            concentration_credits.filter(|credits| credits.is_finite() && *credits > 0.0)
+        {
+            let course_count = concentration_course_count.filter(|count| *count > 0);
+            return Some(json!({
+                "label": normalize_sectioned_course_group_label(&raw_line),
+                "category": build_sectioned_course_category(&raw_line),
+                "requirementType": "choose_credits",
+                "minCourses": course_count,
+                "maxCourses": course_count,
+                "minCredits": credits,
+                "maxCredits": credits,
+                "creditText": js_number_string(credits),
+                "detectedOptionCue": "pathway-scoped concentration course list",
+            }));
+        }
+    }
+
+    let exact_range_has_courses =
+        exact_credit_range.is_some() && sectioned_course_word_pattern().is_match(&raw_line);
+    let exact_range_has_primary_cue = exact_credit_range.is_some()
+        && super::requirement_recovery_scope::has_primary_requirement_section_cue(&raw_line);
+    let exact_range_short_named_section = exact_credit_range.is_some()
+        && super::requirement_recovery_scope::looks_like_short_named_course_section_heading(
+            &raw_line,
+            course_parser,
+        )
+        && super::requirement_recovery_scope::has_upcoming_sectioned_course_rows(
+            snapshot_lines,
+            index,
+            1,
+            course_parser,
+        );
+    let has_course_list_cue =
+        super::requirement_recovery_scope::has_sectioned_course_list_requirement_cue(&raw_line)
+            || sectioned_elective_heading_pattern().is_match(&raw_line)
+            || following_departments_heading_pattern().is_match(&raw_line)
+            || exact_range_has_courses
+            || exact_range_has_primary_cue
+            || exact_range_short_named_section;
+    if !has_course_list_cue {
+        return None;
+    }
+    let minimum_rows = if required_count == Some(1) { 1 } else { 2 };
+    if !super::requirement_recovery_scope::has_upcoming_sectioned_course_rows(
+        snapshot_lines,
+        index,
+        minimum_rows,
+        course_parser,
+    ) {
+        return None;
+    }
+    let label = normalize_sectioned_course_group_label(&raw_line);
+    let category = build_sectioned_course_category(&raw_line);
+    if let Some(maximum) = maximum_credit_match.filter(|maximum| maximum.is_finite()) {
+        return Some(json!({
+            "label": label,
+            "category": category,
+            "requirementType": "choose_credits",
+            "minCredits": 0,
+            "maxCredits": maximum,
+            "creditText": format!("0-{}", js_number_string(maximum)),
+            "detectedOptionCue": "sectioned credit maximum",
+        }));
+    }
+    if let Some(minimum) = minimum_credit_match.filter(|minimum| minimum.is_finite()) {
+        return Some(json!({
+            "label": label,
+            "category": category,
+            "requirementType": "choose_credits",
+            "minCredits": minimum,
+            "maxCredits": null,
+            "creditText": format!("{}+", js_number_string(minimum)),
+            "detectedOptionCue": "sectioned credit minimum",
+        }));
+    }
+    if let Some(required_count) = required_count.filter(|_| has_explicit_course_count_choice_cue) {
+        let range_minimum = exact_credit_range
+            .as_ref()
+            .and_then(|range| range.get("minCredits"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let range_maximum = exact_credit_range
+            .as_ref()
+            .and_then(|range| range.get("maxCredits"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let credit_text = exact_credit_range.as_ref().map(|range| {
+            let minimum = range
+                .get("minCredits")
+                .and_then(Value::as_f64)
+                .unwrap_or_default();
+            let maximum = range
+                .get("maxCredits")
+                .and_then(Value::as_f64)
+                .unwrap_or(minimum);
+            if maximum != 0.0 && maximum != minimum {
+                format!(
+                    "{}-{}",
+                    js_number_string(minimum),
+                    js_number_string(maximum)
+                )
+            } else {
+                js_number_string(minimum)
+            }
+        });
+        return Some(json!({
+            "label": label,
+            "category": category,
+            "requirementType": "choose_n",
+            "minCourses": required_count,
+            "maxCourses": required_count,
+            "selectionCount": required_count,
+            "requiredCount": required_count,
+            "minCredits": range_minimum,
+            "maxCredits": range_maximum,
+            "creditText": credit_text,
+            "detectedOptionCue": "sectioned course-count choice list",
+        }));
+    }
+    if let Some(range) = exact_credit_range
+        .as_ref()
+        .filter(|_| sectioned_credit_heading_pattern().is_match(&raw_line))
+    {
+        let minimum = range.get("minCredits").and_then(Value::as_f64)?;
+        let maximum = range
+            .get("maxCredits")
+            .filter(|value| !value.is_null())
+            .and_then(Value::as_f64)
+            .unwrap_or(minimum);
+        return Some(json!({
+            "label": label,
+            "category": category,
+            "requirementType": "choose_credits",
+            "minCredits": minimum,
+            "maxCredits": maximum,
+            "creditText": if maximum != minimum {
+                format!("{}-{}", js_number_string(minimum), js_number_string(maximum))
+            } else {
+                js_number_string(minimum)
+            },
+            "detectedOptionCue": "sectioned credit list",
+        }));
+    }
+    required_count.map(|count| {
+        json!({
+            "label": label,
+            "category": category,
+            "requirementType": "choose_n",
+            "minCourses": count,
+            "maxCourses": count,
+            "selectionCount": count,
+            "requiredCount": count,
+            "detectedOptionCue": "sectioned choice list",
+        })
+    })
+}
+
+pub fn collect_immediate_section_course_lines(
+    snapshot_lines: &[String],
+    index: usize,
+    max_rows: usize,
+    course_parser: &CourseCodeParser,
+) -> Vec<(usize, String)> {
+    let mut rows = Vec::new();
+    let start = index.saturating_add(1);
+    for candidate_index in start..snapshot_lines.len() {
+        if rows.len() >= max_rows {
+            break;
+        }
+        let candidate =
+            normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+                &snapshot_lines[candidate_index],
+            ));
+        if candidate.is_empty() {
+            continue;
+        }
+        if let Some(course_line) = get_sectioned_option_course_line(&candidate) {
+            rows.push((candidate_index, course_line));
+            continue;
+        }
+        if rows.is_empty() && parse_leading_section_heading_credit_range(&candidate).is_some() {
+            continue;
+        }
+        break;
+    }
+    rows
+}
+
+pub fn looks_like_title_and_credit_line_for_previous_course(
+    previous_line: &str,
+    line: &str,
+    course_parser: &CourseCodeParser,
+) -> bool {
+    let previous_course_code = course_parser
+        .extract_from_requirement_line(previous_line)
+        .into_iter()
+        .next();
+    let course_title = previous_course_code
+        .as_deref()
+        .and_then(|course_code| course_parser.metadata_for(course_code))
+        .and_then(|metadata| metadata.get("title"))
+        .and_then(Value::as_str)
+        .map(normalize_whitespace)
+        .unwrap_or_default();
+    if course_title.is_empty() {
+        return false;
+    }
+    let line_without_trailing_credits =
+        normalize_whitespace(&title_and_credit_row_suffix_pattern().replace(line, ""));
+    super::requirement_recovery_scope::normalize_matcher_text(&line_without_trailing_credits)
+        == super::requirement_recovery_scope::normalize_matcher_text(&course_title)
+}
+
+pub fn get_fallback_sectioned_elective_heading_descriptor(
+    owner: &Value,
+    snapshot_lines: &[String],
+    index: usize,
+    option_acronym: Option<&str>,
+    course_parser: &CourseCodeParser,
+) -> Option<Value> {
+    if super::requirement_recovery_scope::is_graduate_or_applied_masters_requirement_context(
+        owner,
+        snapshot_lines,
+        index,
+    ) {
+        return None;
+    }
+    let raw_line = normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+        snapshot_lines
+            .get(index)
+            .map(String::as_str)
+            .unwrap_or_default(),
+    ));
+    if raw_line.is_empty()
+        || is_non_requirement_sectioned_course_heading(&raw_line)
+        || looks_like_elective_timing_or_sample_plan_note(&raw_line)
+        || super::requirement_hint_safety::source_line_starts_with_course_code(&raw_line)
+        || !course_parser
+            .extract_from_requirement_line(&raw_line)
+            .is_empty()
+        || !sectioned_elective_heading_pattern().is_match(&raw_line)
+    {
+        return None;
+    }
+    if credit_total_heading_pattern().is_match(&raw_line)
+        && !credit_total_selection_context_pattern().is_match(&raw_line)
+    {
+        return None;
+    }
+    let credit_range = parse_section_heading_credit_range(&raw_line)?;
+    if !super::requirement_recovery_scope::has_upcoming_sectioned_course_rows(
+        snapshot_lines,
+        index,
+        2,
+        course_parser,
+    ) {
+        return None;
+    }
+    if let Some(option_acronym) = option_acronym.filter(|value| !value.is_empty()) {
+        let pattern = format!(r"(?i)\b{option_acronym}\b");
+        let pattern = js_regex_compatibility_pattern(&pattern);
+        if regex::Regex::new(&pattern).ok().is_some_and(|pattern| {
+            pattern.is_match(&raw_line)
+                && sectioned_core_or_elective_heading_pattern().is_match(&raw_line)
+        }) {
+            return None;
+        }
+    }
+    let minimum = credit_range.get("minCredits")?.as_f64()?;
+    let maximum = credit_range
+        .get("maxCredits")
+        .filter(|value| !value.is_null())
+        .and_then(Value::as_f64);
+    let label = normalize_sectioned_course_group_label(&raw_line);
+    let credit_text = maximum
+        .filter(|maximum| *maximum != minimum)
+        .map(|maximum| {
+            format!(
+                "{}-{}",
+                js_number_string(minimum),
+                js_number_string(maximum)
+            )
+        })
+        .unwrap_or_else(|| js_number_string(minimum));
+    Some(json!({
+        "label": label,
+        "category": build_sectioned_course_category(&raw_line),
+        "requirementType": "choose_credits",
+        "minCredits": minimum,
+        "maxCredits": maximum.unwrap_or(minimum),
+        "creditText": credit_text,
+        "detectedOptionCue": "sectioned elective credit list",
+    }))
+}
+
+pub fn is_sectioned_course_list_boundary(
+    owner: &Value,
+    snapshot_lines: &[String],
+    index: usize,
+    has_collected_courses: bool,
+    option_acronym: Option<&str>,
+    heading_descriptor: Option<&Value>,
+    course_parser: &CourseCodeParser,
+) -> bool {
+    let line = normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+        snapshot_lines
+            .get(index)
+            .map(String::as_str)
+            .unwrap_or_default(),
+    ));
+    if line.is_empty() {
+        return false;
+    }
+    if recommended_course_or_honours_thesis_pattern().is_match(&line) {
+        return true;
+    }
+    let previous_start = index.saturating_sub(3);
+    let previous_meaningful_line = snapshot_lines
+        .get(previous_start..index.min(snapshot_lines.len()))
+        .unwrap_or_default()
+        .iter()
+        .map(|candidate| {
+            normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+                candidate,
+            ))
+        })
+        .filter(|candidate| !candidate.is_empty())
+        .last();
+    let next_meaningful_line = snapshot_lines
+        .get(index.saturating_add(1)..snapshot_lines.len().min(index.saturating_add(4)))
+        .unwrap_or_default()
+        .iter()
+        .map(|candidate| {
+            normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+                candidate,
+            ))
+        })
+        .find(|candidate| !candidate.is_empty());
+    let course_codes = course_parser.extract_from_requirement_line(&line);
+    if has_collected_courses
+        && course_codes.is_empty()
+        && next_meaningful_line
+            .as_deref()
+            .is_some_and(|next| bracketed_department_heading_pattern().is_match(next))
+    {
+        return true;
+    }
+    if heading_descriptor.is_some()
+        || get_fallback_sectioned_elective_heading_descriptor(
+            owner,
+            snapshot_lines,
+            index,
+            option_acronym,
+            course_parser,
+        )
+        .is_some()
+    {
+        return true;
+    }
+    if has_collected_courses
+        && course_codes.is_empty()
+        && sectioned_elective_heading_pattern().is_match(&line)
+        && parse_section_heading_credit_range(&line).is_some()
+        && super::requirement_recovery_scope::has_upcoming_sectioned_course_rows(
+            snapshot_lines,
+            index,
+            2,
+            course_parser,
+        )
+    {
+        return true;
+    }
+    if looks_like_degree_total_general_elective_prose(&line)
+        || looks_like_elective_timing_or_sample_plan_note(&line)
+    {
+        return true;
+    }
+    if previous_meaningful_line.as_deref().is_some_and(|previous| {
+        super::requirement_hint_safety::source_line_starts_with_course_code(previous)
+    }) {
+        return false;
+    }
+    if !has_collected_courses && parse_leading_section_heading_credit_range(&line).is_some() {
+        return false;
+    }
+    if is_sectioned_option_course_boundary(&line, course_parser) {
+        return true;
+    }
+    if !has_collected_courses || get_sectioned_option_course_line(&line).is_some() {
+        return false;
+    }
+    if is_sectioned_course_credit_list_line(&line) {
+        return false;
+    }
+    if total_heading_pattern().is_match(&line) {
+        return true;
+    }
+    if looks_like_enumerated_section_heading(&line, course_parser) {
+        return true;
+    }
+    if has_collected_courses
+        && course_codes.is_empty()
+        && super::requirement_recovery_scope::has_upcoming_sectioned_course_rows(
+            snapshot_lines,
+            index,
+            1,
+            course_parser,
+        )
+        && (super::requirement_recovery_scope::has_primary_requirement_section_cue(&line)
+            || pathway_label_cue_pattern().is_match(&line)
+            || sectioned_advising_boundary_pattern().is_match(&line)
+            || (owner.get("pathwayId").is_some_and(js_truthy)
+                && super::requirement_recovery_scope::get_pathway_heading_identity_token_count(
+                    &line,
+                ) >= 2))
+    {
+        return true;
+    }
+    if has_collected_courses
+        && course_codes.is_empty()
+        && super::requirement_recovery_scope::has_upcoming_sectioned_course_rows(
+            snapshot_lines,
+            index,
+            1,
+            course_parser,
+        )
+        && super::requirement_recovery_scope::looks_like_short_named_course_section_heading(
+            &line,
+            course_parser,
+        )
+        && next_meaningful_line
+            .as_deref()
+            .is_some_and(|next| get_sectioned_option_course_line(next).is_some())
+    {
+        return true;
+    }
+    line.encode_utf16().count() <= 120
+        && sectioned_requirement_heading_pattern().is_match(&line)
+        && !sectioned_requirement_heading_exclusion_pattern().is_match(&line)
+}
+
+pub fn get_sectioned_course_list_end_index<F>(
+    owner: &Value,
+    snapshot_lines: &[String],
+    start_index: usize,
+    option_acronym: Option<&str>,
+    mut get_heading_descriptor: F,
+    course_parser: &CourseCodeParser,
+) -> usize
+where
+    F: FnMut(usize) -> Option<Value>,
+{
+    let mut has_collected_courses = false;
+    for index in start_index.saturating_add(1)..snapshot_lines.len() {
+        let line = normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+            &snapshot_lines[index],
+        ));
+        if get_sectioned_option_course_line(&line).is_some() {
+            has_collected_courses = true;
+            continue;
+        }
+        let heading_descriptor = get_heading_descriptor(index);
+        if is_sectioned_course_list_boundary(
+            owner,
+            snapshot_lines,
+            index,
+            has_collected_courses,
+            option_acronym,
+            heading_descriptor.as_ref(),
+            course_parser,
+        ) {
+            return index;
+        }
+    }
+    snapshot_lines.len()
 }
 
 pub fn parse_leading_section_heading_credit_range(line: &str) -> Option<Value> {
@@ -2868,9 +4361,9 @@ pub fn collect_sectioned_option_course_options(
 ) -> Vec<Value> {
     let mut options: Vec<Value> = Vec::new();
     for index in start_index + 1..end_index.min(snapshot_lines.len()) {
-        let line = normalize_whitespace(
-            &super::requirement_choice_lists::strip_choice_list_line(&snapshot_lines[index]),
-        );
+        let line = normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+            &snapshot_lines[index],
+        ));
         if line.is_empty() {
             continue;
         }
@@ -2913,7 +4406,8 @@ pub fn collect_sectioned_option_course_options(
         if line.starts_with('*') && starred_course_note_pattern().is_match(&line) {
             continue;
         }
-        let course_codes = extract_option_course_codes_from_sectioned_line(&course_line, course_parser);
+        let course_codes =
+            extract_option_course_codes_from_sectioned_line(&course_line, course_parser);
         if course_codes.is_empty() {
             continue;
         }
@@ -2933,9 +4427,9 @@ pub fn collect_sectioned_option_course_options(
             .skip(index + 1)
             .take(3)
             .map(|candidate| {
-                normalize_whitespace(
-                    &super::requirement_choice_lists::strip_choice_list_line(candidate),
-                )
+                normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+                    candidate,
+                ))
             })
             .filter(|candidate| {
                 !candidate.is_empty()
@@ -2954,7 +4448,10 @@ pub fn collect_sectioned_option_course_options(
         let mut notes = Vec::<String>::new();
         let mut constraints = Vec::<String>::new();
         if let Some(max_credits) = max_credit_match.filter(|credits| credits.is_finite()) {
-            constraints.push(format!("max_degree_counting_credits:{}", js_number_string(max_credits)));
+            constraints.push(format!(
+                "max_degree_counting_credits:{}",
+                js_number_string(max_credits)
+            ));
             notes.push(format!(
                 "{} can count a maximum of {} credits toward the degree.",
                 course_codes[0],
@@ -2987,12 +4484,21 @@ pub fn collect_sectioned_option_course_options(
             option_input.insert("courseLine".into(), json!(option_course_line));
             option_input.insert(
                 "title".into(),
-                title.as_ref().map(|title| json!(title)).unwrap_or(Value::Null),
+                title
+                    .as_ref()
+                    .map(|title| json!(title))
+                    .unwrap_or(Value::Null),
             );
             option_input.insert("creditRange".into(), credit_range.clone());
             option_input.insert("category".into(), nullish_value(input.get("category")));
-            option_input.insert("sectionHeading".into(), nullish_value(input.get("sectionHeading")));
-            option_input.insert("sourceHeading".into(), nullish_value(input.get("sourceHeading")));
+            option_input.insert(
+                "sectionHeading".into(),
+                nullish_value(input.get("sectionHeading")),
+            );
+            option_input.insert(
+                "sourceHeading".into(),
+                nullish_value(input.get("sourceHeading")),
+            );
             option_input.insert("notes".into(), json!(notes));
             option_input.insert("constraints".into(), json!(constraints));
             if let Some(option) = build_sectioned_option_course_option(
@@ -3023,20 +4529,18 @@ pub fn parse_sectioned_course_required_count(line: &str) -> Option<usize> {
         {
             return Some(parenthetical_count);
         }
-        return captures.get(1).and_then(|word| {
-            match word.as_str() {
-                "one" => Some(1),
-                "two" => Some(2),
-                "three" => Some(3),
-                "four" => Some(4),
-                "five" => Some(5),
-                "six" => Some(6),
-                "seven" => Some(7),
-                "eight" => Some(8),
-                "nine" => Some(9),
-                "ten" => Some(10),
-                _ => None,
-            }
+        return captures.get(1).and_then(|word| match word.as_str() {
+            "one" => Some(1),
+            "two" => Some(2),
+            "three" => Some(3),
+            "four" => Some(4),
+            "five" => Some(5),
+            "six" => Some(6),
+            "seven" => Some(7),
+            "eight" => Some(8),
+            "nine" => Some(9),
+            "ten" => Some(10),
+            _ => None,
         });
     }
     if !sectioned_credit_word_pattern().is_match(&normalized_line) {
@@ -3060,9 +4564,9 @@ pub fn has_immediate_sectioned_course_rows_after_heading(
 ) -> bool {
     let mut course_row_count = 0usize;
     for index in start_index + 1..snapshot_lines.len().min(start_index + 14) {
-        let line = normalize_whitespace(
-            &super::requirement_choice_lists::strip_choice_list_line(&snapshot_lines[index]),
-        );
+        let line = normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+            &snapshot_lines[index],
+        ));
         if line.is_empty() || immediate_section_table_header_pattern().is_match(&line) {
             continue;
         }
@@ -3090,9 +4594,9 @@ pub fn get_next_meaningful_section_line(snapshot_lines: &[String], index: usize)
         .iter()
         .skip(index.saturating_add(1))
         .map(|candidate| {
-            normalize_whitespace(
-                &super::requirement_choice_lists::strip_choice_list_line(candidate),
-            )
+            normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+                candidate,
+            ))
         })
         .find(|candidate| !candidate.is_empty())
         .unwrap_or_default()
@@ -3281,12 +4785,14 @@ pub fn build_parser_rule_requirement_replacements(
     let source_url = owner
         .get("sourceUrl")
         .filter(|value| !value.is_null())
-        .or_else(|| owner.get("primarySourceUrl").filter(|value| !value.is_null()));
-    let Some(replacement) = super::requirement_rule_utils::detect_option_replacement(
-        owner,
-        snapshot_lines,
-        source_url,
-    ) else {
+        .or_else(|| {
+            owner
+                .get("primarySourceUrl")
+                .filter(|value| !value.is_null())
+        });
+    let Some(replacement) =
+        super::requirement_rule_utils::detect_option_replacement(owner, snapshot_lines, source_url)
+    else {
         return Vec::new();
     };
     vec![json!({
@@ -3299,6 +4805,13 @@ pub fn build_parser_rule_requirement_replacements(
     })]
 }
 
+pub fn build_source_derived_requirement_replacements(
+    owner: &Value,
+    snapshot_lines: &[String],
+) -> Vec<Value> {
+    build_parser_rule_requirement_replacements(owner, snapshot_lines)
+}
+
 pub fn build_sectioned_option_requirement_groups(
     owner: &Value,
     snapshot_lines: &[String],
@@ -3307,19 +4820,22 @@ pub fn build_sectioned_option_requirement_groups(
     let source_url = owner
         .get("sourceUrl")
         .filter(|value| !value.is_null())
-        .or_else(|| owner.get("primarySourceUrl").filter(|value| !value.is_null()));
-    let Some(replacement) = super::requirement_rule_utils::detect_option_replacement(
-        owner,
-        snapshot_lines,
-        source_url,
-    ) else {
+        .or_else(|| {
+            owner
+                .get("primarySourceUrl")
+                .filter(|value| !value.is_null())
+        });
+    let Some(replacement) =
+        super::requirement_rule_utils::detect_option_replacement(owner, snapshot_lines, source_url)
+    else {
         return Vec::new();
     };
     let Some(option_acronym) = replacement.get("optionAcronym").and_then(Value::as_str) else {
         return Vec::new();
     };
-    let option_pattern = regex::Regex::new(&format!(r"(?i)\b{}\b", regex::escape(option_acronym)))
-        .expect("escaped option acronym pattern");
+    let option_pattern_source = format!(r"(?i)\b{option_acronym}\b");
+    let option_pattern = regex::Regex::new(&js_regex_compatibility_pattern(&option_pattern_source))
+        .expect("option acronym pattern");
     let core_heading_pattern = core_heading_pattern();
     let elective_heading_pattern = elective_heading_pattern();
     let credit_heading_pattern = credit_heading_pattern();
@@ -3366,12 +4882,14 @@ pub fn build_sectioned_option_requirement_groups(
     let source_heading = format!(
         "{option_acronym} Option Core/Elective Requirement: {replacement_credit_text} credits"
     );
-    let core_heading = normalize_whitespace(
-        &super::requirement_choice_lists::strip_choice_list_line(&snapshot_lines[core_heading_index]),
-    );
-    let elective_heading = normalize_whitespace(
-        &super::requirement_choice_lists::strip_choice_list_line(&snapshot_lines[elective_heading_index]),
-    );
+    let core_heading =
+        normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+            &snapshot_lines[core_heading_index],
+        ));
+    let elective_heading =
+        normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+            &snapshot_lines[elective_heading_index],
+        ));
     let core_credits = parse_section_heading_credit_range(&core_heading).unwrap_or(Value::Null);
     let elective_credits =
         parse_section_heading_credit_range(&elective_heading).unwrap_or(Value::Null);
@@ -3402,7 +4920,11 @@ pub fn build_sectioned_option_requirement_groups(
         }),
         course_parser,
     ));
-    let evidence = string_values(replacement.get("rule").and_then(|rule| rule.get("evidence")));
+    let evidence = string_values(
+        replacement
+            .get("rule")
+            .and_then(|rule| rule.get("evidence")),
+    );
     let source_row_text = if evidence.is_empty() {
         source_heading.clone()
     } else {
@@ -3437,6 +4959,281 @@ pub fn build_sectioned_option_requirement_groups(
     }
 }
 
+pub fn build_source_derived_sectioned_course_requirement_groups(
+    owner: &Value,
+    snapshot_lines: &[String],
+    primary_major_titles: &HashMap<String, String>,
+    course_parser: &CourseCodeParser,
+) -> Vec<Value> {
+    let source_url = owner
+        .get("sourceUrl")
+        .filter(|value| !value.is_null())
+        .or_else(|| {
+            owner
+                .get("primarySourceUrl")
+                .filter(|value| !value.is_null())
+        });
+    let replacement =
+        super::requirement_rule_utils::detect_option_replacement(owner, snapshot_lines, source_url);
+    let option_acronym = replacement
+        .as_ref()
+        .and_then(|value| value.get("optionAcronym"))
+        .filter(|value| !value.is_null())
+        .and_then(Value::as_str);
+    let mut groups = Vec::new();
+    let mut seen_group_ids = HashSet::new();
+    let mut index = 0;
+    while index < snapshot_lines.len() {
+        let descriptor = get_sectioned_course_heading_descriptor(
+            owner,
+            snapshot_lines,
+            index,
+            option_acronym,
+            primary_major_titles,
+            course_parser,
+        )
+        .or_else(|| {
+            get_fallback_sectioned_elective_heading_descriptor(
+                owner,
+                snapshot_lines,
+                index,
+                option_acronym,
+                course_parser,
+            )
+        });
+        let Some(descriptor) = descriptor else {
+            index += 1;
+            continue;
+        };
+        let raw_source_heading = normalize_sectioned_course_group_label(&snapshot_lines[index]);
+        if is_generic_university_category_distribution_heading(&raw_source_heading)
+            || is_generic_category_credit_bucket_heading(&raw_source_heading, course_parser)
+        {
+            index += 1;
+            continue;
+        }
+        let source_heading =
+            get_trimmed_sectioned_course_group_heading(&raw_source_heading, Some(&descriptor));
+        let mut effective_descriptor = descriptor.clone();
+        if !source_heading.is_empty()
+            && source_heading
+                != descriptor
+                    .get("label")
+                    .map(js_string_value)
+                    .unwrap_or_default()
+        {
+            if let Some(object) = effective_descriptor.as_object_mut() {
+                object.insert("label".into(), json!(source_heading));
+                object.insert(
+                    "category".into(),
+                    json!(build_sectioned_course_category(&source_heading)),
+                );
+            }
+        }
+        let end_index = get_sectioned_course_list_end_index(
+            owner,
+            snapshot_lines,
+            index,
+            option_acronym,
+            |candidate_index| {
+                get_sectioned_course_heading_descriptor(
+                    owner,
+                    snapshot_lines,
+                    candidate_index,
+                    option_acronym,
+                    primary_major_titles,
+                    course_parser,
+                )
+            },
+            course_parser,
+        );
+        let category = effective_descriptor
+            .get("category")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let options = collect_sectioned_option_course_options(
+            owner,
+            snapshot_lines,
+            index,
+            end_index,
+            &json!({
+                "category": category,
+                "sectionHeading": source_heading,
+                "sourceHeading": source_heading,
+            }),
+            course_parser,
+        );
+        if options.is_empty() {
+            index += 1;
+            continue;
+        }
+        let split_groups = build_internal_choice_split_sectioned_course_requirement_groups(
+            owner,
+            snapshot_lines,
+            index,
+            end_index,
+            &effective_descriptor,
+            &source_heading,
+            course_parser,
+        );
+        if !split_groups.is_empty() {
+            for group in split_groups {
+                let group_id = group.get("id").map(js_string_value).unwrap_or_default();
+                if seen_group_ids.insert(group_id) {
+                    groups.push(group);
+                }
+            }
+            index = index.max(end_index.saturating_sub(1));
+            index += 1;
+            continue;
+        }
+
+        let selection_count_value = effective_descriptor
+            .get("selectionCount")
+            .filter(|value| !value.is_null())
+            .or_else(|| effective_descriptor.get("requiredCount"));
+        let selection_count_number = selection_count_value.and_then(Value::as_f64);
+        let selection_count = selection_count_number
+            .filter(|number| number.is_finite() && *number > 0.0 && number.fract() == 0.0)
+            .map(|number| number as usize);
+        let fixed_option_credit_ranges = options
+            .iter()
+            .map(|option| {
+                let min_value = option
+                    .get("creditMin")
+                    .filter(|value| !value.is_null())
+                    .or_else(|| option.get("credits"));
+                let max_value = option
+                    .get("creditMax")
+                    .filter(|value| !value.is_null())
+                    .or_else(|| option.get("credits"));
+                let minimum = min_value.and_then(value_as_js_number);
+                let maximum = max_value.and_then(value_as_js_number);
+                match (minimum, maximum) {
+                    (Some(minimum), Some(maximum))
+                        if minimum.is_finite() && maximum.is_finite() =>
+                    {
+                        Some((minimum, maximum))
+                    }
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
+        let selection_credit_range = selection_count
+            .filter(|count| {
+                effective_descriptor
+                    .get("requirementType")
+                    .and_then(Value::as_str)
+                    == Some("choose_n")
+                    && options.len() >= *count
+                    && fixed_option_credit_ranges
+                        .iter()
+                        .all(|range| range.is_some())
+            })
+            .map(|count| {
+                let mut minimum_credits = fixed_option_credit_ranges
+                    .iter()
+                    .filter_map(|range| range.as_ref().map(|(minimum, _)| *minimum))
+                    .collect::<Vec<_>>();
+                let mut maximum_credits = fixed_option_credit_ranges
+                    .iter()
+                    .filter_map(|range| range.as_ref().map(|(_, maximum)| *maximum))
+                    .collect::<Vec<_>>();
+                minimum_credits.sort_by(f64::total_cmp);
+                maximum_credits.sort_by(|left, right| right.total_cmp(left));
+                let minimum = minimum_credits.into_iter().take(count).sum::<f64>();
+                let maximum = maximum_credits.into_iter().take(count).sum::<f64>();
+                (minimum, maximum)
+            });
+        if let Some((minimum, maximum)) = selection_credit_range {
+            if let Some(object) = effective_descriptor.as_object_mut() {
+                object.insert("minCredits".into(), json!(minimum));
+                object.insert("maxCredits".into(), json!(maximum));
+                object.insert(
+                    "creditText".into(),
+                    json!(if minimum == maximum {
+                        js_number_string(minimum)
+                    } else {
+                        format!(
+                            "{}-{}",
+                            js_number_string(minimum),
+                            js_number_string(maximum)
+                        )
+                    }),
+                );
+            }
+        }
+        let requirement_type = effective_descriptor
+            .get("requirementType")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let minimum_value = if requirement_type == "choose_n" {
+            effective_descriptor.get("minCourses")
+        } else {
+            effective_descriptor.get("minCredits")
+        };
+        let maximum_value = if requirement_type == "choose_n" {
+            effective_descriptor.get("maxCourses")
+        } else {
+            effective_descriptor.get("maxCredits")
+        };
+        let descriptor_minimum = minimum_value
+            .filter(|value| !value.is_null())
+            .map(js_string_value)
+            .unwrap_or_else(|| "options".to_string());
+        let descriptor_maximum = maximum_value
+            .filter(|value| !value.is_null())
+            .map(js_string_value)
+            .unwrap_or_else(|| "open".to_string());
+        let owner_id = owner
+            .get("ownerId")
+            .map(js_string_value)
+            .unwrap_or_else(|| "undefined".to_string());
+        let label = effective_descriptor
+            .get("label")
+            .map(js_string_value)
+            .unwrap_or_default();
+        let group_id = format!(
+            "{owner_id}:requirement-group:{}",
+            slugify_requirement_identifier(&format!(
+                "{label}-{requirement_type}-{descriptor_minimum}-{descriptor_maximum}"
+            ))
+        );
+        if seen_group_ids.contains(&group_id) {
+            index += 1;
+            continue;
+        }
+        let group = build_parsed_requirement_group(&json!({
+            "id": group_id,
+            "label": label,
+            "category": effective_descriptor.get("category"),
+            "subcategory": effective_descriptor.get("category"),
+            "requirementType": effective_descriptor.get("requirementType"),
+            "minCourses": effective_descriptor.get("minCourses"),
+            "maxCourses": effective_descriptor.get("maxCourses"),
+            "selectionCount": effective_descriptor.get("selectionCount"),
+            "requiredCount": effective_descriptor.get("requiredCount"),
+            "minCredits": effective_descriptor.get("minCredits"),
+            "maxCredits": effective_descriptor.get("maxCredits"),
+            "creditText": effective_descriptor.get("creditText"),
+            "sourceHeading": source_heading,
+            "sourceRowText": source_heading,
+            "detectedOptionCue": effective_descriptor.get("detectedOptionCue"),
+            "notes": ["Parsed from a source section heading and the following course rows."],
+            "options": options,
+        }));
+        if array(group.get("options")).is_empty() {
+            index += 1;
+            continue;
+        }
+        seen_group_ids.insert(group_id);
+        groups.push(group);
+        index = index.max(end_index.saturating_sub(1));
+        index += 1;
+    }
+    groups
+}
+
 pub fn build_internal_choice_split_sectioned_course_requirement_groups(
     owner: &Value,
     snapshot_lines: &[String],
@@ -3449,9 +5246,9 @@ pub fn build_internal_choice_split_sectioned_course_requirement_groups(
     let mut choice_cue_index = None;
     let mut course_rows_before_choice = 0usize;
     for index in start_index + 1..end_index.min(snapshot_lines.len()) {
-        let line = normalize_whitespace(
-            &super::requirement_choice_lists::strip_choice_list_line(&snapshot_lines[index]),
-        );
+        let line = normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+            &snapshot_lines[index],
+        ));
         if line.is_empty() || parse_leading_section_heading_credit_range(&line).is_some() {
             continue;
         }
@@ -3582,7 +5379,7 @@ pub fn build_pathway_section_fallback_concentration_group(
     primary_major_titles: &HashMap<String, String>,
     course_parser: &CourseCodeParser,
 ) -> Option<Value> {
-    if !js_truthy(owner.get("pathwayId")) {
+    if !owner.get("pathwayId").is_some_and(js_truthy) {
         return None;
     }
     let label = get_selected_pathway_display_label(owner, primary_major_titles)?;
@@ -3593,8 +5390,7 @@ pub fn build_pathway_section_fallback_concentration_group(
             .filter(|value| !value.is_null())
             .map(js_string_value)
             .unwrap_or_default();
-        super::requirement_recovery_scope::normalize_matcher_text(&group_label)
-            == normalized_label
+        super::requirement_recovery_scope::normalize_matcher_text(&group_label) == normalized_label
     }) {
         return None;
     }
@@ -3608,11 +5404,9 @@ pub fn build_pathway_section_fallback_concentration_group(
         return None;
     }
     let concentration_credit_line = snapshot_lines.iter().find(|line| {
-        concentration_credit_line_pattern().is_match(
-            &normalize_whitespace(
-                &super::requirement_choice_lists::strip_choice_list_line(line),
-            ),
-        )
+        concentration_credit_line_pattern().is_match(&normalize_whitespace(
+            &super::requirement_choice_lists::strip_choice_list_line(line),
+        ))
     })?;
     let concentration_credits = parse_requirement_credit_amount(concentration_credit_line)?;
     if !concentration_credits.is_finite() || concentration_credits <= 0.0 {
@@ -3661,10 +5455,12 @@ pub fn build_pathway_section_fallback_concentration_group(
             option_input.insert(
                 "creditRange".into(),
                 parse_requirement_credit_range(&line)
-                    .map(|(minimum, maximum)| json!({
-                        "minCredits": minimum,
-                        "maxCredits": maximum,
-                    }))
+                    .map(|(minimum, maximum)| {
+                        json!({
+                            "minCredits": minimum,
+                            "maxCredits": maximum,
+                        })
+                    })
                     .unwrap_or(Value::Null),
             );
             option_input.insert("category".into(), json!(category));
@@ -3689,9 +5485,7 @@ pub fn build_pathway_section_fallback_concentration_group(
     let credits = js_number_string(concentration_credits);
     let group_id = format!(
         "{owner_id}:requirement-group:{}",
-        slugify_requirement_identifier(&format!(
-            "{label}-choose_credits-{credits}-{credits}"
-        ))
+        slugify_requirement_identifier(&format!("{label}-choose_credits-{credits}-{credits}"))
     );
     let course_count = concentration_course_count
         .map(|count| json!(count))
@@ -3743,11 +5537,10 @@ pub fn build_standalone_course_choice_requirement_groups(
         let category = build_sectioned_course_category(&source_row_text);
         let mut options = Vec::new();
         for option_index in index + 1..snapshot_lines.len().min(index + 42) {
-            let option_line = normalize_whitespace(
-                &super::requirement_choice_lists::strip_choice_list_line(
+            let option_line =
+                normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
                     &snapshot_lines[option_index],
-                ),
-            );
+                ));
             if option_line.is_empty() {
                 continue;
             }
@@ -3759,24 +5552,22 @@ pub fn build_standalone_course_choice_requirement_groups(
                     .map(|title| json!(title))
                     .unwrap_or(Value::Null),
             );
-            let credit_range = parse_requirement_credit_range(&option_line).map(
-                |(minimum, maximum)| {
+            let credit_range =
+                parse_requirement_credit_range(&option_line).map(|(minimum, maximum)| {
                     json!({
                         "minCredits": minimum,
                         "maxCredits": maximum,
                     })
-                },
-            );
-            option_input.insert(
-                "creditRange".into(),
-                credit_range.unwrap_or(Value::Null),
-            );
+                });
+            option_input.insert("creditRange".into(), credit_range.unwrap_or(Value::Null));
             option_input.insert("category".into(), json!(category));
             option_input.insert("sectionHeading".into(), json!(source_row_text));
             option_input.insert("sourceHeading".into(), json!(source_row_text));
-            if let Some(option) =
-                build_sectioned_option_course_option(owner, &Value::Object(option_input), course_parser)
-            {
+            if let Some(option) = build_sectioned_option_course_option(
+                owner,
+                &Value::Object(option_input),
+                course_parser,
+            ) {
                 options.push(option);
                 continue;
             }
@@ -3821,7 +5612,11 @@ pub fn build_standalone_course_choice_requirement_groups(
         group_input.insert("subcategory".into(), json!(category));
         group_input.insert(
             "requirementType".into(),
-            json!(if required_count == 1 { "choose_one" } else { "choose_n" }),
+            json!(if required_count == 1 {
+                "choose_one"
+            } else {
+                "choose_n"
+            }),
         );
         group_input.insert("minCourses".into(), json!(required_count));
         group_input.insert("maxCourses".into(), json!(required_count));
@@ -3835,7 +5630,9 @@ pub fn build_standalone_course_choice_requirement_groups(
         );
         group_input.insert(
             "notes".into(),
-            json!(["Parsed from an explicit course-count choice cue and its following course rows."]),
+            json!([
+                "Parsed from an explicit course-count choice cue and its following course rows."
+            ]),
         );
         group_input.insert("options".into(), json!(options));
         let group = build_parsed_requirement_group(&Value::Object(group_input));
@@ -3870,7 +5667,10 @@ pub fn get_simple_sequence_fallback_subject_from_context(
 ) -> Option<String> {
     for row_index in (index.saturating_sub(8)..=index).rev() {
         let line = normalize_whitespace(
-            snapshot_lines.get(row_index).map(String::as_str).unwrap_or_default(),
+            snapshot_lines
+                .get(row_index)
+                .map(String::as_str)
+                .unwrap_or_default(),
         );
         if let Some(captures) = trailing_parenthetical_subject_pattern().captures(&line) {
             if let Some(subject) = captures.get(1) {
@@ -3916,8 +5716,8 @@ pub fn get_expected_sequence_subjects_from_cue(
     if sequence_biology_cue_pattern().is_match(&text) {
         subjects.push("BIOL".to_string());
     }
-    if let Some(fallback_subject) = fallback_subject
-        .and_then(|subject| course_parser.normalize_subject(subject))
+    if let Some(fallback_subject) =
+        fallback_subject.and_then(|subject| course_parser.normalize_subject(subject))
     {
         subjects.push(fallback_subject);
     }
@@ -3973,8 +5773,7 @@ pub fn is_sequence_choice_boundary_line(
     paths_started: bool,
     course_parser: &CourseCodeParser,
 ) -> bool {
-    let normalized_line =
-        super::requirement_choice_lists::normalize_sequence_source_line(line);
+    let normalized_line = super::requirement_choice_lists::normalize_sequence_source_line(line);
     if normalized_line.is_empty() {
         return paths_started;
     }
@@ -3988,9 +5787,7 @@ pub fn is_sequence_choice_boundary_line(
     }
     paths_started
         && course_parser.extract_from_line(&normalized_line).is_empty()
-        && super::requirement_recovery_scope::has_primary_requirement_section_cue(
-            &normalized_line,
-        )
+        && super::requirement_recovery_scope::has_primary_requirement_section_cue(&normalized_line)
 }
 
 fn get_lab_note_fallback_subject(
@@ -4045,14 +5842,10 @@ pub fn collect_sequence_lab_notes(
         lab_lines.push(line.clone());
         for continuation_index in index + 1..lines.len().min(index + 3) {
             let continuation_line = &lines[continuation_index];
-            let combined = normalize_whitespace(
-                &format!("{} {}", lab_lines.join(" "), continuation_line),
-            );
-            let continuation_fallback_subject = get_lab_note_fallback_subject(
-                &combined,
-                fallback_subject,
-                course_parser,
-            );
+            let combined =
+                normalize_whitespace(&format!("{} {}", lab_lines.join(" "), continuation_line));
+            let continuation_fallback_subject =
+                get_lab_note_fallback_subject(&combined, fallback_subject, course_parser);
             let continuation_lab_courses = extract_course_codes_from_sequence_text(
                 continuation_line,
                 continuation_fallback_subject.as_deref(),
@@ -4091,7 +5884,9 @@ pub fn collect_sequence_lab_notes(
 
 pub fn apply_sequence_lab_notes(paths: &[Value], lab_notes: Option<&Value>) -> Vec<Value> {
     let Some(lab_notes) = lab_notes.filter(|notes| {
-        notes.get("text").is_some_and(|text| !js_string_nullish(Some(text)).is_empty())
+        notes
+            .get("text")
+            .is_some_and(|text| !js_string_nullish(Some(text)).is_empty())
     }) else {
         return paths.to_vec();
     };
@@ -4222,7 +6017,10 @@ pub fn build_parenthetical_sequence_choice_candidates(
     course_parser: &CourseCodeParser,
 ) -> Vec<Value> {
     let cue_line = super::requirement_choice_lists::normalize_sequence_source_line(
-        snapshot_lines.get(index).map(String::as_str).unwrap_or_default(),
+        snapshot_lines
+            .get(index)
+            .map(String::as_str)
+            .unwrap_or_default(),
     );
     if !parenthetical_sequence_choice_cue_pattern().is_match(&cue_line) {
         return Vec::new();
@@ -4235,7 +6033,9 @@ pub fn build_parenthetical_sequence_choice_candidates(
         let left_text = normalize_whitespace(left_match.as_str());
         let right_text = normalize_whitespace(right_match.as_str());
         let left_courses = extract_course_codes_from_sequence_text(&left_text, None, course_parser);
-        let fallback_subject = left_courses.first().and_then(|course_code| course_code_subject(course_code));
+        let fallback_subject = left_courses
+            .first()
+            .and_then(|course_code| course_code_subject(course_code));
         let right_courses = extract_course_codes_from_sequence_text(
             &right_text,
             fallback_subject.as_deref(),
@@ -4304,9 +6104,8 @@ pub fn build_parenthetical_sequence_choice_requirement_groups(
                 .and_then(Value::as_array_mut)
             {
                 paths.retain_mut(|path| {
-                    if let Some(course_codes) = path
-                        .get_mut("uwCourses")
-                        .and_then(Value::as_array_mut)
+                    if let Some(course_codes) =
+                        path.get_mut("uwCourses").and_then(Value::as_array_mut)
                     {
                         course_codes.retain(|course_code| {
                             let normalized = normalize_course_code(&js_string_value(course_code));
@@ -4318,17 +6117,12 @@ pub fn build_parenthetical_sequence_choice_requirement_groups(
                     }
                 });
             }
-            let Some(group) = build_sequence_choice_requirement_group(
-                owner,
-                &filtered_candidate,
-                course_parser,
-            ) else {
+            let Some(group) =
+                build_sequence_choice_requirement_group(owner, &filtered_candidate, course_parser)
+            else {
                 continue;
             };
-            let group_id = group
-                .get("id")
-                .map(js_string_value)
-                .unwrap_or_default();
+            let group_id = group.get("id").map(js_string_value).unwrap_or_default();
             if seen_group_ids.insert(group_id) {
                 groups.push(group);
             }
@@ -4361,34 +6155,764 @@ fn extract_course_codes_from_sequence_text(
         .unwrap_or_default()
 }
 
+pub fn build_multiline_sequence_choice_candidate(
+    snapshot_lines: &[String],
+    index: usize,
+    course_parser: &CourseCodeParser,
+) -> Option<Value> {
+    let cue_line = super::requirement_choice_lists::normalize_sequence_source_line(
+        snapshot_lines
+            .get(index)
+            .map(String::as_str)
+            .unwrap_or_default(),
+    );
+    if !sequence_choice_context_pattern().is_match(&cue_line)
+        || sequence_label_alternative_pattern().is_match(&cue_line)
+    {
+        return None;
+    }
+    let fallback_subject =
+        get_sequence_fallback_subject_from_context(snapshot_lines, index, &cue_line, course_parser);
+    let expected_subjects = get_expected_sequence_subjects_from_cue(
+        &cue_line,
+        fallback_subject.as_deref(),
+        course_parser,
+    );
+    let inline_segments =
+        super::sequence_text::split_inline_sequence_segments(std::slice::from_ref(&cue_line))
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+    let inline_paths = inline_segments
+        .into_iter()
+        .filter_map(|segment| {
+            let courses = extract_course_codes_from_sequence_text(
+                &segment,
+                fallback_subject.as_deref(),
+                course_parser,
+            );
+            (courses.len() >= 2).then(|| {
+                json!({
+                    "label": get_sequence_path_label_from_text(&segment, &courses, None),
+                    "uwCourses": courses,
+                    "sourceText": segment,
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    let source_section = super::requirement_choice_lists::find_nearby_requirement_choice_label(
+        snapshot_lines,
+        index,
+        course_parser,
+    );
+    let detected_option_cue = get_sequence_choice_cue(&cue_line);
+    if inline_paths.len() >= 2 {
+        return Some(json!({
+            "rawText": cue_line,
+            "sourceSection": source_section,
+            "detectedOptionCue": detected_option_cue,
+            "paths": inline_paths,
+        }));
+    }
+    let mut source_lines = vec![cue_line.clone()];
+    let mut paths = Vec::new();
+    let mut current_path_lines = Vec::new();
+    let end_index = snapshot_lines.len().min(index.saturating_add(16));
+    for row_index in index.saturating_add(1)..end_index {
+        let row_line = super::requirement_choice_lists::normalize_sequence_source_line(
+            &snapshot_lines[row_index],
+        );
+        if is_sequence_choice_boundary_line(
+            &row_line,
+            !current_path_lines.is_empty() || !paths.is_empty(),
+            course_parser,
+        ) {
+            break;
+        }
+        let row_course_codes = extract_course_codes_from_sequence_text(
+            &row_line,
+            fallback_subject.as_deref(),
+            course_parser,
+        );
+        if !paths.is_empty()
+            && sequence_choice_context_pattern().is_match(&row_line)
+            && row_course_codes.is_empty()
+        {
+            break;
+        }
+        if sequence_or_only_line_pattern().is_match(&row_line) {
+            flush_current_sequence_path(
+                &mut current_path_lines,
+                &mut paths,
+                fallback_subject.as_deref(),
+                course_parser,
+            );
+            source_lines.push(row_line);
+            continue;
+        }
+        if row_course_codes.is_empty() {
+            if !current_path_lines.is_empty() && !paths.is_empty() {
+                break;
+            }
+            continue;
+        }
+        if !paths.is_empty()
+            && !sequence_row_subjects_fit_cue(&row_course_codes, &expected_subjects)
+        {
+            break;
+        }
+        let row_subjects = unique_in_order(
+            row_course_codes
+                .iter()
+                .filter_map(|course_code| course_code_subject(course_code))
+                .collect(),
+        );
+        if !paths.is_empty()
+            && row_subjects.len() > 1
+            && !sequence_choice_context_pattern().is_match(&row_line)
+        {
+            break;
+        }
+        source_lines.push(row_line.clone());
+        if sequence_row_looks_like_single_path(&row_line, &row_course_codes, &expected_subjects)
+            && current_path_lines.is_empty()
+        {
+            paths.push(json!({
+                "label": get_sequence_path_label_from_text(&row_line, &row_course_codes, None),
+                "uwCourses": row_course_codes,
+                "sourceText": row_line,
+            }));
+            continue;
+        }
+        current_path_lines.push(row_line);
+    }
+    flush_current_sequence_path(
+        &mut current_path_lines,
+        &mut paths,
+        fallback_subject.as_deref(),
+        course_parser,
+    );
+    if paths.len() < 2 {
+        return None;
+    }
+    let mut seen_course_paths = HashSet::new();
+    let paths = paths
+        .into_iter()
+        .filter(|path| {
+            let key = array(path.get("uwCourses"))
+                .iter()
+                .map(js_string_value)
+                .collect::<Vec<_>>()
+                .join("|");
+            seen_course_paths.insert(key)
+        })
+        .collect::<Vec<_>>();
+    if paths.len() < 2 {
+        return None;
+    }
+    let lab_notes = collect_sequence_lab_notes(
+        snapshot_lines,
+        index.saturating_add(1),
+        fallback_subject.as_deref(),
+        course_parser,
+    );
+    let paths = apply_sequence_lab_notes(&paths, lab_notes.as_ref());
+    Some(json!({
+        "rawText": normalize_whitespace(&source_lines.join(" ")),
+        "sourceSection": source_section,
+        "detectedOptionCue": detected_option_cue,
+        "paths": paths,
+    }))
+}
+
+fn flush_current_sequence_path(
+    current_path_lines: &mut Vec<String>,
+    paths: &mut Vec<Value>,
+    fallback_subject: Option<&str>,
+    course_parser: &CourseCodeParser,
+) {
+    if current_path_lines.is_empty() {
+        return;
+    }
+    let source_text = normalize_whitespace(&current_path_lines.join(" "));
+    let course_codes = unique_in_order(
+        current_path_lines
+            .iter()
+            .flat_map(|line| {
+                extract_course_codes_from_sequence_text(line, fallback_subject, course_parser)
+            })
+            .collect(),
+    );
+    if course_codes.len() >= 2 {
+        paths.push(json!({
+            "label": get_sequence_path_label_from_text(&source_text, &course_codes, None),
+            "uwCourses": course_codes,
+            "sourceText": source_text,
+        }));
+    }
+    current_path_lines.clear();
+}
+
+pub fn build_lettered_choose_one_requirement_groups(
+    owner: &Value,
+    snapshot_lines: &[String],
+    course_parser: &CourseCodeParser,
+) -> Vec<Value> {
+    struct Candidate {
+        heading: String,
+        option_lines: Vec<String>,
+        fallback_subject: Option<String>,
+        start_index: usize,
+    }
+
+    let mut candidates = Vec::new();
+    for index in 0..snapshot_lines.len() {
+        let heading = normalize_whitespace(
+            &super::requirement_choice_lists::strip_choice_list_line(&snapshot_lines[index]),
+        );
+        if !super::requirement_choice_lists::is_numbered_choose_one_option_heading(&heading)
+            || super::requirement_recovery_scope::is_graduate_or_applied_masters_requirement_context(
+                owner,
+                snapshot_lines,
+                index,
+            )
+        {
+            continue;
+        }
+        let mut option_lines = Vec::new();
+        for row_index in index + 1..snapshot_lines.len().min(index + 18) {
+            let line =
+                normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+                    &snapshot_lines[row_index],
+                ));
+            if line.is_empty() {
+                continue;
+            }
+            if numbered_parenthetical_option_boundary_pattern().is_match(&line)
+                || lettered_choice_note_boundary_pattern().is_match(&line)
+            {
+                break;
+            }
+            if super::requirement_choice_lists::is_lettered_option_line(&line) {
+                option_lines.push(
+                    super::requirement_choice_lists::strip_leading_lettered_option_marker(&line),
+                );
+            }
+        }
+        if option_lines.len() < 2 {
+            continue;
+        }
+        let fallback_subject = get_sequence_fallback_subject_from_context(
+            snapshot_lines,
+            index,
+            &heading,
+            course_parser,
+        );
+        candidates.push(Candidate {
+            heading,
+            option_lines,
+            fallback_subject,
+            start_index: index,
+        });
+    }
+
+    let flattened_option_texts = candidates
+        .iter()
+        .flat_map(|candidate| {
+            candidate
+                .option_lines
+                .iter()
+                .map(|line| normalize_whitespace(line))
+        })
+        .collect::<Vec<_>>();
+    let flattened_segments =
+        super::sequence_text::split_inline_sequence_segments(&flattened_option_texts);
+    let mut segment_cursor = 0;
+    let candidate_segments = candidates
+        .iter()
+        .map(|candidate| {
+            candidate
+                .option_lines
+                .iter()
+                .map(|_| {
+                    let segments = flattened_segments
+                        .get(segment_cursor)
+                        .cloned()
+                        .unwrap_or_default();
+                    segment_cursor += 1;
+                    segments
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
+    let mut sequence_course_code_rows = Vec::new();
+    for (candidate_index, candidate) in candidates.iter().enumerate() {
+        for segments in &candidate_segments[candidate_index] {
+            for segment in segments {
+                let normalized_text =
+                    super::requirement_choice_lists::normalize_sequence_source_line(segment);
+                sequence_course_code_rows.push(super::sequence_text::SequenceCourseCodeRow {
+                    text: normalized_text.clone(),
+                    fallback_subject: candidate.fallback_subject.clone(),
+                    explicit_course_codes: unique_in_order(
+                        course_parser.extract_from_line(&normalized_text),
+                    ),
+                });
+            }
+        }
+    }
+    let rust_course_code_sets =
+        super::sequence_text::expand_sequence_course_codes(&sequence_course_code_rows);
+    let mut course_code_row_index = 0;
+    let mut seen_group_ids = HashSet::new();
+    let mut groups = Vec::new();
+    for (candidate_index, candidate) in candidates.iter().enumerate() {
+        let mut paths = Vec::new();
+        for (option_index, option_text) in candidate.option_lines.iter().enumerate() {
+            let normalized_option_text = normalize_whitespace(option_text);
+            let segments = &candidate_segments[candidate_index][option_index];
+            let segment_course_code_sets = rust_course_code_sets
+                .get(course_code_row_index..course_code_row_index + segments.len())
+                .unwrap_or(&[]);
+            course_code_row_index += segments.len();
+            let inline_paths = segments
+                .iter()
+                .zip(segment_course_code_sets)
+                .filter(|(_, course_codes)| course_codes.len() >= 2)
+                .map(|(segment, course_codes)| {
+                    json!({
+                        "label": get_sequence_path_label_from_text(segment, course_codes, None),
+                        "uwCourses": course_codes,
+                        "sourceText": segment,
+                    })
+                })
+                .collect::<Vec<_>>();
+            if !inline_paths.is_empty() {
+                paths.extend(inline_paths);
+                continue;
+            }
+            let normalized_sequence_text =
+                super::requirement_choice_lists::normalize_sequence_source_line(
+                    &normalized_option_text,
+                );
+            let fallback_rows = [super::sequence_text::SequenceCourseCodeRow {
+                text: normalized_sequence_text.clone(),
+                fallback_subject: candidate.fallback_subject.clone(),
+                explicit_course_codes: unique_in_order(
+                    course_parser.extract_from_line(&normalized_sequence_text),
+                ),
+            }];
+            let uw_courses = super::sequence_text::expand_sequence_course_codes(&fallback_rows)
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            if !uw_courses.is_empty() {
+                paths.push(json!({
+                    "label": get_sequence_path_label_from_text(&normalized_option_text, &uw_courses, None),
+                    "uwCourses": uw_courses,
+                    "sourceText": normalized_option_text,
+                }));
+            }
+        }
+        let lab_notes = collect_sequence_lab_notes(
+            snapshot_lines,
+            candidate.start_index,
+            candidate.fallback_subject.as_deref(),
+            course_parser,
+        );
+        paths = apply_sequence_lab_notes(&paths, lab_notes.as_ref());
+        let raw_text = normalize_whitespace(&format!(
+            "{}: {}",
+            candidate.heading,
+            candidate.option_lines.join(" ")
+        ));
+        let group = build_sequence_choice_requirement_group(
+            owner,
+            &json!({
+                "rawText": raw_text,
+                "sourceSection": candidate.heading,
+                "detectedOptionCue": "lettered choose-one options",
+                "paths": paths,
+            }),
+            course_parser,
+        );
+        if let Some(group) = group {
+            let group_id = group.get("id").map(js_string_value).unwrap_or_default();
+            if seen_group_ids.insert(group_id) {
+                groups.push(group);
+            }
+        }
+    }
+    groups
+}
+
+pub fn build_generic_sequence_choice_requirement_groups(
+    owner: &Value,
+    parsed_course_codes: &[String],
+    snapshot_lines: &[String],
+    course_parser: &CourseCodeParser,
+) -> Vec<Value> {
+    let parsed_course_code_set = parsed_course_codes
+        .iter()
+        .map(|course_code| normalize_course_code(course_code))
+        .collect::<HashSet<_>>();
+    let mut seen_group_ids = HashSet::new();
+    let mut groups = Vec::new();
+    for index in 0..snapshot_lines.len() {
+        if super::requirement_choice_lists::is_lettered_option_line_under_choose_one_heading(
+            snapshot_lines,
+            index,
+        ) {
+            continue;
+        }
+        let columnar_candidate =
+            build_columnar_sequence_choice_candidate(snapshot_lines, index, course_parser);
+        let mut candidates =
+            build_parenthetical_sequence_choice_candidates(snapshot_lines, index, course_parser);
+        if let Some(candidate) = build_ampersand_or_single_sequence_choice_candidate(
+            snapshot_lines,
+            index,
+            course_parser,
+        ) {
+            candidates.push(candidate);
+        }
+        if let Some(candidate) = columnar_candidate.as_ref() {
+            candidates.push(candidate.clone());
+        }
+        if columnar_candidate.is_none() {
+            if let Some(candidate) = build_alternating_number_sequence_choice_candidate(
+                snapshot_lines,
+                index,
+                course_parser,
+            ) {
+                candidates.push(candidate);
+            }
+        }
+        if let Some(candidate) =
+            build_multiline_sequence_choice_candidate(snapshot_lines, index, course_parser)
+        {
+            candidates.push(candidate);
+        }
+        for candidate in candidates {
+            let raw_text = js_string_nullish(candidate.get("rawText"));
+            if sequence_restriction_context_pattern().is_match(&raw_text) {
+                continue;
+            }
+            let strong_sequence_cue = sequence_choice_context_pattern().is_match(&raw_text);
+            let minimum_courses_per_path =
+                if candidate.get("detectedOptionCue").and_then(Value::as_str)
+                    == Some("sequence or single course")
+                {
+                    1
+                } else {
+                    2
+                };
+            let mut filtered_candidate = candidate.clone();
+            if let Some(paths) = filtered_candidate
+                .get_mut("paths")
+                .and_then(Value::as_array_mut)
+            {
+                paths.retain_mut(|path| {
+                    let Some(course_codes) =
+                        path.get_mut("uwCourses").and_then(Value::as_array_mut)
+                    else {
+                        return false;
+                    };
+                    let retained = unique_in_order(
+                        course_codes
+                            .iter()
+                            .filter(|course_code| {
+                                let normalized =
+                                    normalize_course_code(&js_string_value(course_code));
+                                strong_sequence_cue || parsed_course_code_set.contains(&normalized)
+                            })
+                            .map(js_string_value)
+                            .collect(),
+                    );
+                    *course_codes = retained.into_iter().map(Value::String).collect();
+                    course_codes.len() >= minimum_courses_per_path
+                });
+            }
+            let Some(group) =
+                build_sequence_choice_requirement_group(owner, &filtered_candidate, course_parser)
+            else {
+                continue;
+            };
+            let group_id = group.get("id").map(js_string_value).unwrap_or_default();
+            if seen_group_ids.insert(group_id) {
+                groups.push(group);
+            }
+        }
+    }
+    groups
+}
+
+pub fn build_columnar_sequence_choice_candidate(
+    snapshot_lines: &[String],
+    index: usize,
+    course_parser: &CourseCodeParser,
+) -> Option<Value> {
+    let cue_line = super::requirement_choice_lists::normalize_sequence_source_line(
+        snapshot_lines
+            .get(index)
+            .map(String::as_str)
+            .unwrap_or_default(),
+    );
+    if !sequence_label_alternative_pattern().is_match(&cue_line) {
+        return None;
+    }
+    let labels = split_sequence_alternative_labels(&cue_line);
+    if labels.len() < 2 {
+        return None;
+    }
+    let fallback_subject =
+        get_sequence_fallback_subject_from_context(snapshot_lines, index, &cue_line, course_parser);
+    let expected_subjects = if let Some(subject) = fallback_subject.as_ref() {
+        vec![subject.clone()]
+    } else {
+        get_expected_sequence_subjects_from_cue(&cue_line, None, course_parser)
+    };
+    let mut paths = labels
+        .into_iter()
+        .map(|label| {
+            json!({
+                "label": label,
+                "uwCourses": [],
+                "sourceText": cue_line,
+            })
+        })
+        .collect::<Vec<_>>();
+    let labels = paths
+        .iter()
+        .map(|path| js_string_nullish(path.get("label")))
+        .collect::<Vec<_>>();
+    let label_text = normalize_whitespace(&labels.join(" "));
+    let mut source_lines = vec![cue_line.clone()];
+    let mut alternating_single_course_count = 0usize;
+    let end_index = snapshot_lines.len().min(index.saturating_add(12));
+    for row_index in index.saturating_add(1)..end_index {
+        let row_line = super::requirement_choice_lists::normalize_sequence_source_line(
+            &snapshot_lines[row_index],
+        );
+        if is_sequence_choice_boundary_line(
+            &row_line,
+            paths
+                .iter()
+                .any(|path| !array(path.get("uwCourses")).is_empty()),
+            course_parser,
+        ) {
+            break;
+        }
+        let explicit_line_codes = course_parser
+            .extract_from_line(&row_line)
+            .into_iter()
+            .map(|course_code| normalize_course_code(&course_code))
+            .collect::<HashSet<_>>();
+        let row_course_codes = extract_course_codes_from_sequence_text(
+            &row_line,
+            fallback_subject.as_deref(),
+            course_parser,
+        )
+        .into_iter()
+        .filter(|course_code| {
+            if !sequence_row_subjects_fit_cue(std::slice::from_ref(course_code), &expected_subjects)
+            {
+                return false;
+            }
+            let inferred_from_bare_number =
+                !explicit_line_codes.contains(&normalize_course_code(course_code));
+            !(inferred_from_bare_number
+                && fallback_subject.as_deref() == Some("PHYS")
+                && algebra_based_cue_pattern().is_match(&label_text)
+                && calculus_based_cue_pattern().is_match(&label_text)
+                && super::requirement_course_codes::get_parsed_course_level(course_code)
+                    .is_some_and(|level| level >= 300))
+        })
+        .collect::<Vec<_>>();
+        if row_course_codes.is_empty() {
+            continue;
+        }
+        if row_course_codes.len() > paths.len() {
+            break;
+        }
+        if row_course_codes.len() == paths.len() {
+            for (path, course_code) in paths.iter_mut().zip(row_course_codes) {
+                append_sequence_path_course(path, &course_code, &row_line);
+            }
+            source_lines.push(row_line);
+        } else if row_course_codes.len() > 1
+            && paths
+                .iter()
+                .any(|path| !array(path.get("uwCourses")).is_empty())
+        {
+            for (path, course_code) in paths.iter_mut().zip(row_course_codes) {
+                append_sequence_path_course(path, &course_code, &row_line);
+            }
+            source_lines.push(row_line);
+        } else if paths.len() == 2 && row_course_codes.len() == 1 {
+            let path_index = alternating_single_course_count % paths.len();
+            alternating_single_course_count += 1;
+            if let Some(path) = paths.get_mut(path_index) {
+                append_sequence_path_course(path, &row_course_codes[0], &row_line);
+            }
+            source_lines.push(row_line);
+            if paths
+                .iter()
+                .all(|path| array(path.get("uwCourses")).len() >= 3)
+            {
+                break;
+            }
+        }
+    }
+    let mut populated_paths = Vec::new();
+    for mut path in paths {
+        let courses = unique_in_order(
+            array(path.get("uwCourses"))
+                .iter()
+                .map(js_string_value)
+                .collect(),
+        );
+        if courses.len() < 2 {
+            continue;
+        }
+        if let Some(object) = path.as_object_mut() {
+            object.insert("uwCourses".into(), json!(courses));
+        }
+        populated_paths.push(path);
+    }
+    if populated_paths.len() < 2 {
+        return None;
+    }
+    let lab_notes = collect_sequence_lab_notes(
+        snapshot_lines,
+        index.saturating_add(1),
+        fallback_subject.as_deref(),
+        course_parser,
+    );
+    let paths = apply_sequence_lab_notes(&populated_paths, lab_notes.as_ref());
+    Some(json!({
+        "rawText": normalize_whitespace(&source_lines.join(" ")),
+        "sourceSection": super::requirement_choice_lists::find_nearby_requirement_choice_label(
+            snapshot_lines,
+            index,
+            course_parser,
+        ),
+        "detectedOptionCue": get_sequence_choice_cue(&cue_line),
+        "paths": paths,
+    }))
+}
+
+pub fn build_columnar_sequence_choice_requirement_groups(
+    owner: &Value,
+    parsed_course_codes: &[String],
+    snapshot_lines: &[String],
+    course_parser: &CourseCodeParser,
+) -> Vec<Value> {
+    let parsed_course_code_set = parsed_course_codes
+        .iter()
+        .map(|course_code| normalize_course_code(course_code))
+        .collect::<HashSet<_>>();
+    let mut seen_group_ids = HashSet::new();
+    let mut groups = Vec::new();
+    for index in 0..snapshot_lines.len() {
+        if super::requirement_choice_lists::is_lettered_option_line_under_choose_one_heading(
+            snapshot_lines,
+            index,
+        ) {
+            continue;
+        }
+        let Some(candidate) =
+            build_columnar_sequence_choice_candidate(snapshot_lines, index, course_parser)
+        else {
+            continue;
+        };
+        let raw_text = js_string_nullish(candidate.get("rawText"));
+        if sequence_restriction_context_pattern().is_match(&raw_text) {
+            continue;
+        }
+        let strong_sequence_cue = sequence_choice_context_pattern().is_match(&raw_text)
+            || sequence_label_alternative_pattern().is_match(&raw_text)
+            || sequence_alternative_choice_pattern().is_match(&raw_text);
+        let mut filtered_candidate = candidate.clone();
+        if let Some(paths) = filtered_candidate
+            .get_mut("paths")
+            .and_then(Value::as_array_mut)
+        {
+            paths.retain_mut(|path| {
+                if let Some(course_codes) = path.get_mut("uwCourses").and_then(Value::as_array_mut)
+                {
+                    course_codes.retain(|course_code| {
+                        let normalized = normalize_course_code(&js_string_value(course_code));
+                        strong_sequence_cue || parsed_course_code_set.contains(&normalized)
+                    });
+                    course_codes.len() >= 2
+                } else {
+                    false
+                }
+            });
+        }
+        let Some(group) =
+            build_sequence_choice_requirement_group(owner, &filtered_candidate, course_parser)
+        else {
+            continue;
+        };
+        let group_id = group.get("id").map(js_string_value).unwrap_or_default();
+        if seen_group_ids.insert(group_id) {
+            groups.push(group);
+        }
+    }
+    groups
+}
+
+fn append_sequence_path_course(path: &mut Value, course_code: &str, source_line: &str) {
+    let mut courses = array(path.get("uwCourses"))
+        .iter()
+        .map(js_string_value)
+        .collect::<Vec<_>>();
+    courses.push(course_code.to_string());
+    let source_text = normalize_whitespace(&format!(
+        "{} {}",
+        js_string_nullish(path.get("sourceText")),
+        source_line
+    ));
+    if let Some(object) = path.as_object_mut() {
+        object.insert("uwCourses".into(), json!(courses));
+        object.insert("sourceText".into(), json!(source_text));
+    }
+}
+
 pub fn build_alternating_number_sequence_choice_candidate(
     snapshot_lines: &[String],
     index: usize,
     course_parser: &CourseCodeParser,
 ) -> Option<Value> {
     let cue_line = super::requirement_choice_lists::normalize_sequence_source_line(
-        snapshot_lines.get(index).map(String::as_str).unwrap_or_default(),
+        snapshot_lines
+            .get(index)
+            .map(String::as_str)
+            .unwrap_or_default(),
     );
     if !sequence_label_alternative_pattern().is_match(&cue_line) {
         return None;
     }
     let labels = split_sequence_alternative_labels(&cue_line);
-    let fallback_subject = get_simple_sequence_fallback_subject_from_context(snapshot_lines, index)?;
+    let fallback_subject =
+        get_simple_sequence_fallback_subject_from_context(snapshot_lines, index)?;
     if labels.len() != 2 {
         return None;
     }
-    let expected_subjects = get_expected_sequence_subjects_from_cue(
-        &cue_line,
-        Some(&fallback_subject),
-        course_parser,
-    );
+    let expected_subjects =
+        get_expected_sequence_subjects_from_cue(&cue_line, Some(&fallback_subject), course_parser);
     let mut paths = labels
         .into_iter()
-        .map(|label| json!({
-            "label": label,
-            "uwCourses": [],
-            "sourceText": cue_line,
-        }))
+        .map(|label| {
+            json!({
+                "label": label,
+                "uwCourses": [],
+                "sourceText": cue_line,
+            })
+        })
         .collect::<Vec<_>>();
     let mut source_lines = vec![cue_line.clone()];
     let mut alternating_index = 0usize;
@@ -4456,7 +6980,10 @@ pub fn build_alternating_number_sequence_choice_candidate(
                 }
             }
             source_lines.push(row_line);
-            if paths.iter().all(|path| array(path.get("uwCourses")).len() >= 3) {
+            if paths
+                .iter()
+                .all(|path| array(path.get("uwCourses")).len() >= 3)
+            {
                 break;
             }
         }
@@ -4501,16 +7028,88 @@ pub fn build_alternating_number_sequence_choice_candidate(
     }))
 }
 
+pub fn build_alternating_number_sequence_choice_requirement_groups(
+    owner: &Value,
+    parsed_course_codes: &[String],
+    snapshot_lines: &[String],
+    course_parser: &CourseCodeParser,
+) -> Vec<Value> {
+    let parsed_course_code_set = parsed_course_codes
+        .iter()
+        .map(|course_code| normalize_course_code(course_code))
+        .collect::<HashSet<_>>();
+    let mut seen_group_ids = HashSet::new();
+    let mut groups = Vec::new();
+    for index in 0..snapshot_lines.len() {
+        if super::requirement_choice_lists::is_lettered_option_line_under_choose_one_heading(
+            snapshot_lines,
+            index,
+        ) {
+            continue;
+        }
+        let Some(candidate) = build_alternating_number_sequence_choice_candidate(
+            snapshot_lines,
+            index,
+            course_parser,
+        ) else {
+            continue;
+        };
+        let raw_text = js_string_nullish(candidate.get("rawText"));
+        if sequence_restriction_context_pattern().is_match(&raw_text) {
+            continue;
+        }
+        let strong_sequence_cue = sequence_choice_context_pattern().is_match(&raw_text)
+            || sequence_label_alternative_pattern().is_match(&raw_text)
+            || sequence_alternative_choice_pattern().is_match(&raw_text);
+        let minimum_courses_per_path = if candidate.get("detectedOptionCue").and_then(Value::as_str)
+            == Some("sequence or single course")
+        {
+            1
+        } else {
+            2
+        };
+        let mut filtered_candidate = candidate.clone();
+        if let Some(paths) = filtered_candidate
+            .get_mut("paths")
+            .and_then(Value::as_array_mut)
+        {
+            paths.retain_mut(|path| {
+                if let Some(course_codes) = path.get_mut("uwCourses").and_then(Value::as_array_mut)
+                {
+                    course_codes.retain(|course_code| {
+                        let normalized = normalize_course_code(&js_string_value(course_code));
+                        strong_sequence_cue || parsed_course_code_set.contains(&normalized)
+                    });
+                    course_codes.len() >= minimum_courses_per_path
+                } else {
+                    false
+                }
+            });
+        }
+        let Some(group) =
+            build_sequence_choice_requirement_group(owner, &filtered_candidate, course_parser)
+        else {
+            continue;
+        };
+        let group_id = group.get("id").map(js_string_value).unwrap_or_default();
+        if seen_group_ids.insert(group_id) {
+            groups.push(group);
+        }
+    }
+    groups
+}
+
 pub fn build_ampersand_or_single_sequence_choice_candidate(
     snapshot_lines: &[String],
     index: usize,
     course_parser: &CourseCodeParser,
 ) -> Option<Value> {
-    let line = normalize_whitespace(
-        &super::requirement_choice_lists::strip_choice_list_line(
-            snapshot_lines.get(index).map(String::as_str).unwrap_or_default(),
-        ),
-    );
+    let line = normalize_whitespace(&super::requirement_choice_lists::strip_choice_list_line(
+        snapshot_lines
+            .get(index)
+            .map(String::as_str)
+            .unwrap_or_default(),
+    ));
     if line.is_empty() || !ampersand_or_single_sequence_pattern().is_match(&line) {
         return None;
     }
@@ -4590,9 +7189,7 @@ pub fn build_ampersand_or_single_sequence_choice_requirement_groups(
         let strong_sequence_cue = sequence_choice_context_pattern().is_match(&raw_text)
             || sequence_label_alternative_pattern().is_match(&raw_text)
             || sequence_alternative_choice_pattern().is_match(&raw_text);
-        let minimum_courses_per_path = if candidate
-            .get("detectedOptionCue")
-            .and_then(Value::as_str)
+        let minimum_courses_per_path = if candidate.get("detectedOptionCue").and_then(Value::as_str)
             == Some("sequence or single course")
         {
             1
@@ -4605,9 +7202,7 @@ pub fn build_ampersand_or_single_sequence_choice_requirement_groups(
             .and_then(Value::as_array_mut)
         {
             paths.retain_mut(|path| {
-                if let Some(course_codes) = path
-                    .get_mut("uwCourses")
-                    .and_then(Value::as_array_mut)
+                if let Some(course_codes) = path.get_mut("uwCourses").and_then(Value::as_array_mut)
                 {
                     course_codes.retain(|course_code| {
                         let normalized = normalize_course_code(&js_string_value(course_code));
@@ -4624,10 +7219,7 @@ pub fn build_ampersand_or_single_sequence_choice_requirement_groups(
         else {
             continue;
         };
-        let group_id = group
-            .get("id")
-            .map(js_string_value)
-            .unwrap_or_default();
+        let group_id = group.get("id").map(js_string_value).unwrap_or_default();
         if seen_group_ids.insert(group_id) {
             groups.push(group);
         }
@@ -4732,10 +7324,7 @@ pub fn build_sequence_choice_requirement_group(
         .iter()
         .enumerate()
         .map(|(index, path)| {
-            let path_label = path
-                .get("label")
-                .map(js_string_value)
-                .unwrap_or_default();
+            let path_label = path.get("label").map(js_string_value).unwrap_or_default();
             let path_courses = array(path.get("uwCourses"))
                 .iter()
                 .map(js_string_value)
@@ -4743,7 +7332,11 @@ pub fn build_sequence_choice_requirement_group(
             let fallback_label = format!("sequence-{}", index + 1);
             let path_id_suffix = slugify_requirement_identifier(&format!(
                 "{}-{}",
-                if path_label.is_empty() { &fallback_label } else { &path_label },
+                if path_label.is_empty() {
+                    &fallback_label
+                } else {
+                    &path_label
+                },
                 path_courses.join("-")
             ));
             let path_id_suffix = if path_id_suffix.is_empty() {
@@ -4763,7 +7356,8 @@ pub fn build_sequence_choice_requirement_group(
                 .cloned()
                 .unwrap_or_else(|| json!([]));
             let notes = path.get("notes").cloned().unwrap_or_else(|| json!([]));
-            let source_text = normalized_string_or_fallback(path.get("sourceText"), &source_heading);
+            let source_text =
+                normalized_string_or_fallback(path.get("sourceText"), &source_heading);
             json!({
                 "id": path_id,
                 "label": label,
@@ -4896,13 +7490,16 @@ pub fn extract_inline_required_list_alternative_sets(
         .iter()
         .enumerate()
         .filter(|(index, course_codes)| {
-            !unique_sets.iter().enumerate().any(|(candidate_index, candidate)| {
-                candidate_index != *index
-                    && candidate.len() > course_codes.len()
-                    && course_codes
-                        .iter()
-                        .all(|course_code| candidate.contains(course_code))
-            })
+            !unique_sets
+                .iter()
+                .enumerate()
+                .any(|(candidate_index, candidate)| {
+                    candidate_index != *index
+                        && candidate.len() > course_codes.len()
+                        && course_codes
+                            .iter()
+                            .all(|course_code| candidate.contains(course_code))
+                })
         })
         .map(|(_, course_codes)| course_codes.clone())
         .collect()
@@ -4924,7 +7521,8 @@ pub fn get_repeated_required_alternative_sets(
     {
         return Vec::new();
     }
-    let alternative_sets = extract_inline_required_list_alternative_sets(&normalized_text, course_parser);
+    let alternative_sets =
+        extract_inline_required_list_alternative_sets(&normalized_text, course_parser);
     if alternative_sets.len() < 2 {
         return Vec::new();
     }
@@ -5026,6 +7624,61 @@ pub fn get_mixed_required_course_list_parts(
     Some((required_course_codes, alternative_sets))
 }
 
+pub fn build_inline_minimum_course_choice_requirement_group(
+    owner: &Value,
+    parts: &super::requirement_choice_lists::InlineLabeledRequirementParts,
+    source_section: &str,
+    course_parser: &CourseCodeParser,
+) -> Option<Value> {
+    let minimum_course_count =
+        super::requirement_parse_helpers::parse_inline_minimum_course_count(&parts.body)?;
+    let course_list_text =
+        super::requirement_parse_helpers::get_inline_minimum_course_list_text(&parts.body);
+    let course_codes = course_parser.extract_from_requirement_line(&course_list_text);
+    let minimum_course_count = usize::try_from(minimum_course_count).ok()?;
+    if course_codes.len() < 2usize.max(minimum_course_count) {
+        return None;
+    }
+    let owner_id = owner
+        .get("ownerId")
+        .map(js_string_value)
+        .unwrap_or_else(|| "undefined".to_string());
+    let label = normalize_whitespace(&parts.label);
+    let category = build_sectioned_course_category(&label);
+    let group_id = format!(
+        "{owner_id}:requirement-group:inline-choice:{}",
+        slugify_requirement_identifier(&format!(
+            "{label}-{minimum_course_count}-{}",
+            course_codes.join("-")
+        ))
+    );
+    let options = build_inline_course_requirement_options(
+        &group_id,
+        &course_codes,
+        &parts.source_line,
+        false,
+        course_parser,
+    );
+    let group = build_parsed_requirement_group(&json!({
+        "id": group_id,
+        "label": label,
+        "category": category,
+        "subcategory": category,
+        "requirementType": "choose_n",
+        "minCourses": minimum_course_count,
+        "maxCourses": minimum_course_count,
+        "selectionCount": minimum_course_count,
+        "requiredCount": minimum_course_count,
+        "sourceHeading": parts.source_line,
+        "sourceRowText": parts.source_line,
+        "sourceSection": source_section,
+        "detectedOptionCue": "inline minimum course list",
+        "notes": ["Parsed from an inline labeled source requirement."],
+        "options": options,
+    }));
+    (!array(group.get("options")).is_empty()).then_some(group)
+}
+
 pub fn build_mixed_inline_required_course_list_groups(
     owner: &Value,
     parts: &super::requirement_choice_lists::InlineLabeledRequirementParts,
@@ -5045,10 +7698,7 @@ pub fn build_mixed_inline_required_course_list_groups(
     let category = build_sectioned_course_category(&label);
     let required_group_id = format!(
         "{owner_id}:requirement-group:inline-required-{}",
-        slugify_requirement_identifier(&format!(
-            "{label}-{}",
-            required_course_codes.join("-")
-        ))
+        slugify_requirement_identifier(&format!("{label}-{}", required_course_codes.join("-")))
     );
     let required_group = build_parsed_requirement_group(&json!({
         "id": required_group_id,
@@ -5074,10 +7724,7 @@ pub fn build_mixed_inline_required_course_list_groups(
     for alternative_set in alternative_sets {
         let choice_group_id = format!(
             "{owner_id}:requirement-group:inline-choice-{}",
-            slugify_requirement_identifier(&format!(
-                "{label}-{}",
-                alternative_set.join("-or-")
-            ))
+            slugify_requirement_identifier(&format!("{label}-{}", alternative_set.join("-or-")))
         );
         groups.push(build_parsed_requirement_group(&json!({
             "id": choice_group_id,
@@ -5107,21 +7754,160 @@ pub fn build_mixed_inline_required_course_list_groups(
         .collect()
 }
 
+pub fn build_inline_labeled_requirement_groups_for_parts(
+    owner: &Value,
+    snapshot_lines: &[String],
+    index: usize,
+    parts: &super::requirement_choice_lists::InlineLabeledRequirementParts,
+    course_parser: &CourseCodeParser,
+) -> Vec<Value> {
+    if looks_like_support_only_research_opportunity_line(&parts.source_line, &parts.label) {
+        return Vec::new();
+    }
+    let source_section = super::requirement_choice_lists::find_nearby_requirement_choice_label(
+        snapshot_lines,
+        index,
+        course_parser,
+    );
+    let mixed_groups = build_mixed_inline_required_course_list_groups(owner, parts, course_parser);
+    if !mixed_groups.is_empty() {
+        return mixed_groups;
+    }
+    if let Some(group) = build_inline_minimum_course_choice_requirement_group(
+        owner,
+        parts,
+        &source_section,
+        course_parser,
+    ) {
+        return vec![group];
+    }
+
+    let owner_id = owner
+        .get("ownerId")
+        .map(js_string_value)
+        .unwrap_or_else(|| "undefined".to_string());
+    let label = normalize_whitespace(&parts.label);
+    let category = build_sectioned_course_category(&label);
+    let label_looks_like_inline_choice = inline_choose_or_select_label_pattern().is_match(&label)
+        && !inline_selective_label_pattern().is_match(&label);
+    if label_looks_like_inline_choice {
+        let course_codes = course_parser.extract_from_requirement_line(&parts.body);
+        let required_count = parse_choice_required_count(&parts.source_line);
+        if course_codes.len() < 2usize.max(required_count) {
+            return Vec::new();
+        }
+        let group_id = format!(
+            "{owner_id}:requirement-group:inline-choice:{}",
+            slugify_requirement_identifier(&format!(
+                "{label}-{required_count}-{}",
+                course_codes.join("-")
+            ))
+        );
+        let group = build_parsed_requirement_group(&json!({
+            "id": group_id,
+            "label": label,
+            "category": category,
+            "subcategory": category,
+            "requirementType": if required_count > 1 { "choose_n" } else { "choose_one" },
+            "minCourses": required_count,
+            "maxCourses": required_count,
+            "selectionCount": required_count,
+            "requiredCount": required_count,
+            "sourceHeading": parts.source_line,
+            "sourceRowText": parts.source_line,
+            "sourceSection": source_section,
+            "detectedOptionCue": detect_option_cue(&parts.source_line)
+                .unwrap_or("inline select label"),
+            "notes": ["Parsed from an inline labeled source choice."],
+            "options": build_inline_course_requirement_options(
+                &group_id,
+                &course_codes,
+                &parts.source_line,
+                false,
+                course_parser,
+            ),
+        }));
+        return if array(group.get("options")).is_empty() {
+            Vec::new()
+        } else {
+            vec![group]
+        };
+    }
+
+    let body_has_choice_or_sequence =
+        super::requirement_choice_lists::has_choice_requirement_context(&parts.body)
+            || sequence_choice_context_pattern().is_match(&parts.body)
+            || sequence_label_alternative_pattern().is_match(&parts.body)
+            || (sequence_alternative_choice_line_pattern().is_match(&parts.body)
+                && inline_or_cue_pattern().is_match(&parts.body))
+            || non_choice_course_list_context_pattern().is_match(&parts.body)
+            || inline_or_cue_pattern().is_match(&parts.body)
+            || !build_parenthetical_sequence_choice_candidates(
+                &[parts.source_line.clone()],
+                0,
+                course_parser,
+            )
+            .is_empty();
+    if body_has_choice_or_sequence
+        || inline_choose_from_label_pattern().is_match(&label)
+        || inline_broad_requirement_label_pattern().is_match(&label)
+    {
+        return Vec::new();
+    }
+    let course_codes = course_parser.extract_from_requirement_line(&parts.body);
+    if course_codes.is_empty() {
+        return Vec::new();
+    }
+    let group_credits =
+        parse_requirement_credit_amount(&parts.body).filter(|credits| credits.is_finite());
+    let group_id = format!(
+        "{owner_id}:requirement-group:inline-required:{}",
+        slugify_requirement_identifier(&format!("{label}-{}", course_codes.join("-")))
+    );
+    let group = build_parsed_requirement_group(&json!({
+        "id": group_id,
+        "label": label,
+        "category": category,
+        "subcategory": category,
+        "requirementType": "all_required",
+        "minCourses": course_codes.len(),
+        "maxCourses": course_codes.len(),
+        "minCredits": group_credits,
+        "maxCredits": group_credits,
+        "sourceHeading": parts.source_line,
+        "sourceRowText": parts.source_line,
+        "sourceSection": source_section,
+        "detectedOptionCue": "inline labeled required courses",
+        "notes": ["Parsed from an inline labeled source requirement."],
+        "options": build_inline_course_requirement_options(
+            &group_id,
+            &course_codes,
+            &parts.source_line,
+            true,
+            course_parser,
+        ),
+    }));
+    if array(group.get("options")).is_empty() {
+        Vec::new()
+    } else {
+        vec![group]
+    }
+}
+
 pub fn build_numbered_inline_all_required_course_group(
     owner: &Value,
     raw_line: &str,
     course_parser: &CourseCodeParser,
 ) -> Option<Value> {
-    let normalized_line = super::requirement_choice_lists::strip_inline_labeled_requirement_marker(
-        raw_line,
-    );
+    let normalized_line =
+        super::requirement_choice_lists::strip_inline_labeled_requirement_marker(raw_line);
     let body = numbered_inline_required_body_pattern()
         .captures(&normalize_whitespace(raw_line))
         .and_then(|captures| captures.get(1))
         .map(|capture| normalize_whitespace(capture.as_str()))
         .unwrap_or_default();
     if body.is_empty()
-        || !source_line_starts_with_course_code(&body)
+        || !super::requirement_hint_safety::source_line_starts_with_course_code(&body)
         || super::requirement_choice_lists::has_choice_requirement_context(&body)
         || get_sequence_choice_cue(&body).is_some()
         || inline_numbered_or_pattern().is_match(&body)
@@ -5134,10 +7920,7 @@ pub fn build_numbered_inline_all_required_course_group(
     if course_codes.len() < 2 {
         return None;
     }
-    let label = normalize_whitespace(
-        &inline_numbered_trailing_credit_pattern()
-            .replace(&body, ""),
-    );
+    let label = normalize_whitespace(&inline_numbered_trailing_credit_pattern().replace(&body, ""));
     let credits = parse_requirement_credit_amount(&body);
     let owner_id = owner
         .get("ownerId")
@@ -5235,7 +8018,8 @@ pub fn build_parsed_requirement_group(input: &Value) -> Value {
     };
     let required_count = if is_credit_bucket {
         Value::Null
-    } else if let Some(required_count) = input.get("requiredCount").filter(|value| !value.is_null()) {
+    } else if let Some(required_count) = input.get("requiredCount").filter(|value| !value.is_null())
+    {
         required_count.clone()
     } else if !min_courses.is_null()
         && !max_courses.is_null()
@@ -5298,7 +8082,10 @@ pub fn build_parsed_requirement_group(input: &Value) -> Value {
     }
     output.insert("label".into(), json!(label));
     output.insert("category".into(), json!(category));
-    output.insert("subcategory".into(), normalized_string_or_null(input.get("subcategory")));
+    output.insert(
+        "subcategory".into(),
+        normalized_string_or_null(input.get("subcategory")),
+    );
     if let Some(requirement_type) = requirement_type {
         output.insert("requirementType".into(), requirement_type.clone());
     }
@@ -5320,11 +8107,19 @@ pub fn build_parsed_requirement_group(input: &Value) -> Value {
     );
     output.insert(
         "minCourses".into(),
-        if is_sequence_choice { json!(1) } else { min_courses },
+        if is_sequence_choice {
+            json!(1)
+        } else {
+            min_courses
+        },
     );
     output.insert(
         "maxCourses".into(),
-        if is_sequence_choice { json!(1) } else { max_courses },
+        if is_sequence_choice {
+            json!(1)
+        } else {
+            max_courses
+        },
     );
     let selection_count = if is_credit_bucket {
         Value::Null
@@ -5341,7 +8136,11 @@ pub fn build_parsed_requirement_group(input: &Value) -> Value {
     output.insert("selectionCount".into(), selection_count);
     output.insert(
         "requiredCount".into(),
-        if is_sequence_choice { json!(1) } else { required_count },
+        if is_sequence_choice {
+            json!(1)
+        } else {
+            required_count
+        },
     );
     output.insert("minCredits".into(), min_credits.clone());
     output.insert("maxCredits".into(), max_credits);
@@ -5351,7 +8150,11 @@ pub fn build_parsed_requirement_group(input: &Value) -> Value {
         .filter(|value| !value.is_null())
         .cloned()
         .unwrap_or_else(|| {
-            json!(if is_credit_bucket { "credit-based" } else { "selection-count" })
+            json!(if is_credit_bucket {
+                "credit-based"
+            } else {
+                "selection-count"
+            })
         });
     output.insert("satisfactionMode".into(), satisfaction_mode);
     output.insert("sourceHeading".into(), json!(source_heading.clone()));
@@ -5359,7 +8162,10 @@ pub fn build_parsed_requirement_group(input: &Value) -> Value {
         "sourceRowText".into(),
         normalized_string_or_fallback(input.get("sourceRowText"), &source_heading),
     );
-    output.insert("sourceSection".into(), normalized_string_or_null(input.get("sourceSection")));
+    output.insert(
+        "sourceSection".into(),
+        normalized_string_or_null(input.get("sourceSection")),
+    );
     output.insert(
         "sourceSectionRole".into(),
         normalized_string_or_null(input.get("sourceSectionRole")),
@@ -5378,17 +8184,50 @@ pub fn build_parsed_requirement_group(input: &Value) -> Value {
         json!(provided_option_cue)
     };
     output.insert("detectedOptionCue".into(), detected_option_cue);
-    output.insert("sourceRole".into(), normalized_string_or_null(input.get("sourceRole")));
-    output.insert("sourceUrl".into(), normalized_string_or_null(input.get("sourceUrl")));
-    output.insert("sourceScope".into(), normalized_string_or_null(input.get("sourceScope")));
-    output.insert("pathwayId".into(), normalized_string_or_null(input.get("pathwayId")));
-    output.insert("routeId".into(), normalized_string_or_null(input.get("routeId")));
-    output.insert("canCreateScheduleRow".into(), boolean_or_null(input.get("canCreateScheduleRow")));
-    output.insert("supportOnly".into(), boolean_or_null(input.get("supportOnly")));
-    output.insert("approvedListKey".into(), normalized_string_or_null(input.get("approvedListKey")));
-    output.insert("canCreatePlaceholder".into(), boolean_or_null(input.get("canCreatePlaceholder")));
-    output.insert("programSpecific".into(), boolean_or_null(input.get("programSpecific")));
-    output.insert("notes".into(), json!(normalize_text_array(input.get("notes"), true)));
+    output.insert(
+        "sourceRole".into(),
+        normalized_string_or_null(input.get("sourceRole")),
+    );
+    output.insert(
+        "sourceUrl".into(),
+        normalized_string_or_null(input.get("sourceUrl")),
+    );
+    output.insert(
+        "sourceScope".into(),
+        normalized_string_or_null(input.get("sourceScope")),
+    );
+    output.insert(
+        "pathwayId".into(),
+        normalized_string_or_null(input.get("pathwayId")),
+    );
+    output.insert(
+        "routeId".into(),
+        normalized_string_or_null(input.get("routeId")),
+    );
+    output.insert(
+        "canCreateScheduleRow".into(),
+        boolean_or_null(input.get("canCreateScheduleRow")),
+    );
+    output.insert(
+        "supportOnly".into(),
+        boolean_or_null(input.get("supportOnly")),
+    );
+    output.insert(
+        "approvedListKey".into(),
+        normalized_string_or_null(input.get("approvedListKey")),
+    );
+    output.insert(
+        "canCreatePlaceholder".into(),
+        boolean_or_null(input.get("canCreatePlaceholder")),
+    );
+    output.insert(
+        "programSpecific".into(),
+        boolean_or_null(input.get("programSpecific")),
+    );
+    output.insert(
+        "notes".into(),
+        json!(normalize_text_array(input.get("notes"), true)),
+    );
     output.insert("sequencePaths".into(), json!(sequence_paths));
     output.insert("options".into(), json!(options));
     Value::Object(output)
@@ -5453,8 +8292,10 @@ pub fn build_parsed_requirement_course(input: &Value) -> Option<Value> {
         .filter(|value| !value.is_null())
         .cloned()
         .unwrap_or_else(|| json!("required"));
-    let source_heading = normalized_string_or_default(input.get("sourceHeading"), "Unknown source heading");
-    let source_category = normalized_string_or_default(input.get("sourceCategory"), "Unknown source category");
+    let source_heading =
+        normalized_string_or_default(input.get("sourceHeading"), "Unknown source heading");
+    let source_category =
+        normalized_string_or_default(input.get("sourceCategory"), "Unknown source category");
     let notes = normalize_text_array(input.get("notes"), true);
     Some(json!({
         "courseCode": course_code,
@@ -5494,7 +8335,10 @@ pub fn build_parsed_requirement_courses_from_groups(groups: &[Value]) -> Vec<Val
     let mut courses = Vec::new();
     for group in groups {
         let requirement_type = group.get("requirementType");
-        let option_role = if matches!(requirement_type.and_then(Value::as_str), Some("all_required" | "sequence_choice")) {
+        let option_role = if matches!(
+            requirement_type.and_then(Value::as_str),
+            Some("all_required" | "sequence_choice")
+        ) {
             "required"
         } else {
             "option"
@@ -5553,7 +8397,8 @@ pub fn build_parsed_requirement_courses_from_groups(groups: &[Value]) -> Vec<Val
                 course_input.insert("courseCode".into(), display_course_code.clone());
                 course_input.insert("normalizedCourseCode".into(), course_code.clone());
                 course_input.insert("optionRole".into(), json!(option_role));
-                if let Some(course) = build_parsed_requirement_course(&Value::Object(course_input)) {
+                if let Some(course) = build_parsed_requirement_course(&Value::Object(course_input))
+                {
                     courses.push(course);
                 }
             }
@@ -5562,7 +8407,8 @@ pub fn build_parsed_requirement_courses_from_groups(groups: &[Value]) -> Vec<Val
                 course_input.insert("courseCode".into(), alias_code.clone());
                 course_input.insert("normalizedCourseCode".into(), alias_code.clone());
                 course_input.insert("optionRole".into(), json!("alias"));
-                if let Some(course) = build_parsed_requirement_course(&Value::Object(course_input)) {
+                if let Some(course) = build_parsed_requirement_course(&Value::Object(course_input))
+                {
                     courses.push(course);
                 }
             }
@@ -5586,10 +8432,10 @@ pub fn build_parsed_requirement_option(input: &Value) -> Value {
                 .filter(|value| !value.is_null())
                 .or_else(|| input.get("uwCourses")),
         )
-            .iter()
-            .map(|course_code| normalize_whitespace(&js_string_nullish(Some(course_code))))
-            .filter(|course_code| !course_code.is_empty())
-            .collect(),
+        .iter()
+        .map(|course_code| normalize_whitespace(&js_string_nullish(Some(course_code))))
+        .filter(|course_code| !course_code.is_empty())
+        .collect(),
     );
     let equivalent_uw_course_codes = unique_sorted(
         array(input.get("equivalentUwCourseCodes"))
@@ -5616,20 +8462,39 @@ pub fn build_parsed_requirement_option(input: &Value) -> Value {
         .cloned();
     let has_category_option = input.get("optionKind").and_then(Value::as_str)
         == Some("category-option")
-        && normalized_category_option.as_ref().is_some_and(|category_option| {
-            ["category", "sourceCategoryCode", "title"]
-                .iter()
-                .all(|key| category_option.get(*key).and_then(Value::as_str).is_some_and(|value| !value.is_empty()))
-                && category_option
-                    .get("credits")
-                    .and_then(Value::as_f64)
-                    .is_some_and(|credits| credits.is_finite() && credits > 0.0)
-        });
+        && normalized_category_option
+            .as_ref()
+            .is_some_and(|category_option| {
+                ["category", "sourceCategoryCode", "title"]
+                    .iter()
+                    .all(|key| {
+                        category_option
+                            .get(*key)
+                            .and_then(Value::as_str)
+                            .is_some_and(|value| !value.is_empty())
+                    })
+                    && category_option
+                        .get("credits")
+                        .and_then(Value::as_f64)
+                        .is_some_and(|credits| credits.is_finite() && credits > 0.0)
+            });
     let category_option = if has_category_option {
         normalized_category_option.as_ref().map(|category_option| {
             let mut option = Map::new();
-            for key in ["category", "sourceCategoryCode", "title", "credits", "creditMin", "creditMax", "sourceText", "approvedListKey"] {
-                option.insert(key.to_string(), category_option.get(key).cloned().unwrap_or(Value::Null));
+            for key in [
+                "category",
+                "sourceCategoryCode",
+                "title",
+                "credits",
+                "creditMin",
+                "creditMax",
+                "sourceText",
+                "approvedListKey",
+            ] {
+                option.insert(
+                    key.to_string(),
+                    category_option.get(key).cloned().unwrap_or(Value::Null),
+                );
             }
             let program_specific = category_option
                 .get("programSpecific")
@@ -5682,23 +8547,48 @@ pub fn build_parsed_requirement_option(input: &Value) -> Value {
     }
     output.insert(
         "optionKind".into(),
-        json!(if has_category_option { "category-option" } else { "course" }),
+        json!(if has_category_option {
+            "category-option"
+        } else {
+            "course"
+        }),
     );
-    output.insert("sequencePathId".into(), normalized_string_or_null(input.get("sequencePathId")));
-    output.insert("pathLabel".into(), normalized_string_or_null(input.get("pathLabel")));
+    output.insert(
+        "sequencePathId".into(),
+        normalized_string_or_null(input.get("sequencePathId")),
+    );
+    output.insert(
+        "pathLabel".into(),
+        normalized_string_or_null(input.get("pathLabel")),
+    );
     output.insert(
         "displayCourseCodes".into(),
-        json!(if has_category_option { Vec::<String>::new() } else { display_course_codes }),
+        json!(if has_category_option {
+            Vec::<String>::new()
+        } else {
+            display_course_codes
+        }),
     );
     output.insert(
         "uwCourses".into(),
-        json!(if has_category_option { Vec::<String>::new() } else { uw_courses }),
+        json!(if has_category_option {
+            Vec::<String>::new()
+        } else {
+            uw_courses
+        }),
     );
     output.insert(
         "equivalentUwCourseCodes".into(),
-        json!(if has_category_option { Vec::<String>::new() } else { equivalent_uw_course_codes }),
+        json!(if has_category_option {
+            Vec::<String>::new()
+        } else {
+            equivalent_uw_course_codes
+        }),
     );
-    output.insert("conditionalLabCourses".into(), json!(conditional_lab_courses));
+    output.insert(
+        "conditionalLabCourses".into(),
+        json!(conditional_lab_courses),
+    );
     output.insert("credits".into(), nullish_value(input.get("credits")));
     output.insert(
         "creditMin".into(),
@@ -5720,11 +8610,26 @@ pub fn build_parsed_requirement_option(input: &Value) -> Value {
     );
     output.insert("creditText".into(), credit_text(input));
     output.insert("maxCredits".into(), nullish_value(input.get("maxCredits")));
-    output.insert("title".into(), normalized_string_or_null(input.get("title")));
-    output.insert("department".into(), normalized_string_or_null(input.get("department")));
-    output.insert("category".into(), normalized_string_or_null(input.get("category")));
-    output.insert("sourceHeading".into(), normalized_string_or_null(input.get("sourceHeading")));
-    output.insert("sourceCategory".into(), normalized_string_or_null(input.get("sourceCategory")));
+    output.insert(
+        "title".into(),
+        normalized_string_or_null(input.get("title")),
+    );
+    output.insert(
+        "department".into(),
+        normalized_string_or_null(input.get("department")),
+    );
+    output.insert(
+        "category".into(),
+        normalized_string_or_null(input.get("category")),
+    );
+    output.insert(
+        "sourceHeading".into(),
+        normalized_string_or_null(input.get("sourceHeading")),
+    );
+    output.insert(
+        "sourceCategory".into(),
+        normalized_string_or_null(input.get("sourceCategory")),
+    );
     output.insert(
         "grcMatches".into(),
         json!(if has_category_option {
@@ -5740,7 +8645,10 @@ pub fn build_parsed_requirement_option(input: &Value) -> Value {
         }),
     );
     output.insert("compoundComponents".into(), json!(compound_components));
-    output.insert("categoryOption".into(), category_option.unwrap_or(Value::Null));
+    output.insert(
+        "categoryOption".into(),
+        category_option.unwrap_or(Value::Null),
+    );
     output.insert("constraints".into(), json!(constraints));
     output.insert("notes".into(), json!(notes));
     let label = if !label.is_empty() {
@@ -5828,7 +8736,9 @@ fn build_sequence_paths(input: &Value, source_heading: &str) -> Vec<Value> {
                 unique_in_order(
                     array(Some(component))
                         .iter()
-                        .map(|course_code| normalize_course_code(&js_string_nullish(Some(course_code))))
+                        .map(|course_code| {
+                            normalize_course_code(&js_string_nullish(Some(course_code)))
+                        })
                         .filter(|course_code| !course_code.is_empty())
                         .collect(),
                 )
@@ -5841,10 +8751,19 @@ fn build_sequence_paths(input: &Value, source_heading: &str) -> Vec<Value> {
         normalized_path.insert("label".into(), json!(label));
         normalized_path.insert("uwCourses".into(), json!(uw_courses.clone()));
         normalized_path.insert("displayCourseCodes".into(), json!(display_course_codes));
-        normalized_path.insert("mappedGrcCourseCodes".into(), json!(mapped_grc_course_codes));
+        normalized_path.insert(
+            "mappedGrcCourseCodes".into(),
+            json!(mapped_grc_course_codes),
+        );
         normalized_path.insert("compoundComponents".into(), json!(compound_components));
-        normalized_path.insert("conditionalLabCourses".into(), json!(conditional_lab_courses));
-        normalized_path.insert("notes".into(), json!(normalize_text_array(path.get("notes"), true)));
+        normalized_path.insert(
+            "conditionalLabCourses".into(),
+            json!(conditional_lab_courses),
+        );
+        normalized_path.insert(
+            "notes".into(),
+            json!(normalize_text_array(path.get("notes"), true)),
+        );
         normalized_path.insert("sourceText".into(), source_text);
         if !uw_courses.is_empty() {
             paths.push(Value::Object(normalized_path));
@@ -5868,12 +8787,14 @@ fn extract_course_codes_from_joint_course_line(
         }
     }
     for captures in split_joint_course_pattern().captures_iter(&normalized_line) {
-        if let (Some(left_subject), Some(left_number), Some(right_subject), Some(right_number)) =
-            (captures.get(1), captures.get(2), captures.get(3), captures.get(4))
-        {
-            course_codes.extend(
-                course_parser.normalize_code(left_subject.as_str(), left_number.as_str()),
-            );
+        if let (Some(left_subject), Some(left_number), Some(right_subject), Some(right_number)) = (
+            captures.get(1),
+            captures.get(2),
+            captures.get(3),
+            captures.get(4),
+        ) {
+            course_codes
+                .extend(course_parser.normalize_code(left_subject.as_str(), left_number.as_str()));
             course_codes.extend(
                 course_parser.normalize_code(right_subject.as_str(), right_number.as_str()),
             );
@@ -5889,10 +8810,7 @@ fn extract_course_codes_from_joint_course_line(
     )
 }
 
-fn get_inline_section_course_title(
-    course_line: &str,
-    primary_course_code: &str,
-) -> Option<String> {
+fn get_inline_section_course_title(course_line: &str, primary_course_code: &str) -> Option<String> {
     let normalized_line = normalize_whitespace(
         &super::requirement_choice_lists::strip_choice_list_line(course_line),
     );
@@ -5904,30 +8822,27 @@ fn get_inline_section_course_title(
     if normalized_line.is_empty() || course_number.is_empty() {
         return None;
     }
-    let course_number_pattern = regex::Regex::new(&format!(
-        r"(?i)\b{}\b",
-        regex::escape(&course_number)
-    ))
-    .ok()?;
+    let course_number_source = format!(r"(?i)\b{}\b", regex::escape(&course_number));
+    let course_number_pattern =
+        regex::Regex::new(&js_regex_compatibility_pattern(&course_number_source)).ok()?;
     let number_match = course_number_pattern.find(&normalized_line)?;
     let after_course_number = &normalized_line[number_match.end()..];
     let before_alternative = alternative_course_title_boundary_pattern()
         .find(after_course_number)
         .map(|matched| &after_course_number[..matched.start()])
         .unwrap_or(after_course_number);
-    let before_next_course = if let Some(next_course) = next_course_number_pattern().find(before_alternative) {
-        trailing_course_subject_pattern()
-            .replace(&before_alternative[..next_course.start()], "")
-            .into_owned()
-    } else {
-        before_alternative.to_string()
-    };
-    let title = normalize_whitespace(
-        &trailing_credit_parenthetical_pattern().replace(
-            &leading_course_title_punctuation_pattern().replace(&before_next_course, ""),
-            "",
-        ),
-    );
+    let before_next_course =
+        if let Some(next_course) = next_course_number_pattern().find(before_alternative) {
+            trailing_course_subject_pattern()
+                .replace(&before_alternative[..next_course.start()], "")
+                .into_owned()
+        } else {
+            before_alternative.to_string()
+        };
+    let title = normalize_whitespace(&trailing_credit_parenthetical_pattern().replace(
+        &leading_course_title_punctuation_pattern().replace(&before_next_course, ""),
+        "",
+    ));
     (!title.is_empty() && title.chars().any(char::is_alphabetic)).then_some(title)
 }
 
@@ -5935,17 +8850,18 @@ fn get_selected_pathway_display_label(
     owner: &Value,
     primary_major_titles: &HashMap<String, String>,
 ) -> Option<String> {
-    let major_title = super::requirement_recovery_scope::primary_major_title(
-        owner,
-        primary_major_titles,
-    );
+    let major_title =
+        super::requirement_recovery_scope::primary_major_title(owner, primary_major_titles);
     let owner_title = owner
         .get("ownerTitle")
         .filter(|value| !value.is_null())
         .map(js_string_value)
         .unwrap_or_default();
-    let semantic_label = super::transfer_plan_title_matching::
-        normalize_transfer_planner_semantic_pathway_label(&major_title, &owner_title);
+    let semantic_label =
+        super::transfer_plan_title_matching::normalize_transfer_planner_semantic_pathway_label(
+            &major_title,
+            &owner_title,
+        );
     let fallback_label = owner
         .get("pathwayId")
         .filter(|value| !value.is_null())
@@ -5972,7 +8888,7 @@ fn collect_selected_pathway_section_course_lines(
     primary_major_titles: &HashMap<String, String>,
     course_parser: &CourseCodeParser,
 ) -> Vec<Value> {
-    if !js_truthy(owner.get("pathwayId")) {
+    if !owner.get("pathwayId").is_some_and(js_truthy) {
         return Vec::new();
     }
     let selected_start_indexes = snapshot_lines
@@ -6006,8 +8922,7 @@ fn collect_selected_pathway_section_course_lines(
                     &line,
                     primary_major_titles,
                     course_parser,
-                )
-                    || super::requirement_recovery_scope::is_pathway_section_boundary_line(&line)
+                ) || super::requirement_recovery_scope::is_pathway_section_boundary_line(&line)
                     || recommended_course_or_honours_thesis_pattern().is_match(&line))
             {
                 break;
@@ -6068,7 +8983,10 @@ fn get_nearby_section_course_credits(
     course_parser: &CourseCodeParser,
 ) -> Value {
     if let Some(credit_range) = parse_credit_bearing_course_row_credit_range(
-        snapshot_lines.get(course_line_index).map(String::as_str).unwrap_or_default(),
+        snapshot_lines
+            .get(course_line_index)
+            .map(String::as_str)
+            .unwrap_or_default(),
     ) {
         return credit_range;
     }
@@ -6110,7 +9028,12 @@ fn parse_credit_bearing_course_row_credit_range(course_line: &str) -> Option<Val
         &super::requirement_choice_lists::strip_choice_list_line(course_line),
     );
     let captures = course_row_parenthetical_credit_pattern()
-        .captures(&normalized_line)
+        .captures_iter(&normalized_line)
+        .find(|captures| {
+            captures
+                .get(0)
+                .is_some_and(|matched| !normalized_line[matched.end()..].contains(')'))
+        })
         .or_else(|| course_row_parenthetical_fallback_pattern().captures(&normalized_line))?;
     let credits = captures.get(1)?.as_str().parse::<f64>().ok()?;
     let has_explicit_credit_unit = captures.get(2).is_some();
@@ -6120,17 +9043,17 @@ fn parse_credit_bearing_course_row_credit_range(course_line: &str) -> Option<Val
     Some(credit_range_value(credits, Some(credits), None))
 }
 
-fn credit_range_value(
-    credits: f64,
-    credit_max: Option<f64>,
-    credit_text: Option<String>,
-) -> Value {
+fn credit_range_value(credits: f64, credit_max: Option<f64>, credit_text: Option<String>) -> Value {
     let credit_max = credit_max
         .filter(|maximum| maximum.is_finite() && *maximum >= credits)
         .unwrap_or(credits);
     let credit_text = credit_text.unwrap_or_else(|| {
         if credit_max != credits {
-            format!("{}-{}", js_number_string(credits), js_number_string(credit_max))
+            format!(
+                "{}-{}",
+                js_number_string(credits),
+                js_number_string(credit_max)
+            )
         } else {
             js_number_string(credits)
         }
@@ -6144,10 +9067,7 @@ fn credit_range_value(
 }
 
 fn string_values(value: Option<&Value>) -> Vec<String> {
-    array(value)
-        .iter()
-        .map(js_string_value)
-        .collect()
+    array(value).iter().map(js_string_value).collect()
 }
 
 fn sum_sectioned_option_credits(options: &[Value]) -> Option<f64> {
@@ -6206,8 +9126,8 @@ pub fn normalize_pdf_requirement_heading_line(line: &str) -> String {
 }
 
 pub fn normalize_sectioned_course_group_label(line: &str) -> String {
-    let cleaned = trailing_category_punctuation_pattern()
-        .replace(&normalize_pdf_requirement_heading_line(line), "");
+    let heading = normalize_pdf_requirement_heading_line(line);
+    let cleaned = trailing_category_punctuation_pattern().replace(&heading, "");
     let cleaned = normalize_whitespace(&cleaned);
     if cleaned.is_empty() {
         "Sectioned course group".into()
@@ -6294,15 +9214,23 @@ fn line_has_generic_category_distribution_cue(line: &str) -> bool {
 
 fn build_sectioned_course_category(line: &str) -> String {
     let normalized_line = normalize_pdf_requirement_heading_line(line);
-    let cleaned = sectioned_category_min_max_pattern()
-        .replace_all(&normalized_line, "");
+    let cleaned = sectioned_category_min_max_pattern().replace_all(&normalized_line, "");
     let cleaned = sectioned_category_credit_amount_pattern().replace_all(&cleaned, "");
     let cleaned = sectioned_category_cue_pattern().replace_all(&cleaned, "");
     let cleaned = trailing_category_punctuation_pattern().replace(&cleaned, "");
     let cleaned = normalize_whitespace(&cleaned);
-    let value: &str = if cleaned.is_empty() { line } else { cleaned.as_ref() };
-    let category = super::requirement_rule_utils::slugify_parser_rule_value(value).replace('-', "_");
-    if category.is_empty() { "sectioned_course_group".to_string() } else { category }
+    let value: &str = if cleaned.is_empty() {
+        line
+    } else {
+        cleaned.as_ref()
+    };
+    let category =
+        super::requirement_rule_utils::slugify_parser_rule_value(value).replace('-', "_");
+    if category.is_empty() {
+        "sectioned_course_group".to_string()
+    } else {
+        category
+    }
 }
 
 fn get_nearby_section_course_title(
@@ -6334,7 +9262,10 @@ fn get_nearby_section_course_title(
     None
 }
 
-fn looks_like_nearby_section_course_title(candidate: &str, course_parser: &CourseCodeParser) -> bool {
+fn looks_like_nearby_section_course_title(
+    candidate: &str,
+    course_parser: &CourseCodeParser,
+) -> bool {
     if candidate.is_empty() {
         return false;
     }
@@ -6342,7 +9273,10 @@ fn looks_like_nearby_section_course_title(candidate: &str, course_parser: &Cours
         return true;
     }
     if !course_parser.extract_from_line(candidate).is_empty()
-        || candidate.chars().next().is_some_and(|character| character.is_ascii_lowercase())
+        || candidate
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_lowercase())
     {
         return false;
     }
@@ -6403,7 +9337,8 @@ fn is_standalone_section_choice_cue_line(line: &str, _course_parser: &CourseCode
 }
 
 fn sequence_choice_cue_patterns() -> &'static [(regex::Regex, &'static str)] {
-    static VALUE: std::sync::OnceLock<Vec<(regex::Regex, &'static str)>> = std::sync::OnceLock::new();
+    static VALUE: std::sync::OnceLock<Vec<(regex::Regex, &'static str)>> =
+        std::sync::OnceLock::new();
     VALUE.get_or_init(|| {
         [
             (r"(?i)\bone\s+of\s+the\s+following(?:\s+\w+){0,4}\s+sequences?\b", "one of the following sequences"),
@@ -6416,13 +9351,20 @@ fn sequence_choice_cue_patterns() -> &'static [(regex::Regex, &'static str)] {
             (r"(?i)\b[A-Z&]+(?:\s+[A-Z&]+)?\s+\d{3}[A-Z]?\s*,\s*\d{3}[A-Z]?(?:\s*,\s*\d{3}[A-Z]?){0,2}\s+or\s+(?:[A-Z&]+(?:\s+[A-Z&]+)?\s+)?\d{3}[A-Z]?\s*,\s*\d{3}[A-Z]?(?:\s*,\s*\d{3}[A-Z]?){0,2}\b", "or between grouped series"),
         ]
         .into_iter()
-        .map(|(pattern, cue)| (regex::Regex::new(pattern).expect("sequence choice cue pattern"), cue))
+        .map(|(pattern, cue)| {
+            (
+                regex::Regex::new(&js_regex_compatibility_pattern(pattern))
+                    .expect("sequence choice cue pattern"),
+                cue,
+            )
+        })
         .collect()
     })
 }
 
 fn sequence_path_label_patterns() -> &'static [(regex::Regex, &'static str)] {
-    static VALUE: std::sync::OnceLock<Vec<(regex::Regex, &'static str)>> = std::sync::OnceLock::new();
+    static VALUE: std::sync::OnceLock<Vec<(regex::Regex, &'static str)>> =
+        std::sync::OnceLock::new();
     VALUE.get_or_init(|| {
         [
             (r"(?i)\bcalculus-based\b", "calculus-based"),
@@ -6436,388 +9378,783 @@ fn sequence_path_label_patterns() -> &'static [(regex::Regex, &'static str)] {
             (r"(?i)\bmathematics|math\b", "math sequence"),
         ]
         .into_iter()
-        .map(|(pattern, label)| (regex::Regex::new(pattern).expect("sequence path label pattern"), label))
+        .map(|(pattern, label)| {
+            (
+                regex::Regex::new(&js_regex_compatibility_pattern(pattern))
+                    .expect("sequence path label pattern"),
+                label,
+            )
+        })
         .collect()
     })
 }
 
 fn pdf_credit_marker_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\[[^\]]*\b(?:minimum\s+)?\d+(?:\.\d+)?(?:\s*(?:-|to)\s*\d+(?:\.\d+)?)?\s*(?:credits?|cr\.?)[^\]]*\]").expect("PDF heading credit marker pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\[[^\]]*\b(?:minimum\s+)?[0-9]+(?:\.[0-9]+)?(?:\s*(?:-|to)\s*[0-9]+(?:\.[0-9]+)?)?\s*(?:credits?|cr\.?)[^\]]*\]")).expect("PDF heading credit marker pattern"))
 }
 fn inline_course_after_pdf_marker_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^\s+[A-Z&]{1,8}(?:\s+[A-Z&]{1,8}){0,2}\s+\d{3}[A-Za-z]?\b").expect("inline course after PDF marker pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^\s+[A-Z&]{1,8}(?:\s+[A-Z&]{1,8}){0,2}\s+[0-9]{3}[A-Za-z]?\b",
+        ))
+        .expect("inline course after PDF marker pattern")
+    })
 }
 fn pdf_ellipsis_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"[.\u{2026}]{3,}").expect("PDF heading ellipsis pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"[.\u{2026}]{3,}"))
+            .expect("PDF heading ellipsis pattern")
+    })
 }
 fn generic_university_category_list_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:chosen|selected|taken)\s+from\b.{0,80}\b(?:university|uw)\b.{0,40}\blist\b").expect("generic university category list pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:chosen|selected|taken)\s+from\b.{0,80}\b(?:university|uw)\b.{0,40}\blist\b",
+        ))
+        .expect("generic university category list pattern")
+    })
 }
 fn generic_category_list_following_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:following|below|listed)\b").expect("generic category list following pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:following|below|listed)\b",
+        ))
+        .expect("generic category list following pattern")
+    })
 }
 fn generic_category_credit_bucket_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^(?:Additional\s+)?(?:Diversity Requirement|Arts?\s+(?:and|&)\s+Humanities|Social Sciences?|Natural Sciences?|Natural Science|Natural World|Individuals\s+(?:and|&)\s+Societies|Quantitative\s+(?:and|&)\s+Symbolic\s+Reasoning|\b(?:A\s*&\s*H|S\s*Sc|N\s*Sc|I\s*&\s*S|VLPA|DIV|QSR|NW)\b)").expect("generic category credit bucket heading pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^(?:Additional\s+)?(?:Diversity Requirement|Arts?\s+(?:and|&)\s+Humanities|Social Sciences?|Natural Sciences?|Natural Science|Natural World|Individuals\s+(?:and|&)\s+Societies|Quantitative\s+(?:and|&)\s+Symbolic\s+Reasoning|\b(?:A\s*&\s*H|S\s*Sc|N\s*Sc|I\s*&\s*S|VLPA|DIV|QSR|NW)\b)")).expect("generic category credit bucket heading pattern"))
 }
 fn trimmed_section_heading_candidate_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:electives?|approved|selected|following|from)\b").expect("trimmed section heading candidate pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:electives?|approved|selected|following|from)\b",
+        ))
+        .expect("trimmed section heading candidate pattern")
+    })
 }
 fn generic_category_clause_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\s*(?:;|,)?\s*(?:the\s+final\s+math\s+course,\s*)?(?:VLPA|I\s*&\s*S|A\s*&\s*H|S\s*Sc|N\s*Sc|Arts?\s+(?:and|&)\s+Humanities|Social Sciences?|Natural Sciences?|Natural World|Diversity)\b").expect("generic category clause pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\s*(?:;|,)?\s*(?:the\s+final\s+math\s+course,\s*)?(?:VLPA|I\s*&\s*S|A\s*&\s*H|S\s*Sc|N\s*Sc|Arts?\s+(?:and|&)\s+Humanities|Social Sciences?|Natural Sciences?|Natural World|Diversity)\b")).expect("generic category clause pattern"))
 }
 fn selected_pathway_label_suffix_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:option|track|route|pathway|concentration)\b$").expect("selected pathway label suffix pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:option|track|route|pathway|concentration)\b$",
+        ))
+        .expect("selected pathway label suffix pattern")
+    })
 }
 fn concentration_credit_line_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bcredits?\b.{0,140}\bconcentration\s+area(?:\s+courses?)?\b").expect("concentration credit line pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bcredits?\b.{0,140}\bconcentration\s+area(?:\s+courses?)?\b",
+        ))
+        .expect("concentration credit line pattern")
+    })
 }
 fn recommended_course_or_honours_thesis_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:recommended courses?|honou?rs?\s+thesis)\b").expect("recommended courses or honours thesis pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:recommended courses?|honou?rs?\s+thesis)\b",
+        ))
+        .expect("recommended courses or honours thesis pattern")
+    })
 }
 fn inline_mixed_body_or_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bor\b").expect("inline mixed body OR pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bor\b"))
+            .expect("inline mixed body OR pattern")
+    })
 }
 fn inline_mixed_source_exclusion_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:choose|select|one\s+of|any\s+of|electives?|approved|from\s+the\s+following|from\s+approved)\b").expect("inline mixed source exclusion pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:choose|select|one\s+of|any\s+of|electives?|approved|from\s+the\s+following|from\s+approved)\b")).expect("inline mixed source exclusion pattern"))
 }
 fn inline_mixed_minimum_course_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:minimum|at\s+least)\s+(?:of\s+)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+courses?\b").expect("inline mixed minimum course pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:minimum|at\s+least)\s+(?:of\s+)?(?:[0-9]+|one|two|three|four|five|six|seven|eight|nine|ten)\s+courses?\b")).expect("inline mixed minimum course pattern"))
 }
 fn inline_mixed_required_label_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:core courses?|required courses?|major requirements?|requirements?)\b").expect("inline mixed required label pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:core courses?|required courses?|major requirements?|requirements?)\b",
+        ))
+        .expect("inline mixed required label pattern")
+    })
 }
 fn inline_mixed_body_delimiter_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"[,;]").expect("inline mixed body delimiter pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"[,;]"))
+            .expect("inline mixed body delimiter pattern")
+    })
 }
 fn repeated_required_alternative_exclusion_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:choose|select|one\s+of|any\s+of|either)\b").expect("repeated required alternative exclusion pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:choose|select|one\s+of|any\s+of|either)\b",
+        ))
+        .expect("repeated required alternative exclusion pattern")
+    })
 }
 fn repeated_required_and_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\band\b").expect("repeated required and pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\band\b"))
+            .expect("repeated required and pattern")
+    })
 }
 fn repeated_required_comma_or_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i),\s*[^,]{0,80}\bor\b").expect("repeated required comma OR pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i),\s*[^,]{0,80}\bor\b"))
+            .expect("repeated required comma OR pattern")
+    })
 }
 fn parenthetical_course_alternative_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b([A-Za-z&]{1,20}(?:\s+[A-Za-z&]{1,20})?)\s*(\d{3}[A-Za-z]?)\s*\(\s*or\s+([^)]*)\)").expect("parenthetical course alternative pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b([A-Za-z&]{1,20}(?:\s+[A-Za-z&]{1,20})?)\s*([0-9]{3}[A-Za-z]?)\s*\(\s*or\s+([^)]*)\)")).expect("parenthetical course alternative pattern"))
 }
 fn inline_course_or_alternative_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b([A-Za-z&]{1,20}(?:\s+[A-Za-z&]{1,20})?)\s*(\d{3}[A-Za-z]?)(?:\s*\([^)]*\))?\s+or\s+(?:(?:([A-Za-z&]{1,20}(?:\s+[A-Za-z&]{1,20})?)\s*)?(\d{3}[A-Za-z]?))").expect("inline course OR alternative pattern"))
-}
-fn source_line_starts_with_course_code(line: &str) -> bool {
-    let normalized_line = normalize_whitespace(
-        &super::requirement_choice_lists::strip_snapshot_page_prefix(line),
-    );
-    direct_course_code_line_pattern().is_match(&normalized_line)
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b([A-Za-z&]{1,20}(?:\s+[A-Za-z&]{1,20})?)\s*([0-9]{3}[A-Za-z]?)(?:\s*\([^)]*\))?\s+or\s+(?:(?:([A-Za-z&]{1,20}(?:\s+[A-Za-z&]{1,20})?)\s*)?([0-9]{3}[A-Za-z]?))")).expect("inline course OR alternative pattern"))
 }
 fn direct_course_code_line_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^[-*\x{2022}\x{F071}\s]*(?:\(\s*\d+(?:\.\d+)?\s*\)\s*)?(?:[A-Z&]+(?:\s+[A-Z&]+)?(?:\s*/\s*[A-Z&]+(?:\s+[A-Z&]+)?)?\s+\d{3}[A-Za-z]?\*?|\d{3}[A-Za-z]?\b)").expect("direct course code line pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^[-*\x{2022}\x{F071}\s]*(?:\(\s*[0-9]+(?:\.[0-9]+)?\s*\)\s*)?(?:[A-Z&]+(?:\s+[A-Z&]+)?(?:\s*/\s*[A-Z&]+(?:\s+[A-Z&]+)?)?\s+[0-9]{3}[A-Za-z]?\*?|[0-9]{3}[A-Za-z]?\b)")).expect("direct course code line pattern"))
 }
 fn numbered_inline_option_row_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"^\d+\s*[\).]\s+").expect("numbered inline option row pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"^[0-9]+\s*[\).]\s+"))
+            .expect("numbered inline option row pattern")
+    })
 }
 fn numbered_inline_required_body_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"^\s*\d+\s*[\).]\s+(.+)$").expect("numbered inline required body pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"^\s*[0-9]+\s*[\).]\s+(.+)$",
+        ))
+        .expect("numbered inline required body pattern")
+    })
 }
 fn choose_one_option_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bchoose\s+one\s+option\b").expect("choose one option heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bchoose\s+one\s+option\b",
+        ))
+        .expect("choose one option heading pattern")
+    })
 }
 fn degree_total_free_electives_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^\(?\s*includes?\s+\d+(?:\.\d+)?\s+credits?\s+free\s+electives?\s*\)?$").expect("degree total free electives pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^\(?\s*includes?\s+[0-9]+(?:\.[0-9]+)?\s+credits?\s+free\s+electives?\s*\)?$",
+        ))
+        .expect("degree total free electives pattern")
+    })
 }
 fn degree_total_music_program_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:Admission to the Bachelor of Music|This degree is offered with a major in Music)\b.*\bminimum\s+of\s+1?80\s+credits?\b.*\bdepartments?\s+other\s+than\s+the\s+School\s+of\s+Music\b").expect("degree total music program pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:Admission to the Bachelor of Music|This degree is offered with a major in Music)\b.*\bminimum\s+of\s+1?80\s+credits?\b.*\bdepartments?\s+other\s+than\s+the\s+School\s+of\s+Music\b")).expect("degree total music program pattern"))
 }
 fn degree_total_general_elective_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:additional\s+)?(?:general\s+)?electives?\b").expect("degree total general elective cue pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:additional\s+)?(?:general\s+)?electives?\b",
+        ))
+        .expect("degree total general elective cue pattern")
+    })
 }
 fn degree_total_general_elective_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:as needed to reach|totaling(?: a)?(?: minimum)?(?: of)?|minimum(?: of)? total(?: of)?|total(?:s|ed)?(?: the)?)\b.{0,80}\b1?80\s+credits?\b").expect("degree total general elective pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:as needed to reach|totaling(?: a)?(?: minimum)?(?: of)?|minimum(?: of)? total(?: of)?|total(?:s|ed)?(?: the)?)\b.{0,80}\b1?80\s+credits?\b")).expect("degree total general elective pattern"))
 }
 fn degree_total_elective_total_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bbring(?:s|ing)?(?: your)? total to\s+1?80\b").expect("degree total elective total pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bbring(?:s|ing)?(?: your)? total to\s+1?80\b",
+        ))
+        .expect("degree total elective total pattern")
+    })
 }
 fn degree_total_general_elective_depending_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bgeneral electives?\s+may also be required\b.{0,120}\bdepending\b").expect("degree total general elective depending pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bgeneral electives?\s+may also be required\b.{0,120}\bdepending\b",
+        ))
+        .expect("degree total general elective depending pattern")
+    })
 }
 fn sequence_alternative_leading_marker_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^[^A-Za-z]*(?:[a-z]\)|\d+\))?\s*").expect("sequence alternative leading marker pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^[^A-Za-z]*(?:[a-z]\)|[0-9]+\))?\s*",
+        ))
+        .expect("sequence alternative leading marker pattern")
+    })
 }
 fn sequence_words_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:sequence|series)\b").expect("sequence words pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:sequence|series)\b",
+        ))
+        .expect("sequence words pattern")
+    })
 }
 fn sequence_subject_suffix_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\s+\b(?:calculus|chemistry|physics|biology)\b$").expect("sequence subject suffix pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\s+\b(?:calculus|chemistry|physics|biology)\b$",
+        ))
+        .expect("sequence subject suffix pattern")
+    })
 }
 fn sequence_label_trailing_noise_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"[^A-Za-z-]+$").expect("sequence label trailing noise pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"[^A-Za-z-]+$"))
+            .expect("sequence label trailing noise pattern")
+    })
 }
 fn sequence_label_terminal_punctuation_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"[:;,.-]+$").expect("sequence label terminal punctuation pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"[:;,.-]+$"))
+            .expect("sequence label terminal punctuation pattern")
+    })
 }
 fn sequence_allowed_alternative_label_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^(?:calculus-based|algebra-based|regular|standard|accelerated|honors?)$").expect("allowed sequence alternative label pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^(?:calculus-based|algebra-based|regular|standard|accelerated|honors?)$",
+        ))
+        .expect("allowed sequence alternative label pattern")
+    })
 }
 fn parenthetical_sequence_choice_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\(\s*or\s+").expect("parenthetical sequence choice cue pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\(\s*or\s+"))
+            .expect("parenthetical sequence choice cue pattern")
+    })
 }
 fn parenthetical_sequence_candidate_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)((?:[A-Z&]+(?:\s+[A-Z&]+)?\s+)?\d{3}[A-Za-z]?(?:\s*,\s*(?:[A-Z&]+(?:\s+[A-Z&]+)?\s+)?\d{3}[A-Za-z]?){1,5})\s*\(\s*or\s+([^)]+)\)").expect("parenthetical sequence candidate pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)((?:[A-Z&]+(?:\s+[A-Z&]+)?\s+)?\d{3}[A-Za-z]?(?:\s*,\s*(?:[A-Z&]+(?:\s+[A-Z&]+)?\s+)?\d{3}[A-Za-z]?){1,5})\s*\(\s*or\s+([^)]+)\)",
+        ))
+        .expect("parenthetical sequence candidate pattern")
+    })
 }
 fn sequence_alternative_choice_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(super::requirement_shape::SEQUENCE_ALTERNATIVE_CHOICE_LINE_PATTERN_SOURCE).expect("sequence alternative choice pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            super::requirement_shape::SEQUENCE_ALTERNATIVE_CHOICE_LINE_PATTERN_SOURCE,
+        ))
+        .expect("sequence alternative choice pattern")
+    })
 }
 fn sequence_bare_number_continuation_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?:,\s*\d{3}[A-Za-z]?|\bor\s+\d{3}[A-Za-z]?)").expect("sequence bare number continuation pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?:,\s*\d{3}[A-Za-z]?|\bor\s+\d{3}[A-Za-z]?)",
+        ))
+        .expect("sequence bare number continuation pattern")
+    })
 }
 fn trailing_parenthetical_subject_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"\(([A-Z&]{2,8})\)\s*$").expect("trailing parenthetical subject pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"\(([A-Z&]{2,8})\)\s*$"))
+            .expect("trailing parenthetical subject pattern")
+    })
 }
 fn named_sequence_heading_subject_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:physics|chemistry|mathematics|math|biology|biochemistry)\b.*\(([A-Z&]{2,8})\)").expect("named sequence heading subject pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)\b(?:physics|chemistry|mathematics|math|biology|biochemistry)\b.*\(([A-Z&]{2,8})\)",
+        ))
+        .expect("named sequence heading subject pattern")
+    })
 }
 fn fallback_physics_context_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bphysics\b").expect("fallback physics context pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)\bphysics\b",
+        ))
+        .expect("fallback physics context pattern")
+    })
 }
 fn fallback_chemistry_context_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bchemistry\b").expect("fallback chemistry context pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)\bchemistry\b",
+        ))
+        .expect("fallback chemistry context pattern")
+    })
 }
 fn fallback_math_context_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bmathematics\b|\bcalculus\b").expect("fallback math context pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)\bmathematics\b|\bcalculus\b",
+        ))
+        .expect("fallback math context pattern")
+    })
 }
 fn fallback_biology_context_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bbiology\b").expect("fallback biology context pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)\bbiology\b",
+        ))
+        .expect("fallback biology context pattern")
+    })
 }
 fn ampersand_or_single_sequence_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b[A-Z]{2,8}\s+\d{3}[^:]*&[^:]*\bor\b[^:]*[A-Z]{2,8}\s+\d{3}").expect("ampersand-or-single sequence pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)\b[A-Z]{2,8}\s+\d{3}[^:]*&[^:]*\bor\b[^:]*[A-Z]{2,8}\s+\d{3}",
+        ))
+        .expect("ampersand-or-single sequence pattern")
+    })
 }
 fn ampersand_or_separator_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bor\b").expect("ampersand-or separator pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)\bor\b",
+        ))
+        .expect("ampersand-or separator pattern")
+    })
 }
 fn inline_or_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bor\b").expect("inline or cue pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)\bor\b",
+        ))
+        .expect("inline or cue pattern")
+    })
+}
+fn inline_choose_or_select_label_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)^(?:choose|select)\b",
+        ))
+        .expect("inline choice label pattern")
+    })
+}
+fn inline_selective_label_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)^selectives?\b",
+        ))
+        .expect("inline selective label pattern")
+    })
+}
+fn inline_choose_from_label_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^\(?\s*(?:choose|select)\s+from\b",
+        ))
+        .expect("inline choose-from label pattern")
+    })
+}
+fn inline_broad_requirement_label_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^note\b|\b(?:requirements?|credits?|electives?|options?)\b",
+        ))
+        .expect("inline broad requirement label pattern")
+    })
 }
 fn merged_pdf_labeled_choice_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bSelect\s+[A-Z][A-Za-z&/ -]{1,40}:").expect("merged PDF labeled choice pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bSelect\s+[A-Z][A-Za-z&/ -]{1,40}:",
+        ))
+        .expect("merged PDF labeled choice pattern")
+    })
 }
 fn merged_pdf_choice_fragment_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:competency|300-400 level|At least)\b").expect("merged PDF choice fragment cue pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:competency|300-400 level|At least)\b",
+        ))
+        .expect("merged PDF choice fragment cue pattern")
+    })
 }
 fn public_health_biology_choice_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^Select BIOL$").expect("public health biology choice pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^Select BIOL$"))
+            .expect("public health biology choice pattern")
+    })
 }
 fn public_health_chemistry_choice_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^Select CHEM$").expect("public health chemistry choice pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^Select CHEM$"))
+            .expect("public health chemistry choice pattern")
+    })
 }
 fn public_health_leaked_label_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^(?:ELECTIVES\s*\*?|following|cr)$").expect("public health leaked label pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^(?:ELECTIVES\s*\*?|following|cr)$",
+        ))
+        .expect("public health leaked label pattern")
+    })
 }
 fn public_health_natural_science_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bNatural Sciences?\b").expect("public health natural science pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bNatural Sciences?\b",
+        ))
+        .expect("public health natural science pattern")
+    })
 }
 fn public_health_service_learning_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bPUBLIC HEALTH SERVICE LEARNING\b").expect("public health service learning pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bPUBLIC HEALTH SERVICE LEARNING\b",
+        ))
+        .expect("public health service learning pattern")
+    })
 }
 fn sbse_comparison_table_snapshot_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bcomparison table\b.*\bbse\b.*\bsbse\b").expect("SBSE comparison table snapshot pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bcomparison table\b.*\bbse\b.*\bsbse\b",
+        ))
+        .expect("SBSE comparison table snapshot pattern")
+    })
 }
 fn sbse_engineering_elective_line_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^Engineering Electives?:\s*12\s+credits\s+chosen\s+from\b").expect("SBSE engineering elective line pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^Engineering Electives?:\s*12\s+credits\s+chosen\s+from\b",
+        ))
+        .expect("SBSE engineering elective line pattern")
+    })
 }
 fn sbse_diversity_line_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^Diversity\s*\(DIV\):\s*5\s+credits\b").expect("SBSE diversity line pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^Diversity\s*\(DIV\):\s*5\s+credits\b",
+        ))
+        .expect("SBSE diversity line pattern")
+    })
 }
 fn sbse_social_sciences_line_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^10\s+credits\s+chosen\s+from\s+the\s+University\s+SSc\s+list\b").expect("SBSE social sciences line pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^10\s+credits\s+chosen\s+from\s+the\s+University\s+SSc\s+list\b",
+        ))
+        .expect("SBSE social sciences line pattern")
+    })
 }
 fn sbse_statistics_line_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^QSCI\s+381\s+\(or\s+INDE\s+315\s+or\s+STAT\s+390\)").expect("SBSE statistics line pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^QSCI\s+381\s+\(or\s+INDE\s+315\s+or\s+STAT\s+390\)",
+        ))
+        .expect("SBSE statistics line pattern")
+    })
 }
 fn sbse_physics_line_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^PHYS\s+121\s+and\s+PHYS\s+122\s+\(or\s+PHYS\s+141,\s*142\)").expect("SBSE physics line pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^PHYS\s+121\s+and\s+PHYS\s+122\s+\(or\s+PHYS\s+141,\s*142\)",
+        ))
+        .expect("SBSE physics line pattern")
+    })
 }
 fn sbse_supplemental_source_marker_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^\[Supplemental official source\].*\bBSE\b").expect("SBSE supplemental source marker pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^\[Supplemental official source\].*\bBSE\b",
+        ))
+        .expect("SBSE supplemental source marker pattern")
+    })
 }
 fn pathway_label_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:option|track|route|pathway|concentration)\b").expect("pathway label cue pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:option|track|route|pathway|concentration)\b",
+        ))
+        .expect("pathway label cue pattern")
+    })
 }
 fn parallel_choose_one_section_boundary_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^(?:freshman|sophomore|junior|senior)\s+year\b|^major requirements?\b").expect("parallel choose one section boundary pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^(?:freshman|sophomore|junior|senior)\s+year\b|^major requirements?\b",
+        ))
+        .expect("parallel choose one section boundary pattern")
+    })
 }
 fn parallel_numbered_row_marker_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"^\s*\d+\s*[).]\s+").expect("parallel numbered row marker pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"^\s*[0-9]+\s*[).]\s+"))
+            .expect("parallel numbered row marker pattern")
+    })
 }
 fn parallel_choose_one_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^(.+?)\s+(?:[-\x{2013}\x{2014}]|\S{1,4})?\s*choose\s+one\s+option:?$").expect("parallel choose one heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^(.+?)\s+(?:[-\x{2013}\x{2014}]|\S{1,4})?\s*choose\s+one\s+option:?$",
+        ))
+        .expect("parallel choose one heading pattern")
+    })
 }
 fn parallel_choose_one_heading_terminal_punctuation_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"[:;.\-]+$").expect("parallel choose one heading punctuation pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"[:;.\-]+$"))
+            .expect("parallel choose one heading punctuation pattern")
+    })
 }
 fn parallel_heading_biochemistry_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"\bbiochemistry\b").expect("parallel biochemistry heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"\bbiochemistry\b"))
+            .expect("parallel biochemistry heading pattern")
+    })
 }
 fn parallel_heading_mathematics_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"\bmathematics?\b").expect("parallel mathematics heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"\bmathematics?\b"))
+            .expect("parallel mathematics heading pattern")
+    })
 }
 fn parallel_heading_statistics_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"\bstatistics?\b").expect("parallel statistics heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"\bstatistics?\b"))
+            .expect("parallel statistics heading pattern")
+    })
 }
 fn parallel_heading_physics_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"\bphysics?\b").expect("parallel physics heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"\bphysics?\b"))
+            .expect("parallel physics heading pattern")
+    })
 }
 fn parallel_heading_chemistry_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"\bchemistry\b").expect("parallel chemistry heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"\bchemistry\b"))
+            .expect("parallel chemistry heading pattern")
+    })
 }
 fn parallel_heading_biology_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"\bbiology\b").expect("parallel biology heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"\bbiology\b"))
+            .expect("parallel biology heading pattern")
+    })
 }
 fn supplemental_official_source_marker_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^\[Supplemental official source\]").expect("supplemental official source marker pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^\[Supplemental official source\]",
+        ))
+        .expect("supplemental official source marker pattern")
+    })
 }
 fn support_requirement_target_line_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:requirements?|option courses?|credits?)\b").expect("support requirement target line pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:requirements?|option courses?|credits?)\b",
+        ))
+        .expect("support requirement target line pattern")
+    })
 }
 fn bare_sequence_course_number_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"\b(\d{3}[A-Za-z]?)\b").expect("bare sequence course number pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"\b([0-9]{3}[A-Za-z]?)\b"))
+            .expect("bare sequence course number pattern")
+    })
 }
 fn sequence_lab_word_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\blabs?|laboratory\b").expect("sequence lab word pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\blabs?|laboratory\b"))
+            .expect("sequence lab word pattern")
+    })
 }
 fn conditional_lab_course_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"\b(?:117|118|119)\b").expect("conditional lab course pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"\b(?:117|118|119)\b"))
+            .expect("conditional lab course pattern")
+    })
+}
+fn calculus_based_cue_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bcalculus-based\b"))
+            .expect("calculus-based cue pattern")
+    })
 }
 fn algebra_based_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\balgebra-based\b").expect("algebra-based cue pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\balgebra-based\b"))
+            .expect("algebra-based cue pattern")
+    })
 }
 fn lab_physics_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:physics|phys)\b").expect("lab physics cue pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:physics|phys)\b"))
+            .expect("lab physics cue pattern")
+    })
 }
 fn lab_chemistry_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:chemistry|chem)\b").expect("lab chemistry cue pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:chemistry|chem)\b",
+        ))
+        .expect("lab chemistry cue pattern")
+    })
 }
 fn lab_biology_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:biology|biol)\b").expect("lab biology cue pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:biology|biol)\b"))
+            .expect("lab biology cue pattern")
+    })
 }
 fn lab_math_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:mathematics|math|calculus)\b").expect("lab math cue pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:mathematics|math|calculus)\b",
+        ))
+        .expect("lab math cue pattern")
+    })
 }
 fn sequence_physics_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bphysics\b").expect("sequence physics cue pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bphysics\b"))
+            .expect("sequence physics cue pattern")
+    })
 }
 fn sequence_chemistry_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bchemistry\b|\bchem\b").expect("sequence chemistry cue pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bchemistry\b|\bchem\b",
+        ))
+        .expect("sequence chemistry cue pattern")
+    })
 }
 fn sequence_math_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bmathematics\b|\bmath\b|\bcalculus\b|\bstatistics\b").expect("sequence math cue pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bmathematics\b|\bmath\b|\bcalculus\b|\bstatistics\b",
+        ))
+        .expect("sequence math cue pattern")
+    })
 }
 fn sequence_biology_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bbiology\b|\bbiol\b").expect("sequence biology cue pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bbiology\b|\bbiol\b"))
+            .expect("sequence biology cue pattern")
+    })
 }
 fn sequence_or_only_line_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^OR$").expect("sequence OR-only line pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^OR$"))
+            .expect("sequence OR-only line pattern")
+    })
 }
 fn sequence_heading_boundary_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(super::requirement_shape::SEQUENCE_HEADING_BOUNDARY_PATTERN_SOURCE).expect("sequence heading boundary pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            super::requirement_shape::SEQUENCE_HEADING_BOUNDARY_PATTERN_SOURCE,
+        ))
+        .expect("sequence heading boundary pattern")
+    })
 }
 fn sequence_label_alternative_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(super::requirement_shape::SEQUENCE_LABEL_ALTERNATIVE_PATTERN_SOURCE).expect("sequence label alternative pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            super::requirement_shape::SEQUENCE_LABEL_ALTERNATIVE_PATTERN_SOURCE,
+        ))
+        .expect("sequence label alternative pattern")
+    })
 }
 fn sequence_restriction_context_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:course restrictions?|exclude|excludes|excluded|CR/NC|independent study|internships?)\b").expect("sequence restriction context pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:course restrictions?|exclude|excludes|excluded|CR/NC|independent study|internships?)\b")).expect("sequence restriction context pattern"))
 }
 fn sequence_choice_context_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -6828,100 +10165,174 @@ fn sequence_choice_context_pattern() -> &'static regex::Regex {
             super::requirement_shape::SEQUENCE_LABEL_ALTERNATIVE_PATTERN_SOURCE,
             super::requirement_shape::SEQUENCE_ALTERNATIVE_CHOICE_LINE_PATTERN_SOURCE,
         );
-        regex::Regex::new(&source).expect("sequence choice context pattern")
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            &source,
+        ))
+        .expect("sequence choice context pattern")
     })
 }
 fn parenthetical_number_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"\(\s*\d+(?:\.\d+)?\s*\)").expect("parenthetical number pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"\(\s*\d+(?:\.\d+)?\s*\)"))
+            .expect("parenthetical number pattern")
+    })
 }
 fn requirement_section_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:requirements?|coursework requirements?|core courses?|degree requirements?)\b").expect("requirement section heading pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:requirements?|coursework requirements?|core courses?|degree requirements?)\b")).expect("requirement section heading pattern"))
 }
 fn electives_list_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\belectives?\s+list\b").expect("electives list heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\belectives?\s+list\b",
+        ))
+        .expect("electives list heading pattern")
+    })
 }
 fn approved_courses_list_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bapproved courses?\s+list\b").expect("approved courses list heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bapproved courses?\s+list\b",
+        ))
+        .expect("approved courses list heading pattern")
+    })
 }
 fn split_choice_source_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bor\b").expect("split choice source pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bor\b"))
+            .expect("split choice source pattern")
+    })
 }
 fn split_choice_trailing_or_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bor\s*$").expect("split choice trailing OR pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bor\s*$"))
+            .expect("split choice trailing OR pattern")
+    })
 }
 fn embedded_alternative_required_list_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)inline required course list with embedded alternatives").expect("embedded alternative required list pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)inline required course list with embedded alternatives",
+        ))
+        .expect("embedded alternative required list pattern")
+    })
 }
 fn credit_bucket_explicit_choice_count_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(&format!(r"(?i)\b(?:choose|select)\s+(?:{CHOICE_COUNT_WORDS_PATTERN}|\d+)\b")).expect("credit bucket explicit choice count pattern"))
+    VALUE.get_or_init(|| {
+        let source = format!(r"(?i)\b(?:choose|select)\s+(?:{CHOICE_COUNT_WORDS_PATTERN}|\d+)\b");
+        regex::Regex::new(&js_regex_compatibility_pattern(&source))
+            .expect("credit bucket explicit choice count pattern")
+    })
 }
 fn parenthetical_sequence_or_marker_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\(\s*or\s+").expect("parenthetical sequence OR marker pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\(\s*or\s+"))
+            .expect("parenthetical sequence OR marker pattern")
+    })
 }
 fn parenthetical_sequence_choice_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)((?:[A-Z&]+(?:\s+[A-Z&]+)?\s+)?\d{3}[A-Za-z]?(?:\s*,\s*(?:[A-Z&]+(?:\s+[A-Z&]+)?\s+)?\d{3}[A-Za-z]?){1,5})\s*\(\s*or\s+([^)]+)\)").expect("parenthetical sequence choice pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)((?:[A-Z&]+(?:\s+[A-Z&]+)?\s+)?\d{3}[A-Za-z]?(?:\s*,\s*(?:[A-Z&]+(?:\s+[A-Z&]+)?\s+)?\d{3}[A-Za-z]?){1,5})\s*\(\s*or\s+([^)]+)\)")).expect("parenthetical sequence choice pattern"))
 }
 fn credit_bucket_course_list_bucket_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bcredits?\s+from\b|\bcredits?\b.{0,120}:\s*[A-Z]{2,8}&?\s+\d{3}").expect("credit bucket course list bucket pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bcredits?\s+from\b|\bcredits?\b.{0,120}:\s*[A-Z]{2,8}&?\s+\d{3}",
+        ))
+        .expect("credit bucket course list bucket pattern")
+    })
 }
 fn credit_bucket_subject_elective_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bcredits?\s+from\b.{0,120}\belectives?\b|\bcourses?\s+with\s+an?\b.{0,60}\bprefix\b|\bfree electives?\b|\b(?:credits?|\d+(?:\.\d+)?\s*-\s*credits?)\b.{0,120}\bintroductory\s+[A-Z]{2,8}\s+classes?\b").expect("credit bucket subject elective pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bcredits?\s+from\b.{0,120}\belectives?\b|\bcourses?\s+with\s+an?\b.{0,60}\bprefix\b|\bfree electives?\b|\b(?:credits?|\d+(?:\.\d+)?\s*-\s*credits?)\b.{0,120}\bintroductory\s+[A-Z]{2,8}\s+classes?\b")).expect("credit bucket subject elective pattern"))
 }
 fn credit_bucket_language_level_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bcredits?\s+(?:primary|secondary)?\s*language\b|\bcomplete\b.{0,100}\b(?:second|third|fourth)[-\s]?year\s+level\b").expect("credit bucket language level pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bcredits?\s+(?:primary|secondary)?\s*language\b|\bcomplete\b.{0,100}\b(?:second|third|fourth)[-\s]?year\s+level\b")).expect("credit bucket language level pattern"))
 }
 fn program_approved_word_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bapproved\b").expect("program approved word pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bapproved\b"))
+            .expect("program approved word pattern")
+    })
 }
 fn credit_bucket_leading_non_alphanumeric_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"^[^A-Za-z0-9]+").expect("credit bucket leading non-alphanumeric pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"^[^A-Za-z0-9]+"))
+            .expect("credit bucket leading non-alphanumeric pattern")
+    })
 }
 fn credit_bucket_explicit_course_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:from|following:?)\s+([A-Za-z&]{2,8}|[A-Za-z&]{1,4}\s+[A-Za-z&]{1,4})\s+(\d{3}[A-Za-z]?)\b").expect("credit bucket explicit course pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:from|following:?)\s+([A-Za-z&]{2,8}|[A-Za-z&]{1,4}\s+[A-Za-z&]{1,4})\s+(\d{3}[A-Za-z]?)\b")).expect("credit bucket explicit course pattern"))
 }
 fn additional_requirements_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^(?:\[Page\s+\d+\]\s*)?Additional Requirements$").expect("additional requirements heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^(?:\[Page\s+\d+\]\s*)?Additional Requirements$",
+        ))
+        .expect("additional requirements heading pattern")
+    })
 }
 fn program_credit_bucket_continuation_stop_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bnatural science courses for\b|website").expect("program credit bucket continuation stop pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bnatural science courses for\b|website",
+        ))
+        .expect("program credit bucket continuation stop pattern")
+    })
 }
 fn sibling_credit_bucket_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"^[A-Za-z][A-Za-z/&\s-]{2,80}:\s+").expect("sibling credit bucket heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"^[A-Za-z][A-Za-z/&\s-]{2,80}:\s+",
+        ))
+        .expect("sibling credit bucket heading pattern")
+    })
 }
 fn credit_bucket_semicolon_split_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"\s*;\s*").expect("credit bucket semicolon split pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"\s*;\s*"))
+            .expect("credit bucket semicolon split pattern")
+    })
 }
 fn credit_bucket_and_course_prefix_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^and\s+[A-Z]{2,8}&?\s+\d{3}").expect("credit bucket and course prefix pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^and\s+[A-Z]{2,8}&?\s+\d{3}",
+        ))
+        .expect("credit bucket and course prefix pattern")
+    })
 }
 fn credit_bucket_leading_and_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^and\s+").expect("credit bucket leading and pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^and\s+"))
+            .expect("credit bucket leading and pattern")
+    })
 }
 fn credit_bucket_heading_prefix_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"^([^:]{3,90}):\s*").expect("credit bucket heading prefix pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"^([^:]{3,90}):\s*"))
+            .expect("credit bucket heading prefix pattern")
+    })
 }
 fn subject_prefix_credit_bucket_patterns() -> [&'static regex::Regex; 4] {
     [
@@ -6933,68 +10344,122 @@ fn subject_prefix_credit_bucket_patterns() -> [&'static regex::Regex; 4] {
 }
 fn subject_prefixed_courses_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b([A-Za-z&]{1,8}(?:\s+[A-Za-z&]{1,8})?)\s*-\s*prefixed\s+courses?\b").expect("subject prefixed courses pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b([A-Za-z&]{1,8}(?:\s+[A-Za-z&]{1,8})?)\s*-\s*prefixed\s+courses?\b",
+        ))
+        .expect("subject prefixed courses pattern")
+    })
 }
 fn subject_prefix_courses_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b([A-Za-z&]{1,8}(?:\s+[A-Za-z&]{1,8})?)\s+prefix\s+courses?\b").expect("subject prefix courses pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b([A-Za-z&]{1,8}(?:\s+[A-Za-z&]{1,8})?)\s+prefix\s+courses?\b",
+        ))
+        .expect("subject prefix courses pattern")
+    })
 }
 fn courses_with_subject_prefix_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bcourses?\s+with\s+an?\s+([A-Za-z&]{1,8}(?:\s+[A-Za-z&]{1,8})?)\s+prefix\b").expect("courses with subject prefix pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bcourses?\s+with\s+an?\s+([A-Za-z&]{1,8}(?:\s+[A-Za-z&]{1,8})?)\s+prefix\b",
+        ))
+        .expect("courses with subject prefix pattern")
+    })
 }
 fn from_subject_electives_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bfrom\s+([A-Za-z&]{1,8}(?:\s+[A-Za-z&]{1,8})?)\s+electives?\b").expect("from subject electives pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bfrom\s+([A-Za-z&]{1,8}(?:\s+[A-Za-z&]{1,8})?)\s+electives?\b",
+        ))
+        .expect("from subject electives pattern")
+    })
 }
 fn program_courses_or_electives_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:electives?|courses?)\b").expect("program courses or electives pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:electives?|courses?)\b",
+        ))
+        .expect("program courses or electives pattern")
+    })
 }
 fn program_elective_bucket_label_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b((?:approved\s+)?(?:advanced\s+)?(?:engineering|technical|departmental|major|science|natural science|program|concentration|option|upper[-\s]?division)\s+electives?(?:\s+credit)?|elective\s+credit)\b").expect("program elective bucket label pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b((?:approved\s+)?(?:advanced\s+)?(?:engineering|technical|departmental|major|science|natural science|program|concentration|option|upper[-\s]?division)\s+electives?(?:\s+credit)?|elective\s+credit)\b")).expect("program elective bucket label pattern"))
 }
 fn program_elective_credit_only_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^elective\s+credit$").expect("program elective credit only pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^elective\s+credit$"))
+            .expect("program elective credit only pattern")
+    })
 }
 fn program_electives_credit_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\belectives?\s+credit\b").expect("program electives credit pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\belectives?\s+credit\b",
+        ))
+        .expect("program electives credit pattern")
+    })
 }
 fn program_elective_word_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\belectives?\b").expect("program elective word pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\belectives?\b"))
+            .expect("program elective word pattern")
+    })
 }
 fn program_free_electives_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bfree electives?\b").expect("program free electives pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bfree electives?\b"))
+            .expect("program free electives pattern")
+    })
 }
 fn program_approved_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bapproved\b").expect("program approved cue pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bapproved\b"))
+            .expect("program approved cue pattern")
+    })
 }
 fn program_elective_credit_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:engineering|technical|departmental|major|science|natural science|program|concentration|option|upper[-\s]?division)\s+electives?(?:\s+credit)?\b|\belective\s+credit\b|\belectives?\b.{0,100}\bcredits?\s+(?:chosen\s+)?from\b|\bcredits?\s+(?:chosen\s+)?from\b.{0,100}\belectives?\b").expect("program elective credit cue pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:engineering|technical|departmental|major|science|natural science|program|concentration|option|upper[-\s]?division)\s+electives?(?:\s+credit)?\b|\belective\s+credit\b|\belectives?\b.{0,100}\bcredits?\s+(?:chosen\s+)?from\b|\bcredits?\s+(?:chosen\s+)?from\b.{0,100}\belectives?\b")).expect("program elective credit cue pattern"))
 }
 fn program_natural_science_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bnatural sciences?\b").expect("program natural science pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bnatural sciences?\b",
+        ))
+        .expect("program natural science pattern")
+    })
 }
 fn program_math_science_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bmath(?:ematics)?/science\b|\bmath(?:ematics)?\s*&\s*science\b").expect("program math science pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bmath(?:ematics)?/science\b|\bmath(?:ematics)?\s*&\s*science\b",
+        ))
+        .expect("program math science pattern")
+    })
 }
 fn program_elective_category_normalization_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"[^A-Z0-9]+").expect("program elective category normalization pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"[^A-Z0-9]+"))
+            .expect("program elective category normalization pattern")
+    })
 }
 fn program_elective_category(label: &str) -> String {
     let uppercase = label.to_ascii_uppercase();
-    let normalized = program_elective_category_normalization_pattern()
-        .replace_all(&uppercase, "_");
+    let normalized = program_elective_category_normalization_pattern().replace_all(&uppercase, "_");
     let normalized = normalized.trim_matches('_');
     if normalized.is_empty() {
         "PROGRAM_ELECTIVE_CREDIT".to_string()
@@ -7004,450 +10469,764 @@ fn program_elective_category(label: &str) -> String {
 }
 fn non_requirement_course_exclusion_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:will\s+not|cannot|can't|does\s+not|do\s+not|may\s+not|not)\s+(?:substitut(?:e|es?|ed|ing)|count|receive\s+credit|be\s+(?:used|applied)|satisfy|fulfill|meet|apply)\b|\b(?:do|does|will|can|could|may)\b.{0,80}\b(?:not|n't)\b.{0,80}\b(?:count|substitut(?:e|es?|ed|ing)|receive\s+credit|satisfy|fulfill|meet|apply)\b").expect("non-requirement course exclusion pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:will\s+not|cannot|can't|does\s+not|do\s+not|may\s+not|not)\s+(?:substitut(?:e|es?|ed|ing)|count|receive\s+credit|be\s+(?:used|applied)|satisfy|fulfill|meet|apply)\b|\b(?:do|does|will|can|could|may)\b.{0,80}\b(?:not|n't)\b.{0,80}\b(?:count|substitut(?:e|es?|ed|ing)|receive\s+credit|satisfy|fulfill|meet|apply)\b")).expect("non-requirement course exclusion pattern"))
 }
 fn shared_humanities_social_credit_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bArts?\s+(?:and|&)\s+Humanities\s+(?:and|&)\s+Social Sciences?\b").expect("shared humanities social credit pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bArts?\s+(?:and|&)\s+Humanities\s+(?:and|&)\s+Social Sciences?\b",
+        ))
+        .expect("shared humanities social credit pattern")
+    })
 }
 fn shared_vlpa_is_credit_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bVLPA\s+(?:and|&)\s+I\s*&\s*S\b").expect("shared VLPA I&S credit pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bVLPA\s+(?:and|&)\s+I\s*&\s*S\b",
+        ))
+        .expect("shared VLPA I&S credit pattern")
+    })
 }
 fn shared_long_category_credit_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bVisual,\s*Literary,\s*and\s*Performing\s*Arts\b.{0,80}\bIndividuals\s+(?:and|&)\s+Societies\b").expect("shared long category credit pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bVisual,\s*Literary,\s*and\s*Performing\s*Arts\b.{0,80}\bIndividuals\s+(?:and|&)\s+Societies\b")).expect("shared long category credit pattern"))
 }
 fn following_humanities_minimum_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:minimum|no fewer than)\b.{0,80}\b(?:Arts?\s+(?:and|&)\s+Humanities|A\s*&\s*H|VLPA|Visual,\s*Literary,\s*and\s*Performing\s*Arts)\b").expect("following humanities minimum pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:minimum|no fewer than)\b.{0,80}\b(?:Arts?\s+(?:and|&)\s+Humanities|A\s*&\s*H|VLPA|Visual,\s*Literary,\s*and\s*Performing\s*Arts)\b")).expect("following humanities minimum pattern"))
 }
 fn following_social_sciences_minimum_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:minimum|no fewer than)\b.{0,80}\b(?:Social Sciences?|S\s*Sc|I\s*&\s*S|Individuals\s+(?:and|&)\s+Societies)\b").expect("following social sciences minimum pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:minimum|no fewer than)\b.{0,80}\b(?:Social Sciences?|S\s*Sc|I\s*&\s*S|Individuals\s+(?:and|&)\s+Societies)\b")).expect("following social sciences minimum pattern"))
 }
 fn credit_bucket_exclusion_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:course restrictions?|exclude|excludes|excluded|CR/NC|independent study|internships?)\b").expect("credit bucket exclusion pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:course restrictions?|exclude|excludes|excluded|CR/NC|independent study|internships?)\b")).expect("credit bucket exclusion pattern"))
 }
 fn students_earn_remaining_credit_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:students?\s+earn|remaining)\b.{0,120}\b(?:major\s+elective|elective)\s+credits?\b.{0,120}\bin\s+addition\s+to\b").expect("students earn remaining credit pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:students?\s+earn|remaining)\b.{0,120}\b(?:major\s+elective|elective)\s+credits?\b.{0,120}\bin\s+addition\s+to\b")).expect("students earn remaining credit pattern"))
 }
 fn credit_bucket_elective_single_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\belective\b").expect("credit bucket elective single heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\belective\b"))
+            .expect("credit bucket elective single heading pattern")
+    })
 }
 fn credit_bucket_elective_disqualifier_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:approved|from|of|list)\b").expect("credit bucket elective disqualifier pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:approved|from|of|list)\b",
+        ))
+        .expect("credit bucket elective disqualifier pattern")
+    })
 }
 fn next_line_course_list_delimiter_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"[,;]").expect("next line course list delimiter pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"[,;]"))
+            .expect("next line course list delimiter pattern")
+    })
 }
 fn approved_list_and_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bapproved\b.*\blist\b").expect("approved list and pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bapproved\b.*\blist\b",
+        ))
+        .expect("approved list and pattern")
+    })
 }
 fn approved_list_context_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:from|approved|department[-\s]approved|see adviser|accordion|website)\b").expect("approved list context pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:from|approved|department[-\s]approved|see adviser|accordion|website)\b",
+        ))
+        .expect("approved list context pattern")
+    })
 }
 fn approved_list_from_placeholder_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bfrom\s+(?:the\s+)?approved\s+list\b").expect("approved list placeholder pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bfrom\s+(?:the\s+)?approved\s+list\b",
+        ))
+        .expect("approved list placeholder pattern")
+    })
 }
 fn approved_list_adviser_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bsee adviser\b").expect("approved list adviser pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bsee adviser\b"))
+            .expect("approved list adviser pattern")
+    })
 }
 fn approved_department_list_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bdepartment[-\s]approved\s+lists?\b").expect("approved department list pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bdepartment[-\s]approved\s+lists?\b",
+        ))
+        .expect("approved department list pattern")
+    })
 }
 fn credit_bucket_overlap_note_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\([^)]*\b(?:cannot\s+overlap|also\s+fulfills?|fulfills?)\b[^)]*\)?").expect("credit bucket overlap note pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\([^)]*\b(?:cannot\s+overlap|also\s+fulfills?|fulfills?)\b[^)]*\)?",
+        ))
+        .expect("credit bucket overlap note pattern")
+    })
 }
 fn credit_bucket_overlap_tail_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:cannot\s+overlap\s+with|almost\s+always\s+also\s+fulfills?|also\s+fulfills?|fulfills?)\b.*$").expect("credit bucket overlap tail pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:cannot\s+overlap\s+with|almost\s+always\s+also\s+fulfills?|also\s+fulfills?|fulfills?)\b.*$")).expect("credit bucket overlap tail pattern"))
 }
 fn aggregate_general_education_credit_mentions_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b\d+(?:\.\d+)?\s+credits?\b").expect("aggregate general education credit mentions pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b\d+(?:\.\d+)?\s+credits?\b",
+        ))
+        .expect("aggregate general education credit mentions pattern")
+    })
 }
 fn aggregate_general_education_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bgeneral education requirements?\b").expect("aggregate general education heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bgeneral education requirements?\b",
+        ))
+        .expect("aggregate general education heading pattern")
+    })
 }
 fn aggregate_general_education_includes_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:which includes|including|includes)\b").expect("aggregate general education includes pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:which includes|including|includes)\b",
+        ))
+        .expect("aggregate general education includes pattern")
+    })
 }
 fn composite_credit_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:Areas of Inquiry|Mathematics\s*&\s*Natural Sciences|Mathematics and Natural Sciences|General Education Component|Computer Engineering Component|Core and Electives|Fundamentals)\b").expect("composite credit heading pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:Areas of Inquiry|Mathematics\s*&\s*Natural Sciences|Mathematics and Natural Sciences|General Education Component|Computer Engineering Component|Core and Electives|Fundamentals)\b")).expect("composite credit heading pattern"))
 }
 fn category_credit_heading_prefix_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^(?:Diversity Requirement|Arts?\s+(?:and|&)\s+Humanities|Social Sciences?|Natural Sciences?|Natural World|Individuals\s+and\s+Societies|Quantitative and Symbolic Reasoning|\b(?:A\s*&\s*H|S\s*Sc|N\s*Sc|I\s*&\s*S|VLPA|DIV|QSR|NW)\b)").expect("category credit heading prefix pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^(?:Diversity Requirement|Arts?\s+(?:and|&)\s+Humanities|Social Sciences?|Natural Sciences?|Natural World|Individuals\s+and\s+Societies|Quantitative and Symbolic Reasoning|\b(?:A\s*&\s*H|S\s*Sc|N\s*Sc|I\s*&\s*S|VLPA|DIV|QSR|NW)\b)")).expect("category credit heading prefix pattern"))
 }
 fn category_credit_count_prefix_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^\d+(?:\.\d+)?\s+(?:additional\s+)?(?:diversity|arts?\s+(?:and|&)\s+humanities|social sciences?|natural sciences?|natural world|individuals\s+and\s+societies|quantitative and symbolic reasoning)\s+credits?\b").expect("category credit count prefix pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^\d+(?:\.\d+)?\s+(?:additional\s+)?(?:diversity|arts?\s+(?:and|&)\s+humanities|social sciences?|natural sciences?|natural world|individuals\s+and\s+societies|quantitative and symbolic reasoning)\s+credits?\b")).expect("category credit count prefix pattern"))
 }
 fn credit_bucket_category_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:approved|electives?|natural sciences?|social sciences?|arts?\s+(?:and|&)\s+humanities|humanities|diversity|quantitative and symbolic reasoning|natural world|individuals\s+and\s+societies|A\s*&\s*H|S\s*Sc|N\s*Sc|I\s*&\s*S|VLPA|DIV|QSR|NW|Math/Science|Math\s*&\s*Science)\b").expect("credit bucket category cue pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:approved|electives?|natural sciences?|social sciences?|arts?\s+(?:and|&)\s+humanities|humanities|diversity|quantitative and symbolic reasoning|natural world|individuals\s+and\s+societies|A\s*&\s*H|S\s*Sc|N\s*Sc|I\s*&\s*S|VLPA|DIV|QSR|NW|Math/Science|Math\s*&\s*Science)\b")).expect("credit bucket category cue pattern"))
 }
 fn credit_bucket_elective_from_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bcredits?\s+from\b.{0,120}\belectives?\b").expect("credit bucket elective from pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bcredits?\s+from\b.{0,120}\belectives?\b",
+        ))
+        .expect("credit bucket elective from pattern")
+    })
 }
 fn credit_bucket_prefixed_course_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bcredits?\b.{0,160}\b(?:[A-Za-z&]{1,8}(?:\s+[A-Za-z&]{1,8})?\s*-\s*prefixed\s+courses?|[A-Za-z&]{1,8}(?:\s+[A-Za-z&]{1,8})?\s+prefix\s+courses?|courses?\s+with\s+an?\s+[A-Za-z&]{1,8}(?:\s+[A-Za-z&]{1,8})?\s+prefix)\b").expect("credit bucket prefixed course pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bcredits?\b.{0,160}\b(?:[A-Za-z&]{1,8}(?:\s+[A-Za-z&]{1,8})?\s*-\s*prefixed\s+courses?|[A-Za-z&]{1,8}(?:\s+[A-Za-z&]{1,8})?\s+prefix\s+courses?|courses?\s+with\s+an?\s+[A-Za-z&]{1,8}(?:\s+[A-Za-z&]{1,8})?\s+prefix)\b")).expect("credit bucket prefixed course pattern"))
 }
 fn credit_bucket_credits_course_list_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bcredits?\b.{0,120}:\s*[A-Z]{2,8}&?\s+\d{3}").expect("credit bucket credits course list pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bcredits?\b.{0,120}:\s*[A-Z]{2,8}&?\s+\d{3}",
+        ))
+        .expect("credit bucket credits course list pattern")
+    })
 }
 fn credit_bucket_introductory_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:credits?|\d+(?:\.\d+)?\s*-\s*credits?)\b.{0,120}\bintroductory\s+[A-Z]{2,8}\s+classes?\b").expect("credit bucket introductory pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:credits?|\d+(?:\.\d+)?\s*-\s*credits?)\b.{0,120}\bintroductory\s+[A-Z]{2,8}\s+classes?\b")).expect("credit bucket introductory pattern"))
 }
 fn credit_bucket_language_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bcredits?\s+(?:primary|secondary)?\s*language\b").expect("credit bucket language pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bcredits?\s+(?:primary|secondary)?\s*language\b",
+        ))
+        .expect("credit bucket language pattern")
+    })
 }
 fn credit_bucket_year_level_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bcomplete\b.{0,100}\b(?:second|third|fourth)[-\s]?year\s+level\b").expect("credit bucket year level pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bcomplete\b.{0,100}\b(?:second|third|fourth)[-\s]?year\s+level\b",
+        ))
+        .expect("credit bucket year level pattern")
+    })
 }
 fn credit_bucket_credit_from_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bcredits?\s+from\b").expect("credit bucket credit from pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bcredits?\s+from\b"))
+            .expect("credit bucket credit from pattern")
+    })
 }
 fn named_requirement_credit_summary_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b\d+(?:\.\d+)?\s+credits?\s*\(\s*\d+\s+courses?(?:\s+total)?\s*\)\s+from\s+(?:core courses?|(?:the\s+)?(?:student.{0,12}|selected|chosen|their)\s+concentration\s+area\s+courses?)\b").expect("named requirement credit summary pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b\d+(?:\.\d+)?\s+credits?\s*\(\s*\d+\s+courses?(?:\s+total)?\s*\)\s+from\s+(?:core courses?|(?:the\s+)?(?:student.{0,12}|selected|chosen|their)\s+concentration\s+area\s+courses?)\b")).expect("named requirement credit summary pattern"))
 }
 fn admission_decision_credit_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:admission decisions?|completion of .{0,80}requirements? does not guarantee admission|does not guarantee admission)\b").expect("admission decision credit cue pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:admission decisions?|completion of .{0,80}requirements? does not guarantee admission|does not guarantee admission)\b")).expect("admission decision credit cue pattern"))
 }
 fn admission_decision_quality_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:performance and potential|personal motivation|quality of relevant experience)\b").expect("admission decision quality pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:performance and potential|personal motivation|quality of relevant experience)\b")).expect("admission decision quality pattern"))
 }
 fn elective_timing_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\belectives?\b").expect("elective timing pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\belectives?\b"))
+            .expect("elective timing pattern")
+    })
 }
 fn elective_taken_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bmay be taken\b").expect("elective taken pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bmay be taken\b"))
+            .expect("elective taken pattern")
+    })
 }
 fn elective_sample_plan_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:designated|schedule permitting|sample plan|suggested)\b").expect("elective sample plan pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:designated|schedule permitting|sample plan|suggested)\b",
+        ))
+        .expect("elective sample plan pattern")
+    })
 }
 fn research_internship_service_label_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bresearch,\s*internships?,\s*and\s*service learning\b").expect("research internship service label pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bresearch,\s*internships?,\s*and\s*service learning\b",
+        ))
+        .expect("research internship service label pattern")
+    })
 }
 fn research_opportunity_context_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:opportunities?|welcome|available|no formal internship|see adviser)\b").expect("research opportunity context pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:opportunities?|welcome|available|no formal internship|see adviser)\b",
+        ))
+        .expect("research opportunity context pattern")
+    })
 }
 fn inline_numbered_or_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bor\b").expect("inline numbered OR pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bor\b"))
+            .expect("inline numbered OR pattern")
+    })
 }
 fn inline_numbered_required_exclusion_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:from|electives?|approved|minimum|maximum)\b").expect("inline numbered required exclusion pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:from|electives?|approved|minimum|maximum)\b",
+        ))
+        .expect("inline numbered required exclusion pattern")
+    })
 }
 fn inline_numbered_sequence_parenthetical_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\([^)]*\b(?:sequence|calculus-based|algebra-based|honors?|accelerated)\b[^)]*\)").expect("inline numbered sequence parenthetical pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\([^)]*\b(?:sequence|calculus-based|algebra-based|honors?|accelerated)\b[^)]*\)",
+        ))
+        .expect("inline numbered sequence parenthetical pattern")
+    })
 }
 fn inline_numbered_trailing_credit_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\s*\(\s*\d+(?:\.\d+)?\s*credits?\s*\)\s*$").expect("inline numbered trailing credit pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\s*\(\s*\d+(?:\.\d+)?\s*credits?\s*\)\s*$",
+        ))
+        .expect("inline numbered trailing credit pattern")
+    })
 }
 fn choice_list_start_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(CHOICE_LIST_START_PATTERN_SOURCE).expect("choice list start pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            CHOICE_LIST_START_PATTERN_SOURCE,
+        ))
+        .expect("choice list start pattern")
+    })
 }
 fn choice_line_trailing_parenthesis_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"\)\s*$").expect("choice line trailing parenthesis pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"\)\s*$"))
+            .expect("choice line trailing parenthesis pattern")
+    })
 }
 fn equivalent_number_alias_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:formerly|renumbered|equivalent|students can apply either)\b").expect("equivalent number alias cue pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:formerly|renumbered|equivalent|students can apply either)\b",
+        ))
+        .expect("equivalent number alias cue pattern")
+    })
 }
 fn parenthetical_or_course_alias_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\(\s*or\s+[A-Z]{2,8}\s+\d{3}").expect("parenthetical OR course alias pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\(\s*or\s+[A-Z]{2,8}\s+\d{3}",
+        ))
+        .expect("parenthetical OR course alias pattern")
+    })
 }
 fn slash_course_number_alias_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)[A-Z]{2,8}\s+\d{3}\s*/\s*\d{3}").expect("slash course number alias pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)[A-Z]{2,8}\s+\d{3}\s*/\s*\d{3}",
+        ))
+        .expect("slash course number alias pattern")
+    })
 }
 fn split_either_or_trailing_or_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bor\s*$").expect("split either-or trailing OR pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bor\s*$"))
+            .expect("split either-or trailing OR pattern")
+    })
 }
 fn standalone_or_line_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^OR$").expect("standalone OR line pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^OR$"))
+            .expect("standalone OR line pattern")
+    })
 }
 fn starred_course_note_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:must|prereq|note|only)\b").expect("starred course note pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:must|prereq|note|only)\b",
+        ))
+        .expect("starred course note pattern")
+    })
 }
 fn leading_credit_label_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^\d+(?:\.\d+)?\s*credits?\s*:\s*").expect("leading course credit label pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^\d+(?:\.\d+)?\s*credits?\s*:\s*",
+        ))
+        .expect("leading course credit label pattern")
+    })
 }
 fn leading_bracket_label_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^\[[^\]]+\]\s*").expect("leading course bracket label pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^\[[^\]]+\]\s*"))
+            .expect("leading course bracket label pattern")
+    })
 }
 fn comma_course_number_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r",\s*\d{3}[A-Za-z]?\b").expect("comma course number pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r",\s*\d{3}[A-Za-z]?\b"))
+            .expect("comma course number pattern")
+    })
 }
 fn plain_credit_number_range_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"^\d+(?:\s*(?:-|to)\s*\d+)?$").expect("plain credit number range pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"^\d+(?:\s*(?:-|to)\s*\d+)?$",
+        ))
+        .expect("plain credit number range pattern")
+    })
 }
 fn course_row_parenthetical_credit_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\(\s*(\d+(?:\.\d+)?)(?:\s*(credits?|cr\.?))?(?:\s*,\s*(?:A\s*&\s*H|S\s*Sc|N\s*Sc|DIV|W|C|RSN|QSR|VLPA|I\s*&\s*S|NW))*\s*\)(?!.*\))").expect("course-row parenthetical credit pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\(\s*(\d+(?:\.\d+)?)(?:\s*(credits?|cr\.?))?(?:\s*,\s*(?:A\s*&\s*H|S\s*Sc|N\s*Sc|DIV|W|C|RSN|QSR|VLPA|I\s*&\s*S|NW))*\s*\)")).expect("course-row parenthetical credit pattern"))
 }
 fn course_row_parenthetical_fallback_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\(\s*(\d+(?:\.\d+)?)(?:\s*(credits?|cr\.?))?(?:\s*;[^)]*)?\)").expect("course-row fallback parenthetical credit pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\(\s*(\d+(?:\.\d+)?)(?:\s*(credits?|cr\.?))?(?:\s*;[^)]*)?\)",
+        ))
+        .expect("course-row fallback parenthetical credit pattern")
+    })
 }
 fn standalone_course_count_choice_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:choose|select)\s+(?:one|two|three|four|five|six|\d+)(?:\s+courses?)?\s+(?:of|from)\s+(?:the\s+)?(?:following|list\s+below)\b").expect("standalone course-count choice pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:choose|select)\s+(?:one|two|three|four|five|six|\d+)(?:\s+courses?)?\s+(?:of|from)\s+(?:the\s+)?(?:following|list\s+below)\b")).expect("standalone course-count choice pattern"))
 }
 fn sectioned_category_min_max_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:a\s+)?(?:minimum|maximum)\s+of\s+\d+(?:\.\d+)?\s+credits?\b").expect("section category min/max pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:a\s+)?(?:minimum|maximum)\s+of\s+\d+(?:\.\d+)?\s+credits?\b",
+        ))
+        .expect("section category min/max pattern")
+    })
 }
 fn sectioned_category_credit_amount_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b\d+(?:\.\d+)?\s+credits?(?:\s+total|\s+required)?\b").expect("section category credit pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b\d+(?:\.\d+)?\s+credits?(?:\s+total|\s+required)?\b",
+        ))
+        .expect("section category credit pattern")
+    })
 }
 fn sectioned_category_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:selected from the following list|courses? listed below|listed below are required|the following departments|will satisfy|requirement|requirements|required)\b").expect("section category cue pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:selected from the following list|courses? listed below|listed below are required|the following departments|will satisfy|requirement|requirements|required)\b")).expect("section category cue pattern"))
 }
 fn trailing_category_punctuation_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"[:.]+$").expect("section category punctuation pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"[:.]+$"))
+            .expect("section category punctuation pattern")
+    })
 }
 fn sectioned_credit_range_part_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^(\d+(?:\.\d+)?)(?:\s*(?:-|to)\s*(\d+(?:\.\d+)?))?$").expect("sectioned credit range part pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^(\d+(?:\.\d+)?)(?:\s*(?:-|to)\s*(\d+(?:\.\d+)?))?$",
+        ))
+        .expect("sectioned credit range part pattern")
+    })
 }
 fn leading_named_elective_credit_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^(\d+(?:\.\d+)?)\s+(?:free\s+)?electives?\b").expect("leading named elective credit pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^(\d+(?:\.\d+)?)\s+(?:free\s+)?electives?\b",
+        ))
+        .expect("leading named elective credit pattern")
+    })
 }
 fn simple_leading_parenthetical_credit_range_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^\(\s*(\d+(?:\.\d+)?)(?:\s*(?:-|to)\s*(\d+(?:\.\d+)?))?\s*(?:credits?|cr\.?)\s*\)").expect("simple parenthetical credit range pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^\(\s*(\d+(?:\.\d+)?)(?:\s*(?:-|to)\s*(\d+(?:\.\d+)?))?\s*(?:credits?|cr\.?)\s*\)")).expect("simple parenthetical credit range pattern"))
 }
 fn simple_leading_credit_range_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^(\d+(?:\.\d+)?)(?:\s*(?:-|to)\s*(\d+(?:\.\d+)?))?\s*(?:credits?|cr\.?)(?:\s|$)").expect("simple leading credit range pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^(\d+(?:\.\d+)?)(?:\s*(?:-|to)\s*(\d+(?:\.\d+)?))?\s*(?:credits?|cr\.?)(?:\s|$)",
+        ))
+        .expect("simple leading credit range pattern")
+    })
 }
 fn leading_parenthetical_credit_range_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^\(?\s*(\d+(?:\.\d+)?)(?:\s*(?:[-–—]|to)\s*(\d+(?:\.\d+)?))?\s*(?:credits?|cr\.?)\s*\)?(?:\s|$)").expect("leading parenthetical credit range pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^\(?\s*(\d+(?:\.\d+)?)(?:\s*(?:[-–—]|to)\s*(\d+(?:\.\d+)?))?\s*(?:credits?|cr\.?)\s*\)?(?:\s|$)")).expect("leading parenthetical credit range pattern"))
 }
 fn page_prefix_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^\[Page\s+\d+\]\s*").expect("page prefix pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^\[Page\s+\d+\]\s*"))
+            .expect("page prefix pattern")
+    })
 }
 fn direct_course_row_prefix_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^[-*\u{2610}\u{2611}\u{2612}\u{2713}\u{2714}\u{F071}\u{25A1}\u{25A0}\u{25AA}\u{25CF}\u{2022}\s]*(?:\(\s*\d+(?:\.\d+)?\s*\)\s*)?(?:[A-Z&]+(?:\s+[A-Z&]+)?(?:\s*/\s*[A-Z&]+(?:\s+[A-Z&]+)?)?\s+\d{3}[A-Z]?\*?|\d{3}[A-Z]?\b)").expect("direct course row prefix pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^[-*\u{2610}\u{2611}\u{2612}\u{2713}\u{2714}\u{F071}\u{25A1}\u{25A0}\u{25AA}\u{25CF}\u{2022}\s]*(?:\(\s*\d+(?:\.\d+)?\s*\)\s*)?(?:[A-Z&]+(?:\s+[A-Z&]+)?(?:\s*/\s*[A-Z&]+(?:\s+[A-Z&]+)?)?\s+\d{3}[A-Z]?\*?|\d{3}[A-Z]?\b)")).expect("direct course row prefix pattern"))
 }
 fn supplemental_source_boundary_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^\[Supplemental official source\]").expect("supplemental source boundary pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^\[Supplemental official source\]",
+        ))
+        .expect("supplemental source boundary pattern")
+    })
 }
 fn standalone_section_boundary_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^(?:B\.S\. degree requirements|Undergraduate advising|(?:[A-Z& ]+\s+)?Capstone|Tuition and scholarships|Contact\b|Log in|Privacy|Terms)$").expect("standalone section boundary pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^(?:B\.S\. degree requirements|Undergraduate advising|(?:[A-Z& ]+\s+)?Capstone|Tuition and scholarships|Contact\b|Log in|Privacy|Terms)$")).expect("standalone section boundary pattern"))
 }
 fn admission_or_requirement_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:admission|requirements?)\b").expect("admission/requirement heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:admission|requirements?)\b",
+        ))
+        .expect("admission/requirement heading pattern")
+    })
 }
 fn core_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bcore\b").expect("core heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bcore\b"))
+            .expect("core heading pattern")
+    })
 }
 fn elective_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\belectives?\b").expect("elective heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\belectives?\b"))
+            .expect("elective heading pattern")
+    })
 }
 fn credit_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bcredits?\b").expect("credit heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bcredits?\b"))
+            .expect("credit heading pattern")
+    })
 }
 fn core_or_elective_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:core|electives?)\b").expect("core/elective heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:core|electives?)\b",
+        ))
+        .expect("core/elective heading pattern")
+    })
 }
 fn season_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^(?:Autumn|Fall|Winter|Spring|Summer)(?:\s*&\s*(?:Autumn|Fall|Winter|Spring|Summer))*$").expect("season heading pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^(?:Autumn|Fall|Winter|Spring|Summer)(?:\s*&\s*(?:Autumn|Fall|Winter|Spring|Summer))*$")).expect("season heading pattern"))
 }
 fn course_level_heading_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b\d{3}[-\s]*level\b").expect("course level heading pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b\d{3}[-\s]*level\b"))
+            .expect("course level heading pattern")
+    })
 }
 fn immediate_section_table_header_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^(?:Course|Courses|Topic|Credits?|Department|Dept\.?|TOTAL)$").expect("immediate section table header pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^(?:Course|Courses|Topic|Credits?|Department|Dept\.?|TOTAL)$",
+        ))
+        .expect("immediate section table header pattern")
+    })
 }
 fn sectioned_explicit_course_count_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:choose|select)\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+courses?\b").expect("sectioned explicit course count pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:choose|select)\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+courses?\b")).expect("sectioned explicit course count pattern"))
 }
 fn sectioned_leading_word_count_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^(one|two|three|four|five|six|seven|eight|nine|ten)(?:\s*\(\s*(\d+)\s*\))?\s+.+?\b(?:courses?|electives?)\b").expect("sectioned leading word count pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^(one|two|three|four|five|six|seven|eight|nine|ten)(?:\s*\(\s*(\d+)\s*\))?\s+.+?\b(?:courses?|electives?)\b")).expect("sectioned leading word count pattern"))
 }
 fn sectioned_leading_numeric_electives_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"^(\d+)\s+.+?\belectives?\b").expect("sectioned leading numeric elective count pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"^(\d+)\s+.+?\belectives?\b",
+        ))
+        .expect("sectioned leading numeric elective count pattern")
+    })
 }
 fn sectioned_credit_word_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bcredits?\b").expect("sectioned credit word pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bcredits?\b"))
+            .expect("sectioned credit word pattern")
+    })
 }
 fn sectioned_required_count_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:choose|select)\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+courses?\b|^(?:one|two|three|four|five|six|seven|eight|nine|ten)(?:\s*\(\s*\d+\s*\))?\s+.+?\b(?:courses?|electives?)\b|^\d+\s+.+?\belectives?\b").expect("sectioned required count pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:choose|select)\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+courses?\b|^(?:one|two|three|four|five|six|seven|eight|nine|ten)(?:\s*\(\s*\d+\s*\))?\s+.+?\b(?:courses?|electives?)\b|^\d+\s+.+?\belectives?\b")).expect("sectioned required count pattern"))
 }
 fn sectioned_course_list_cue_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:selected from the following list|courses? listed below|listed below are required|the following departments|will satisfy|choose|select|following list)\b").expect("sectioned course list cue pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:selected from the following list|courses? listed below|listed below are required|the following departments|will satisfy|choose|select|following list)\b")).expect("sectioned course list cue pattern"))
 }
 fn sectioned_course_list_topic_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:credits?|courses?|electives?|minimum|maximum)\b").expect("sectioned course list topic pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:credits?|courses?|electives?|minimum|maximum)\b",
+        ))
+        .expect("sectioned course list topic pattern")
+    })
 }
 fn standalone_section_following_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:one|choose|select)\s+(?:course\s+)?(?:of|from)\s+(?:the\s+)?following\b").expect("standalone section choice pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:one|choose|select)\s+(?:course\s+)?(?:of|from)\s+(?:the\s+)?following\b",
+        ))
+        .expect("standalone section choice pattern")
+    })
 }
 fn formal_option_contact_advisor_boundary_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^(?:formal\s+options?|contact\b|advisor\b)").expect("formal option/contact boundary pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^(?:formal\s+options?|contact\b|advisor\b)",
+        ))
+        .expect("formal option/contact boundary pattern")
+    })
 }
 fn academic_advising_progress_boundary_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:academic\s+advisor|track\s+your\s+progress|declare\s+(?:the|your)\s+major)\b").expect("academic advising boundary pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:academic\s+advisor|track\s+your\s+progress|declare\s+(?:the|your)\s+major)\b")).expect("academic advising boundary pattern"))
 }
 fn max_degree_credit_constraint_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bmaximum\s+of\s+(\d+(?:\.\d+)?)\s+(?:credits?|cr\.?)\b.{0,50}\b(?:allowed|towards?\s+degree|toward\s+degree|count)\b").expect("maximum degree credit constraint pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bmaximum\s+of\s+(\d+(?:\.\d+)?)\s+(?:credits?|cr\.?)\b.{0,50}\b(?:allowed|towards?\s+degree|toward\s+degree|count)\b")).expect("maximum degree credit constraint pattern"))
 }
 fn prerequisite_title_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bprereq").expect("prerequisite title pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bprereq"))
+            .expect("prerequisite title pattern")
+    })
 }
 fn must_be_taken_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\bmust\s+be\s+taken\b").expect("must be taken pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bmust\s+be\s+taken\b",
+        ))
+        .expect("must be taken pattern")
+    })
 }
 fn nearby_course_title_exclusion_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\b(?:credits?|free electives?|requirements?|degree|minimum|maximum|department'?s approval|other disciplines|can be counted as|diversity|natural world|qsr)\b").expect("nearby course title exclusion pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:credits?|free electives?|requirements?|degree|minimum|maximum|department'?s approval|other disciplines|can be counted as|diversity|natural world|qsr)\b")).expect("nearby course title exclusion pattern"))
 }
 fn starts_with_course_continuation_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)^\s*(?:or|and)\s+").expect("course continuation prefix pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^\s*(?:or|and)\s+"))
+            .expect("course continuation prefix pattern")
+    })
 }
 
 fn prerequisite_parenthetical_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\([^)]*\bprereq(?:uisites?)?\b[^)]*\)").expect("prerequisite parenthetical pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\([^)]*\bprereq(?:uisites?)?\b[^)]*\)",
+        ))
+        .expect("prerequisite parenthetical pattern")
+    })
 }
 fn leading_course_text_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"^(.+?)(?::|\s+\()").expect("leading course text pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"^(.+?)(?::|\s+\()"))
+            .expect("leading course text pattern")
+    })
 }
 fn shared_joint_course_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"\b([A-Z&]+(?:\s+[A-Z&]+)*)\s*/\s*([A-Z&]+(?:\s+[A-Z&]+)*)\s+(\d{3}[A-Za-z]?)\b").expect("shared-number joint course pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"\b([A-Z&]+(?:\s+[A-Z&]+)*)\s*/\s*([A-Z&]+(?:\s+[A-Z&]+)*)\s+(\d{3}[A-Za-z]?)\b",
+        ))
+        .expect("shared-number joint course pattern")
+    })
 }
 fn split_joint_course_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"\b([A-Z&]+(?:\s+[A-Z&]+)*)\s+(\d{3}[A-Za-z]?)\s*/\s*([A-Z&]+(?:\s+[A-Z&]+)*)\s+(\d{3}[A-Za-z]?)\b").expect("split-number joint course pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"\b([A-Z&]+(?:\s+[A-Z&]+)*)\s+(\d{3}[A-Za-z]?)\s*/\s*([A-Z&]+(?:\s+[A-Z&]+)*)\s+(\d{3}[A-Za-z]?)\b")).expect("split-number joint course pattern"))
 }
 fn trailing_asterisks_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"\*+$").expect("trailing course asterisk pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"\*+$"))
+            .expect("trailing course asterisk pattern")
+    })
 }
 fn alternative_course_title_boundary_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\s+or\s+(?=[A-Z])").expect("course title alternative boundary"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\s+or\s+[A-Z]"))
+            .expect("course title alternative boundary")
+    })
 }
 fn next_course_number_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"\b\d{3}[A-Za-z]?\b").expect("next course number pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"\b\d{3}[A-Za-z]?\b"))
+            .expect("next course number pattern")
+    })
 }
 fn trailing_course_subject_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?:\s+(?:[A-Z&]{1,12}\s*){1,3})$").expect("trailing course subject pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?:\s+(?:[A-Z&]{1,12}\s*){1,3})$",
+        ))
+        .expect("trailing course subject pattern")
+    })
 }
 fn leading_course_title_punctuation_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"^\s*[:\-–—]\s*").expect("leading course title punctuation pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"^\s*[:\-–—]\s*"))
+            .expect("leading course title punctuation pattern")
+    })
 }
 fn trailing_credit_parenthetical_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"(?i)\s*\(\s*\d+(?:\.\d+)?(?:\s*(?:-|to)\s*\d+(?:\.\d+)?)?\s*(?:credits?|cr\.?)?\s*\)\s*$").expect("trailing credit parenthetical pattern"))
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\s*\(\s*\d+(?:\.\d+)?(?:\s*(?:-|to)\s*\d+(?:\.\d+)?)?\s*(?:credits?|cr\.?)?\s*\)\s*$")).expect("trailing credit parenthetical pattern"))
 }
 
 fn parenthetical_choice_group_label_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     VALUE.get_or_init(|| {
-        regex::Regex::new(r"(?i)\s*\([^)]*\b(?:choose|select|or|(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+of|one\s+of|one\s+from|one\s+course\s+from)\b")
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\s*\([^)]*\b(?:choose|select|or|(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+of|one\s+of|one\s+from|one\s+course\s+from)\b"))
             .expect("parenthetical choice group label pattern")
     })
 }
 fn choose_list_group_label_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     VALUE.get_or_init(|| {
-        regex::Regex::new(r"(?i)\s*\(?\s*(?:choose(?:\s+(?:from|one|two|three|four|five|six|seven|eight|nine|ten|\d+))?|select|one\s+(?:course\s+)?from|one\s+of)\b")
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\s*\(?\s*(?:choose(?:\s+(?:from|one|two|three|four|five|six|seven|eight|nine|ten|\d+))?|select|one\s+(?:course\s+)?from|one\s+of)\b"))
             .expect("choose-list group label pattern")
     })
 }
 fn choice_requirement_label_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     VALUE.get_or_init(|| {
-        regex::Regex::new(&format!("(?i){CHOICE_REQUIREMENT_LABEL_PATTERN_SOURCE}"))
-            .expect("choice requirement label pattern")
+        let pattern = format!("(?i){CHOICE_REQUIREMENT_LABEL_PATTERN_SOURCE}");
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            &pattern,
+        ))
+        .expect("choice requirement label pattern")
     })
 }
 fn trailing_group_label_punctuation_pattern() -> &'static regex::Regex {
     static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    VALUE.get_or_init(|| regex::Regex::new(r"[:;,-]+$").expect("trailing group label punctuation pattern"))
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"[:;,-]+$"))
+            .expect("trailing group label punctuation pattern")
+    })
 }
 
 fn normalize_category_option(raw: &Value) -> Value {
@@ -7494,7 +11273,11 @@ fn credit_text(input: &Value) -> Value {
 
 fn normalized_string_or_fallback(value: Option<&Value>, fallback: &str) -> Value {
     let normalized = normalize_whitespace(&js_string_nullish(value));
-    json!(if normalized.is_empty() { fallback.to_string() } else { normalized })
+    json!(if normalized.is_empty() {
+        fallback.to_string()
+    } else {
+        normalized
+    })
 }
 
 fn normalize_text_array(value: Option<&Value>, sort: bool) -> Vec<String> {
@@ -7562,15 +11345,26 @@ fn normalized_string_or_null(value: Option<&Value>) -> Value {
 }
 
 fn nullish_value(value: Option<&Value>) -> Value {
-    value.filter(|value| !value.is_null()).cloned().unwrap_or(Value::Null)
+    value
+        .filter(|value| !value.is_null())
+        .cloned()
+        .unwrap_or(Value::Null)
 }
 
 fn array(value: Option<&Value>) -> &[Value] {
-    value.and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default()
+    value
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
 }
 
 fn unique_sorted(mut values: Vec<String>) -> Vec<String> {
-    values.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
+    values.retain(|value| !value.is_empty());
+    values.sort_by(|left, right| {
+        left.to_lowercase()
+            .cmp(&right.to_lowercase())
+            .then_with(|| right.cmp(left))
+    });
     values.dedup();
     values
 }
@@ -7580,7 +11374,7 @@ fn unique_in_order(values: Vec<String>) -> Vec<String> {
     values
         .into_iter()
         .filter(|value| {
-            if seen.contains(value) {
+            if value.is_empty() || seen.contains(value) {
                 false
             } else {
                 seen.push(value.clone());
@@ -7591,7 +11385,7 @@ fn unique_in_order(values: Vec<String>) -> Vec<String> {
 }
 
 fn normalize_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::requirement_shape::normalize_js_whitespace(value)
 }
 
 fn js_string_nullish(value: Option<&Value>) -> String {
@@ -7612,19 +11406,32 @@ fn js_string_value(value: &Value) -> String {
         Value::String(value) => value.clone(),
         Value::Array(values) => values
             .iter()
-            .map(|value| if value.is_null() { String::new() } else { js_string_value(value) })
+            .map(|value| {
+                if value.is_null() {
+                    String::new()
+                } else {
+                    js_string_value(value)
+                }
+            })
             .collect::<Vec<_>>()
             .join(","),
         Value::Object(_) => "[object Object]".into(),
     }
 }
 
-fn js_number_string(value: f64) -> String {
-    if value.fract() == 0.0 {
-        format!("{value:.0}")
-    } else {
-        value.to_string()
+fn value_as_js_number(value: &Value) -> Option<f64> {
+    match value {
+        Value::Null => Some(0.0),
+        Value::Bool(value) => Some(if *value { 1.0 } else { 0.0 }),
+        Value::Number(value) => value.as_f64(),
+        Value::String(value) if value.trim().is_empty() => Some(0.0),
+        Value::String(value) => Some(value.trim().parse::<f64>().unwrap_or(f64::NAN)),
+        Value::Array(_) | Value::Object(_) => Some(f64::NAN),
     }
+}
+
+fn js_number_string(value: f64) -> String {
+    super::requirement_shape::js_number_f64_to_string(value)
 }
 
 fn js_truthy(value: &Value) -> bool {
@@ -7635,4 +11442,529 @@ fn js_truthy(value: &Value) -> bool {
         Value::String(value) => !value.is_empty(),
         Value::Array(_) | Value::Object(_) => true,
     }
+}
+
+fn non_requirement_sectioned_heading_cue_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:can overlap|may overlap|completed through elective credits|please see\b.{0,80}\bwebpage|policy)\b")).expect("non-requirement sectioned heading cue"))
+}
+
+fn non_requirement_sectioned_heading_exception_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:selected from the following list|courses? listed below|listed below are required|following departments)\b")).expect("sectioned heading requirement exception"))
+}
+
+fn non_requirement_sectioned_advising_note_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:please note|admission deficiencies|prerequisite deficiencies|meet with (?:an?|the) academic advisor|meet with the program advisor)\b")).expect("sectioned advising note"))
+}
+
+fn non_requirement_sectioned_distribution_context_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:selection of appropriate courses|areas of inquiry|a\s+of\s+i|distribution)\b")).expect("sectioned distribution context"))
+}
+
+fn sentence_ending_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"[.!?]$")).expect("sentence ending")
+    })
+}
+
+fn strong_adjacent_section_heading_cue_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:requirements?|electives?|core courses?|capstone|concentration|track|option)\b")).expect("strong adjacent section cue"))
+}
+
+fn previous_credit_row_parenthetical_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\(\s*\d+(?:\.\d+)?\s*(?:credits?|cr\.?)\s*\)",
+        ))
+        .expect("previous credit row parenthetical")
+    })
+}
+
+fn course_level_reference_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b\d{3}[-\s]*level\b"))
+            .expect("course level reference heading")
+    })
+}
+
+fn leading_section_credit_only_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^\(?\s*\d+(?:\.\d+)?(?:\s*(?:-|to)\s*\d+(?:\.\d+)?)?\s*(?:credits?|cr\.?)\b",
+        ))
+        .expect("leading section credit only")
+    })
+}
+
+fn following_credit_line_credit_amount_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b\d+(?:\.\d+)?\s*credits?(?:\s+total)?\b",
+        ))
+        .expect("following credit line amount")
+    })
+}
+
+fn blocking_following_credit_requirement_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:requirements?|core courses?|electives?)\b",
+        ))
+        .expect("blocking following credit requirement")
+    })
+}
+
+fn additional_writing_requirement_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\badditional\s+writing\s*\(?W\)?\s+requirement\b",
+        ))
+        .expect("additional writing requirement")
+    })
+}
+
+fn prerequisite_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bprerequisites?\b"))
+            .expect("prerequisite heading")
+    })
+}
+
+fn split_heading_core_elective_cue_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:core|electives?|approved|selected|list)\b",
+        ))
+        .expect("split heading course cue")
+    })
+}
+
+fn split_heading_course_list_cue_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:from|electives?|core)\b",
+        ))
+        .expect("split heading course list cue")
+    })
+}
+
+fn data_analysis_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:data\s+analysis|modeling|statistical\s+inference|quantitative\s+methods?)\b",
+        ))
+        .expect("data analysis section heading")
+    })
+}
+
+fn explicit_course_count_choice_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:choose|select)\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+courses?\b")).expect("explicit course count choice"))
+}
+
+fn minimum_credits_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bminimum\s+of\s+(\d+(?:\.\d+)?)\s+credits?\b",
+        ))
+        .expect("minimum credits heading")
+    })
+}
+
+fn maximum_credits_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bmaximum\s+of\s+(\d+(?:\.\d+)?)\s+credits?\b",
+        ))
+        .expect("maximum credits heading")
+    })
+}
+
+fn both_courses_credit_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bcredits?\s*/\s*both courses?\b",
+        ))
+        .expect("both courses credit heading")
+    })
+}
+
+fn concentration_courses_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bconcentration courses?\b",
+        ))
+        .expect("concentration courses heading")
+    })
+}
+
+fn concentration_minimum_credit_context_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bcredits?\b.{0,80}\bminimum\b.{0,80}\beach concentration\b",
+        ))
+        .expect("concentration credit minimum context")
+    })
+}
+
+fn concentration_credit_minimum_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(\d+(?:\.\d+)?)\s+credits?\s+minimum\b",
+        ))
+        .expect("concentration credit minimum")
+    })
+}
+
+fn concentration_credit_minimum_prefix_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bminimum\s+(?:of\s+)?(\d+(?:\.\d+)?)\s+credits?\b",
+        ))
+        .expect("minimum concentration credits")
+    })
+}
+
+fn core_courses_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^core courses?$"))
+            .expect("core courses heading")
+    })
+}
+
+fn core_course_credit_context_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bcredits?\b.{0,80}\bcore courses?\b",
+        ))
+        .expect("core course credit context")
+    })
+}
+
+fn terminal_heading_punctuation_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"[.;]$"))
+            .expect("terminal heading punctuation")
+    })
+}
+
+fn pathway_concentration_credit_context_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bcredits?\b.{0,140}\b(?:student|selected|chosen|their)\b.{0,140}\bconcentration\s+area(?:\s+courses?)?\b")).expect("pathway concentration credit context"))
+}
+
+fn sectioned_course_word_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bcourses?\b"))
+            .expect("sectioned course word")
+    })
+}
+
+fn following_departments_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\bfollowing departments\b",
+        ))
+        .expect("following departments heading")
+    })
+}
+
+fn sectioned_credit_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bcredits?\b"))
+            .expect("sectioned credit heading")
+    })
+}
+
+fn enumerated_section_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^[A-Z]\.\s+[^:]{2,120}:$",
+        ))
+        .expect("enumerated section heading")
+    })
+}
+
+fn broad_requirement_container_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^(?:undergraduate\s+)?(?:degree|major|graduation|completion)\s+requirements?$",
+        ))
+        .expect("broad requirement container heading")
+    })
+}
+
+fn generic_requirements_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^requirements?$"))
+            .expect("generic requirements heading")
+    })
+}
+
+fn title_and_credit_row_suffix_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\s*\(\s*\d+(?:\.\d+)?(?:\s*(?:-|to)\s*\d+(?:\.\d+)?)?\s*(?:credits?|cr\.?)\s*\)\s*$")).expect("course title credit suffix"))
+}
+
+fn bracketed_department_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)^\[[^\]]+\]\s*[A-Z]{2,8}\b",
+        ))
+        .expect("bracketed department heading")
+    })
+}
+
+fn total_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^TOTAL\b"))
+            .expect("section total heading")
+    })
+}
+
+fn sectioned_advising_boundary_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:recommended courses?|honou?rs?\s+thesis|advising|admission|polic(?:y|ies)|contact|tuition|scholarships?)\b")).expect("sectioned advising boundary"))
+}
+
+fn sectioned_requirement_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:requirements?|electives?|core courses?|required\b.{0,40}\bcourses?|concentrations?|advising|admission|polic(?:y|ies)|contact|tuition|scholarships?|capstone|research|graduation|sample schedules?)\b")).expect("sectioned requirement heading"))
+}
+
+fn sectioned_requirement_heading_exclusion_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:credits?\)|prereq|offered|maximum of)\b",
+        ))
+        .expect("sectioned requirement heading exclusion")
+    })
+}
+
+fn sectioned_elective_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\belectives?\b"))
+            .expect("sectioned elective heading")
+    })
+}
+
+fn credit_total_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bcredits?\s+total\b"))
+            .expect("credit total heading")
+    })
+}
+
+fn credit_total_selection_context_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:selected|following|listed below|minimum|maximum)\b",
+        ))
+        .expect("credit total selection context")
+    })
+}
+
+fn sectioned_core_or_elective_heading_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:core|electives?)\b",
+        ))
+        .expect("sectioned core or elective heading")
+    })
+}
+
+fn numbered_parenthetical_option_boundary_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^\d+\)\s+\S"))
+            .expect("numbered option boundary")
+    })
+}
+
+fn lettered_choice_note_boundary_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)^note\b[:\s]"))
+            .expect("choice note boundary")
+    })
+}
+
+fn explicit_or_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bor\b"))
+            .expect("explicit or pattern")
+    })
+}
+
+fn programming_choice_context_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            super::requirement_shape::PROGRAMMING_CHOICE_CONTEXT_PATTERN_SOURCE,
+        ))
+        .expect("programming choice context pattern")
+    })
+}
+
+fn non_choice_course_list_context_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            super::requirement_shape::NON_CHOICE_COURSE_LIST_CONTEXT_PATTERN_SOURCE,
+        ))
+        .expect("non-choice course-list context pattern")
+    })
+}
+
+fn sequence_alternative_choice_line_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            super::requirement_shape::SEQUENCE_ALTERNATIVE_CHOICE_LINE_PATTERN_SOURCE,
+        ))
+        .expect("sequence alternative choice line pattern")
+    })
+}
+
+fn embedded_alternative_required_sequence_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\([^)]*\bor\b[^)]*\)"))
+            .expect("embedded alternative required sequence pattern")
+    })
+}
+
+fn embedded_alternative_required_course_list_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)[,;]\s*[A-Z]{2,8}&?\s*\d{3}",
+        ))
+        .expect("embedded alternative required course-list pattern")
+    })
+}
+
+fn embedded_alternative_choice_cue_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b(?:choose|select|one\s+of|any\s+of)\b",
+        ))
+        .expect("embedded alternative choice cue pattern")
+    })
+}
+
+fn explicit_choose_count_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        let source = format!(
+            r"(?i)\b(?:choose|select)\s+(?:{}|\d+)\b",
+            CHOICE_COUNT_WORDS_PATTERN
+        );
+        regex::Regex::new(&js_regex_compatibility_pattern(&source))
+            .expect("explicit choose count pattern")
+    })
+}
+
+fn singular_elective_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\belective\b"))
+            .expect("singular elective pattern")
+    })
+}
+
+fn plural_elective_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\belectives\b"))
+            .expect("plural elective pattern")
+    })
+}
+
+fn heading_credit_colon_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b\d+(?:\.\d+)?\s*credits?\s*:",
+        ))
+        .expect("heading credit colon pattern")
+    })
+}
+
+fn credits_from_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(r"(?i)\bcredits?\s+from\b"))
+            .expect("credits-from bucket pattern")
+    })
+}
+
+fn credit_range_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b\d+(?:\.\d+)?\s*-\s*credits?\b",
+        ))
+        .expect("credit range bucket pattern")
+    })
+}
+
+fn credit_colon_course_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b\d+(?:\.\d+)?\s+credits?\b.{0,80}:\s*[A-Z]{2,8}&?\s+\d{3}",
+        ))
+        .expect("credit bucket course pattern")
+    })
+}
+
+fn course_level_range_or_pattern() -> &'static regex::Regex {
+    static VALUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        regex::Regex::new(&js_regex_compatibility_pattern(
+            r"(?i)\b\d{3}\s*-?\s*or\s+\d{3}\s*-?\s*level\b",
+        ))
+        .expect("course-level range or pattern")
+    })
 }

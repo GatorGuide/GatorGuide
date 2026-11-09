@@ -29,14 +29,22 @@ pub fn write_json_report<T: Serialize>(path: &Path, report: &T) -> Result<(), St
 
 pub fn write_markdown_report(path: &Path, markdown: &str) -> Result<(), String> {
     create_parent_directory(path)?;
-    fs::write(path, normalize_markdown_report(markdown))
-        .map_err(|error| format!("could not write Markdown report {}: {error}", path.display()))
+    fs::write(path, normalize_markdown_report(markdown)).map_err(|error| {
+        format!(
+            "could not write Markdown report {}: {error}",
+            path.display()
+        )
+    })
 }
 
 pub fn write_markdown_lines_report(path: &Path, lines: &[String]) -> Result<(), String> {
     create_parent_directory(path)?;
-    fs::write(path, serialize_markdown_lines(lines))
-        .map_err(|error| format!("could not write Markdown report {}: {error}", path.display()))
+    fs::write(path, serialize_markdown_lines(lines)).map_err(|error| {
+        format!(
+            "could not write Markdown report {}: {error}",
+            path.display()
+        )
+    })
 }
 
 pub fn write_report_pair<T: Serialize>(
@@ -54,6 +62,10 @@ fn create_parent_directory(path: &Path) -> Result<(), String> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("could not create report directory {}: {error}", parent.display()))
+    fs::create_dir_all(parent).map_err(|error| {
+        format!(
+            "could not create report directory {}: {error}",
+            parent.display()
+        )
+    })
 }

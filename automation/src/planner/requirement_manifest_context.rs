@@ -5,49 +5,47 @@ use super::requirement_degree_map_blocks::get_structured_uw_course_codes;
 use super::requirement_docx::{get_linked_document_parser_type, is_linked_document_source_url};
 use super::requirement_manifest_fallback::{
     build_parser_recovery_candidate_entry, get_parser_recovery_candidate_parser_type,
+    select_alternate_parseable_manifest_entries,
 };
 use super::requirement_manifest_selection::select_parseable_manifest_entries;
 use super::requirement_plan_matching::{
     build_primary_major_titles_by_plan_id, manifest_entry_matches_specialized_plan_title,
     parser_recovery_candidate_conflicts_with_owner_identity,
 };
+use super::requirement_recovery_links::{
+    has_primary_requirement_link_cue, has_recovery_link_signal, is_graduate_supplemental_source,
+    is_ignored_parser_recovery_href, is_noisy_parser_recovery_link, is_official_linked_asset_url,
+    parser_recovery_title_token_count, score_parser_recovery_link_candidate,
+    score_supplemental_document_link_candidate,
+};
+use super::requirement_recovery_scope::{
+    catalog_owner_title_has_specialized_credential, find_nested_pathway_html_section_scope,
+    find_parallel_pathway_html_table_scope, find_pathway_html_curriculum_section_candidate,
+    find_pathway_html_selected_section_candidate, find_preceding_inline_requirement_start_index,
+    has_parser_recovery_requirement_cue, is_back_to_top_heading_line,
+    is_different_program_sibling_page, is_html_section_boundary_line,
+    is_legacy_catalog_credential_heading_line, is_parser_recovery_pathway_section_boundary_line,
+    is_parser_recovery_section_boundary_line,
+    line_looks_like_legacy_catalog_credential_section_start,
+    parser_recovery_candidate_conflicts_with_base_owner_scope,
+    parser_recovery_candidate_conflicts_with_pathway_scope,
+    parser_recovery_candidate_conflicts_with_program_sibling,
+    parser_recovery_candidate_contains_selected_pathway_phrase,
+    parser_recovery_owner_program_acronym_tokens, parser_recovery_section_line_score,
+    parser_recovery_snapshot_conflicts_with_base_owner_scope, pathway_html_section_scope_lines,
+    preserve_prior_admit_pathway_context,
+    remove_following_different_owner_acronym_departmental_sections,
+    remove_parallel_pathway_html_table_content_from_base_scope, scope_curriculum_era_lines,
+    score_owner_snapshot_for_parser_recovery, should_use_full_generic_concentration_degree_scope,
+};
 use super::requirement_role_classifier::{
     classify_requirement_source_role, has_conflicting_supplemental_degree_route,
 };
 use super::requirement_scope::get_requirement_source_role_status;
-use super::requirement_recovery_links::{
-    has_primary_requirement_link_cue,
-    has_recovery_link_signal, is_graduate_supplemental_source,
-    is_ignored_parser_recovery_href,
-    is_noisy_parser_recovery_link, is_official_linked_asset_url,
-    parser_recovery_title_token_count, score_parser_recovery_link_candidate, score_supplemental_document_link_candidate,
-};
-use super::requirement_recovery_scope::{
-    find_nested_pathway_html_section_scope,
-    find_parallel_pathway_html_table_scope,
-    find_pathway_html_curriculum_section_candidate,
-    find_pathway_html_selected_section_candidate,
-    find_preceding_inline_requirement_start_index, has_parser_recovery_requirement_cue,
-    is_different_program_sibling_page,
-    is_html_section_boundary_line, is_legacy_catalog_credential_heading_line,
-    is_parser_recovery_pathway_section_boundary_line, is_parser_recovery_section_boundary_line,
-    line_looks_like_legacy_catalog_credential_section_start,
-    parser_recovery_owner_program_acronym_tokens, parser_recovery_section_line_score,
-    parser_recovery_candidate_contains_selected_pathway_phrase,
-    parser_recovery_candidate_conflicts_with_base_owner_scope,
-    parser_recovery_candidate_conflicts_with_pathway_scope,
-    parser_recovery_candidate_conflicts_with_program_sibling,
-    remove_following_different_owner_acronym_departmental_sections,
-    remove_parallel_pathway_html_table_content_from_base_scope,
-    pathway_html_section_scope_lines, preserve_prior_admit_pathway_context,
-    scope_curriculum_era_lines,
-    parser_recovery_snapshot_conflicts_with_base_owner_scope,
-    score_owner_snapshot_for_parser_recovery,
-    should_use_full_generic_concentration_degree_scope,
-};
 use super::requirement_snapshots::{
     RequirementSnapshotStore, RequirementSourceSnapshot, source_url_without_hash,
 };
+use super::requirement_source_recovery::get_requested_url_anchor;
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
@@ -77,12 +75,14 @@ fn is_legacy_student_catalog_source(entry: &Value) -> bool {
     let Ok(parsed) = Url::parse(url) else {
         return false;
     };
-    matches!(parsed.host_str(), Some("washington.edu" | "www.washington.edu"))
-        && parsed.path().starts_with("/students/gencat/program/")
+    matches!(
+        parsed.host_str(),
+        Some("washington.edu" | "www.washington.edu")
+    ) && parsed.path().starts_with("/students/gencat/program/")
 }
 
 fn normalize_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::requirement_shape::normalize_js_whitespace(value)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -121,6 +121,47 @@ impl RequirementSourceManifestContext {
         &self.primary_major_titles
     }
 
+    pub fn degree_map_blocks(&self) -> &[Value] {
+        &self.degree_map_blocks
+    }
+
+    pub fn parser_recovery_catalog_scope_flags(
+        &self,
+        entry: &Value,
+        owner: &Value,
+    ) -> (bool, bool) {
+        if !is_legacy_student_catalog_source(entry) {
+            return (false, false);
+        }
+        let anchored_section = entry
+            .get("url")
+            .and_then(Value::as_str)
+            .and_then(get_requested_url_anchor)
+            .is_some()
+            && owner
+                .get("sourceSectionAudit")
+                .and_then(|audit| audit.get("anchorFound"))
+                .and_then(Value::as_bool)
+                == Some(true);
+        let specialized_credential = catalog_owner_title_has_specialized_credential(entry);
+        let owner_is_major = entry.get("ownerType").and_then(Value::as_str) == Some("major");
+        let has_pathway = entry
+            .get("pathwayId")
+            .is_some_and(|value| !value.is_null() && value.as_str() != Some(""));
+        let plan_id = entry
+            .get("planId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let stop_before_child_credentials = owner_is_major
+            && !has_pathway
+            && !specialized_credential
+            && self.bootstrap_plan_index.pathway_count(plan_id) > 0;
+        (
+            anchored_section || specialized_credential || stop_before_child_credentials,
+            anchored_section || specialized_credential,
+        )
+    }
+
     pub fn select_parseable_entries(
         &self,
         target_plan_ids: Option<&[String]>,
@@ -132,6 +173,23 @@ impl RequirementSourceManifestContext {
             self.bootstrap_plan_index.plan_titles_by_id(),
             &self.primary_major_titles,
             course_parser,
+        )
+    }
+
+    pub fn select_alternate_entries(
+        &self,
+        entry: &Value,
+        course_parser: &CourseCodeParser,
+    ) -> Vec<Value> {
+        select_alternate_parseable_manifest_entries(
+            entry,
+            &self.manifest_entries,
+            self.bootstrap_plan_index.plan_titles_by_id(),
+            &self.primary_major_titles,
+            course_parser,
+            |base_entry, label, url| {
+                self.candidate_conflicts_with_pathway_scope(base_entry, label, url, course_parser)
+            },
         )
     }
 
@@ -206,8 +264,14 @@ impl RequirementSourceManifestContext {
             {
                 continue;
             }
-            let label = candidate.get("label").and_then(Value::as_str).unwrap_or_default();
-            let url = candidate.get("url").and_then(Value::as_str).unwrap_or_default();
+            let label = candidate
+                .get("label")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let url = candidate
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if has_conflicting_supplemental_degree_route(entry, label, url)
                 || self.candidate_conflicts_with_pathway_scope(entry, label, url, course_parser)
             {
@@ -227,7 +291,10 @@ impl RequirementSourceManifestContext {
         current_snapshot_path: Option<&Path>,
         course_parser: &CourseCodeParser,
     ) -> Vec<Value> {
-        let owner_id = entry.get("ownerId").and_then(Value::as_str).unwrap_or_default();
+        let owner_id = entry
+            .get("ownerId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let mut scored_candidates = Vec::new();
         for snapshot in snapshot_store.read_owner_snapshots(owner_id) {
             if current_snapshot_path.is_some_and(|path| path == snapshot.snapshot_path.as_path())
@@ -257,15 +324,13 @@ impl RequirementSourceManifestContext {
                 candidate_label,
                 candidate_url,
                 course_parser,
-            ) || has_conflicting_supplemental_degree_route(
-                entry,
-                candidate_label,
-                candidate_url,
-            ) || parser_recovery_candidate_conflicts_with_program_sibling(
-                entry,
-                candidate_label,
-                candidate_url,
-            ) || self.snapshot_conflicts_with_base_owner_scope(entry, &snapshot.snapshot_lines)
+            ) || has_conflicting_supplemental_degree_route(entry, candidate_label, candidate_url)
+                || parser_recovery_candidate_conflicts_with_program_sibling(
+                    entry,
+                    candidate_label,
+                    candidate_url,
+                )
+                || self.snapshot_conflicts_with_base_owner_scope(entry, &snapshot.snapshot_lines)
             {
                 continue;
             }
@@ -276,34 +341,65 @@ impl RequirementSourceManifestContext {
                 candidate_url,
                 candidate_label,
             );
+            let source_role = classify_requirement_source_role(&candidate_entry);
+            let source_role_status = get_requirement_source_role_status(Some(source_role));
+            let candidate_title = snapshot
+                .title
+                .clone()
+                .unwrap_or_else(|| candidate_label.to_string());
+            let mut section_candidates = self.generic_parser_recovery_section_candidates(
+                &candidate_entry,
+                &snapshot.snapshot_lines,
+                Some(&candidate_title),
+                &snapshot.headings,
+                course_parser,
+            );
+            for section_candidate in &mut section_candidates {
+                let section_score = section_candidate
+                    .get("score")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0) as i32;
+                let mut section_candidate = section_candidate.clone();
+                if let Some(fields) = section_candidate.as_object_mut() {
+                    fields.insert(
+                        "score".to_string(),
+                        serde_json::json!(score + section_score),
+                    );
+                    let reason = fields
+                        .get("reason")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    fields.insert(
+                        "reason".to_string(),
+                        serde_json::json!(format!("{reason}; cached same-owner source snapshot")),
+                    );
+                }
+                scored_candidates.push((score + section_score, section_candidate));
+            }
             let course_code_count = snapshot
                 .snapshot_lines
                 .iter()
                 .flat_map(|line| course_parser.extract_from_line(line))
                 .collect::<BTreeSet<_>>()
                 .len();
-            if course_code_count == 0 || is_legacy_student_catalog_source(&candidate_entry) {
-                continue;
+            if course_code_count > 0 && !is_legacy_student_catalog_source(&candidate_entry) {
+                let candidate = serde_json::json!({
+                    "strategy": "cached-owner-snapshot-recovery",
+                    "url": candidate_url,
+                    "label": format!("Cached source: {}", super::requirement_shape::js_slice_utf16_units(&normalize_whitespace(candidate_label), 120)),
+                    "parserType": candidate_entry.get("parserType").and_then(Value::as_str).unwrap_or_default(),
+                    "sourceRole": source_role,
+                    "sourceRoleStatus": source_role_status.as_str(),
+                    "score": score,
+                    "reason": "cached same-owner official source snapshot",
+                    "sectionLineStart": 0,
+                    "sectionLineEnd": snapshot.snapshot_lines.len(),
+                    "sectionLines": snapshot.snapshot_lines,
+                    "title": candidate_title,
+                    "headings": snapshot.headings,
+                });
+                scored_candidates.push((score, candidate));
             }
-            let source_role = classify_requirement_source_role(&candidate_entry);
-            let source_role_status = get_requirement_source_role_status(Some(source_role));
-            let candidate_title = snapshot.title.clone().unwrap_or_else(|| candidate_label.to_string());
-            let candidate = serde_json::json!({
-                "strategy": "cached-owner-snapshot-recovery",
-                "url": candidate_url,
-                "label": format!("Cached source: {}", normalize_whitespace(candidate_label).chars().take(120).collect::<String>()),
-                "parserType": candidate_entry.get("parserType").and_then(Value::as_str).unwrap_or_default(),
-                "sourceRole": source_role,
-                "sourceRoleStatus": source_role_status.as_str(),
-                "score": score,
-                "reason": "cached same-owner official source snapshot",
-                "sectionLineStart": 0,
-                "sectionLineEnd": snapshot.snapshot_lines.len(),
-                "sectionLines": snapshot.snapshot_lines,
-                "title": candidate_title,
-                "headings": snapshot.headings,
-            });
-            scored_candidates.push((score, candidate));
         }
         scored_candidates.sort_by(|left, right| right.0.cmp(&left.0));
         let mut seen = HashSet::new();
@@ -312,10 +408,22 @@ impl RequirementSourceManifestContext {
             .filter_map(|(_, candidate)| {
                 let key = format!(
                     "{}:{}:{}:{}",
-                    candidate.get("strategy").and_then(Value::as_str).unwrap_or_default(),
-                    candidate.get("url").and_then(Value::as_str).unwrap_or_default(),
-                    candidate.get("sectionLineStart").and_then(Value::as_u64).unwrap_or_default(),
-                    candidate.get("sectionLineEnd").and_then(Value::as_u64).unwrap_or_default(),
+                    candidate
+                        .get("strategy")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    candidate
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    candidate
+                        .get("sectionLineStart")
+                        .and_then(Value::as_u64)
+                        .unwrap_or_default(),
+                    candidate
+                        .get("sectionLineEnd")
+                        .and_then(Value::as_u64)
+                        .unwrap_or_default(),
                 );
                 seen.insert(key).then_some(candidate)
             })
@@ -368,7 +476,10 @@ impl RequirementSourceManifestContext {
     ) -> Vec<Value> {
         let source_url = entry.get("url").and_then(Value::as_str).unwrap_or_default();
         if is_graduate_supplemental_source(
-            entry.get("label").and_then(Value::as_str).unwrap_or_default(),
+            entry
+                .get("label")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
             source_url,
         ) {
             return Vec::new();
@@ -389,7 +500,7 @@ impl RequirementSourceManifestContext {
                 "url": source_url,
                 "label": format!(
                     "Scoped current requirements: {}",
-                    normalize_whitespace(first_line).chars().take(120).collect::<String>()
+                    super::requirement_shape::js_slice_utf16_units(&normalize_whitespace(first_line), 120)
                 ),
                 "parserType": entry.get("parserType").and_then(Value::as_str).unwrap_or_default(),
                 "sourceRole": classify_requirement_source_role(entry),
@@ -416,25 +527,33 @@ impl RequirementSourceManifestContext {
                 end_index,
                 course_parser,
             );
-            let first_line = section_lines.first().map(String::as_str).unwrap_or_default();
-            return vec![serde_json::json!({
-                "strategy": "section-scoping-recovery",
-                "url": source_url,
-                "label": format!(
-                    "Scoped pathway section: {}",
-                    normalize_whitespace(first_line).chars().take(120).collect::<String>()
-                ),
-                "parserType": entry.get("parserType").and_then(Value::as_str).unwrap_or_default(),
-                "sourceRole": classify_requirement_source_role(entry),
-                "sourceRoleStatus": get_requirement_source_role_status(Some(classify_requirement_source_role(entry))).as_str(),
-                "score": 120,
-                "reason": "selected pathway heading matched within a broader official source",
-                "sectionLineStart": start_index,
-                "sectionLineEnd": end_index,
-                "sectionLines": section_lines,
-                "title": title,
-                "headings": headings,
-            })];
+            if section_lines
+                .iter()
+                .any(|line| !course_parser.extract_from_line(line).is_empty())
+            {
+                let first_line = section_lines
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or_default();
+                return vec![serde_json::json!({
+                    "strategy": "section-scoping-recovery",
+                    "url": source_url,
+                    "label": format!(
+                        "Scoped pathway section: {}",
+                        super::requirement_shape::js_slice_utf16_units(&normalize_whitespace(first_line), 120)
+                    ),
+                    "parserType": entry.get("parserType").and_then(Value::as_str).unwrap_or_default(),
+                    "sourceRole": classify_requirement_source_role(entry),
+                    "sourceRoleStatus": get_requirement_source_role_status(Some(classify_requirement_source_role(entry))).as_str(),
+                    "score": 120,
+                    "reason": "selected pathway heading matched within a broader official source",
+                    "sectionLineStart": start_index,
+                    "sectionLineEnd": end_index,
+                    "sectionLines": section_lines,
+                    "title": title,
+                    "headings": headings,
+                })];
+            }
         }
         if let Some((start_index, end_index, nested_lines)) = find_nested_pathway_html_section_scope(
             entry,
@@ -442,19 +561,18 @@ impl RequirementSourceManifestContext {
             &self.primary_major_titles,
             course_parser,
         ) {
-            let section_lines = preserve_prior_admit_pathway_context(
-                entry,
-                &lines,
-                &nested_lines,
-                course_parser,
-            );
-            let first_line = section_lines.first().map(String::as_str).unwrap_or_default();
+            let section_lines =
+                preserve_prior_admit_pathway_context(entry, &lines, &nested_lines, course_parser);
+            let first_line = section_lines
+                .first()
+                .map(String::as_str)
+                .unwrap_or_default();
             return vec![serde_json::json!({
                 "strategy": "section-scoping-recovery",
                 "url": source_url,
                 "label": format!(
                     "Scoped pathway section: {}",
-                    normalize_whitespace(first_line).chars().take(120).collect::<String>()
+                    super::requirement_shape::js_slice_utf16_units(&normalize_whitespace(first_line), 120)
                 ),
                 "parserType": entry.get("parserType").and_then(Value::as_str).unwrap_or_default(),
                 "sourceRole": classify_requirement_source_role(entry),
@@ -474,19 +592,18 @@ impl RequirementSourceManifestContext {
             &self.primary_major_titles,
             course_parser,
         ) {
-            let section_lines = preserve_prior_admit_pathway_context(
-                entry,
-                &lines,
-                &table_lines,
-                course_parser,
-            );
-            let first_line = section_lines.first().map(String::as_str).unwrap_or_default();
+            let section_lines =
+                preserve_prior_admit_pathway_context(entry, &lines, &table_lines, course_parser);
+            let first_line = section_lines
+                .first()
+                .map(String::as_str)
+                .unwrap_or_default();
             return vec![serde_json::json!({
                 "strategy": "section-scoping-recovery",
                 "url": source_url,
                 "label": format!(
                     "Scoped pathway section: {}",
-                    normalize_whitespace(first_line).chars().take(120).collect::<String>()
+                    super::requirement_shape::js_slice_utf16_units(&normalize_whitespace(first_line), 120)
                 ),
                 "parserType": entry.get("parserType").and_then(Value::as_str).unwrap_or_default(),
                 "sourceRole": classify_requirement_source_role(entry),
@@ -513,13 +630,16 @@ impl RequirementSourceManifestContext {
                 end_index,
                 course_parser,
             );
-            let first_line = section_lines.first().map(String::as_str).unwrap_or_default();
+            let first_line = section_lines
+                .first()
+                .map(String::as_str)
+                .unwrap_or_default();
             return vec![serde_json::json!({
                 "strategy": "section-scoping-recovery",
                 "url": source_url,
                 "label": format!(
                     "Scoped pathway section: {}",
-                    normalize_whitespace(first_line).chars().take(120).collect::<String>()
+                    super::requirement_shape::js_slice_utf16_units(&normalize_whitespace(first_line), 120)
                 ),
                 "parserType": entry.get("parserType").and_then(Value::as_str).unwrap_or_default(),
                 "sourceRole": classify_requirement_source_role(entry),
@@ -539,13 +659,16 @@ impl RequirementSourceManifestContext {
             course_parser,
         );
         if base_scope_lines.as_slice() != lines.as_slice() {
-            let first_line = base_scope_lines.first().map(String::as_str).unwrap_or_default();
+            let first_line = base_scope_lines
+                .first()
+                .map(String::as_str)
+                .unwrap_or_default();
             return vec![serde_json::json!({
                 "strategy": "section-scoping-recovery",
                 "url": source_url,
                 "label": format!(
                     "Scoped current requirements: {}",
-                    normalize_whitespace(first_line).chars().take(120).collect::<String>()
+                    super::requirement_shape::js_slice_utf16_units(&normalize_whitespace(first_line), 120)
                 ),
                 "parserType": entry.get("parserType").and_then(Value::as_str).unwrap_or_default(),
                 "sourceRole": classify_requirement_source_role(entry),
@@ -563,7 +686,10 @@ impl RequirementSourceManifestContext {
             .get("pathwayId")
             .and_then(Value::as_str)
             .is_some_and(|pathway_id| !pathway_id.is_empty());
-        let parser_type = entry.get("parserType").and_then(Value::as_str).unwrap_or_default();
+        let parser_type = entry
+            .get("parserType")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let source_role = classify_requirement_source_role(entry);
         let source_role_status = get_requirement_source_role_status(Some(source_role));
         let mut scored_candidates = Vec::<(i32, usize, usize, Value)>::new();
@@ -592,8 +718,10 @@ impl RequirementSourceManifestContext {
             let mut end_index = lines.len().min(index + 220);
             for next_index in index + 1..end_index {
                 let next_line = normalize_whitespace(&lines[next_index]);
-                if next_line.to_ascii_lowercase().starts_with("back to top")
-                    || next_line.to_ascii_lowercase().starts_with("program of study:")
+                if is_back_to_top_heading_line(&next_line)
+                    || next_line
+                        .to_ascii_lowercase()
+                        .starts_with("program of study:")
                 {
                     end_index = next_index;
                     break;
@@ -613,13 +741,9 @@ impl RequirementSourceManifestContext {
                     break;
                 }
             }
-            let start_index = find_preceding_inline_requirement_start_index(
-                entry,
-                &lines,
-                index,
-                course_parser,
-            )
-            .unwrap_or(index);
+            let start_index =
+                find_preceding_inline_requirement_start_index(entry, &lines, index, course_parser)
+                    .unwrap_or(index);
             let section_lines = lines[start_index..end_index].to_vec();
             let sampled_text = section_lines
                 .iter()
@@ -635,7 +759,7 @@ impl RequirementSourceManifestContext {
             }
             let label = format!(
                 "Scoped section: {}",
-                normalize_whitespace(line).chars().take(120).collect::<String>()
+                super::requirement_shape::js_slice_utf16_units(&normalize_whitespace(line), 120)
             );
             let candidate = serde_json::json!({
                 "strategy": "section-scoping-recovery",
@@ -763,7 +887,8 @@ impl RequirementSourceManifestContext {
             {
                 continue;
             }
-            if has_pathway_id && signals.document_signal
+            if has_pathway_id
+                && signals.document_signal
                 && !self.candidate_contains_selected_pathway_phrase(entry, &label, &resolved_url)
             {
                 continue;
@@ -775,7 +900,8 @@ impl RequirementSourceManifestContext {
             {
                 continue;
             }
-            if !has_pathway_id && signals.pathway_signal
+            if !has_pathway_id
+                && signals.pathway_signal
                 && !signals.exact_title_match
                 && !has_primary_requirement_link_cue(&label, &resolved_url)
             {
@@ -804,7 +930,9 @@ impl RequirementSourceManifestContext {
                 "official-sibling-child-page-recovery"
             };
             let reason = match strategy {
-                "linked-official-document-recovery" => "official linked requirement document candidate",
+                "linked-official-document-recovery" => {
+                    "official linked requirement document candidate"
+                }
                 "support-source-recovery" => "official support source candidate",
                 _ => "official child or sibling requirement page candidate",
             };
@@ -825,7 +953,7 @@ impl RequirementSourceManifestContext {
                 }
             } else {
                 candidate_indexes.insert(resolved_url.clone(), candidates.len());
-                candidates.push((resolved_url, score, link_index, candidate));
+                candidates.push((resolved_url, score, candidate));
             }
         }
 
@@ -834,16 +962,30 @@ impl RequirementSourceManifestContext {
                 .1
                 .cmp(&left.1)
                 .then_with(|| {
-                    let left_label = left.2.get("label").and_then(Value::as_str).unwrap_or_default();
-                    let right_label = right.2.get("label").and_then(Value::as_str).unwrap_or_default();
+                    let left_label = left
+                        .2
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let right_label = right
+                        .2
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
                     left_label.to_lowercase().cmp(&right_label.to_lowercase())
                 })
                 .then_with(|| {
-                    left.2
+                    right
+                        .2
                         .get("label")
                         .and_then(Value::as_str)
                         .unwrap_or_default()
-                        .cmp(right.2.get("label").and_then(Value::as_str).unwrap_or_default())
+                        .cmp(
+                            left.2
+                                .get("label")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default(),
+                        )
                 })
         });
         candidates
@@ -881,8 +1023,14 @@ impl RequirementSourceManifestContext {
             {
                 continue;
             }
-            let label = candidate.get("label").and_then(Value::as_str).unwrap_or_default();
-            let url = candidate.get("url").and_then(Value::as_str).unwrap_or_default();
+            let label = candidate
+                .get("label")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let url = candidate
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if has_conflicting_supplemental_degree_route(entry, label, url)
                 || self.candidate_conflicts_with_pathway_scope(entry, label, url, course_parser)
                 || !is_linked_document_source_url(url)
@@ -934,8 +1082,7 @@ impl RequirementSourceManifestContext {
                 continue;
             };
             if !is_official_linked_asset_url(entry_url, &resolved_url)
-                || (restrict_to_active_documents
-                    && !active_document_urls.contains(&resolved_url))
+                || (restrict_to_active_documents && !active_document_urls.contains(&resolved_url))
                 || has_conflicting_supplemental_degree_route(entry, &label, &resolved_url)
             {
                 continue;
@@ -982,9 +1129,7 @@ impl RequirementSourceManifestContext {
             .into_iter()
             .filter(|(_, score, _, _)| *score >= 24)
             .collect::<Vec<_>>();
-        candidates.sort_by(|left, right| {
-            right.1.cmp(&left.1).then_with(|| left.2.cmp(&right.2))
-        });
+        candidates.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.2.cmp(&right.2)));
         candidates
             .into_iter()
             .take(2)

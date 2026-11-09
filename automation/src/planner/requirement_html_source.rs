@@ -1,6 +1,6 @@
 use super::requirement_html::{RequirementHtmlArtifacts, parse_html_artifacts};
-use super::source_artifact_cache::{BoundedResultCache, DEFAULT_SOURCE_ARTIFACT_CACHE_MAX_ENTRIES};
 use super::requirement_source_fetching::SourceDownloader;
+use super::source_artifact_cache::{BoundedResultCache, DEFAULT_SOURCE_ARTIFACT_CACHE_MAX_ENTRIES};
 use std::sync::Arc;
 use std::time::Duration;
 

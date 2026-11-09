@@ -140,10 +140,8 @@ pub fn build_parsed_requirement_atom_candidates(
             let source_line_hints =
                 get_source_line_hints(snapshot_lines, course_code, course_parser);
             let phase = infer_parsed_requirement_phase_from_hints(&source_line_hints);
-            let section_decision = get_source_section_decision_for_course(
-                course_code,
-                source_section_audit_rows,
-            );
+            let section_decision =
+                get_source_section_decision_for_course(course_code, source_section_audit_rows);
             let mut candidate = Map::new();
             candidate.insert(
                 "id".into(),
@@ -152,10 +150,7 @@ pub fn build_parsed_requirement_atom_candidates(
             candidate.insert("title".into(), json!(course_code));
             candidate.insert("uwCourseCode".into(), json!(course_code));
             candidate.insert("phase".into(), option_string(phase.phase));
-            candidate.insert(
-                "displayPhase".into(),
-                option_string(phase.display_phase),
-            );
+            candidate.insert("displayPhase".into(), option_string(phase.display_phase));
             candidate.insert(
                 "phaseConfidence".into(),
                 option_string(phase.phase_confidence),
@@ -203,7 +198,7 @@ fn option_string(value: Option<&str>) -> Value {
 }
 
 fn normalize_requirement_text(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::requirement_shape::normalize_js_whitespace(value)
 }
 
 fn unique_sorted(mut values: Vec<String>) -> Vec<String> {
@@ -216,11 +211,17 @@ fn js_string_value(value: &Value) -> String {
     match value {
         Value::Null => "null".into(),
         Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
+        Value::Number(value) => super::requirement_shape::js_number_to_string(value),
         Value::String(value) => value.clone(),
         Value::Array(values) => values
             .iter()
-            .map(|value| if value.is_null() { String::new() } else { js_string_value(value) })
+            .map(|value| {
+                if value.is_null() {
+                    String::new()
+                } else {
+                    js_string_value(value)
+                }
+            })
             .collect::<Vec<_>>()
             .join(","),
         Value::Object(_) => "[object Object]".into(),
@@ -229,25 +230,42 @@ fn js_string_value(value: &Value) -> String {
 
 fn english_composition_requirement_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\benglish composition\b").expect("English composition requirement pattern"))
+    VALUE.get_or_init(|| js_compatible_requirement_atom_pattern(r"(?i)\benglish composition\b"))
 }
 fn english_composition_exclusion_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(additional english composition|except the 5-?credit english composition requirement|writing-intensive|w course|w courses)\b").expect("English composition exclusion pattern"))
+    VALUE.get_or_init(|| js_compatible_requirement_atom_pattern(r"(?i)\b(additional english composition|except the 5-?credit english composition requirement|writing-intensive|w course|w courses)\b"))
 }
 fn before_application_phase_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"\b(admission|apply|application|prereq|prerequisite|eligibility|before applying)\b").expect("before-application phase pattern"))
+    VALUE.get_or_init(|| {
+        js_compatible_requirement_atom_pattern(
+            r"\b(admission|apply|application|prereq|prerequisite|eligibility|before applying)\b",
+        )
+    })
 }
 fn before_enrollment_phase_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"\b(before enrollment|before matriculation|matriculation|before transfer|prior to transfer|pre-professional)\b").expect("before-enrollment phase pattern"))
+    VALUE.get_or_init(|| js_compatible_requirement_atom_pattern(r"\b(before enrollment|before matriculation|matriculation|before transfer|prior to transfer|pre-professional)\b"))
 }
 fn stay_at_grc_phase_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"\b(recommended|encouraged|suggested|optional|elective)\b").expect("stay-at-GRC phase pattern"))
+    VALUE.get_or_init(|| {
+        js_compatible_requirement_atom_pattern(
+            r"\b(recommended|encouraged|suggested|optional|elective)\b",
+        )
+    })
 }
 fn required_course_phase_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"\b(requirements?|required|core courses?|degree requirements?)\b").expect("required-course phase pattern"))
+    VALUE.get_or_init(|| {
+        js_compatible_requirement_atom_pattern(
+            r"\b(requirements?|required|core courses?|degree requirements?)\b",
+        )
+    })
+}
+
+fn js_compatible_requirement_atom_pattern(pattern: &str) -> Regex {
+    let compatible_pattern = super::requirement_shape::js_regex_compatibility_pattern(pattern);
+    Regex::new(&compatible_pattern).expect("JavaScript-compatible requirement-atom pattern")
 }

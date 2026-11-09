@@ -77,7 +77,8 @@ pub fn extract_supplemental_html_link_candidates(
         let link_text = format!("{label} {resolved_url}");
         let high_signal = high_signal_link_pattern().is_match(&link_text);
         let normalized_link_text = normalize_matcher_text(&link_text);
-        let exact_title_match = !exact_title.is_empty() && normalized_link_text.contains(&exact_title);
+        let exact_title_match =
+            !exact_title.is_empty() && normalized_link_text.contains(&exact_title);
         let title_token_overlap_count = title_tokens
             .iter()
             .filter(|token| normalized_link_text.contains(token.as_str()))
@@ -87,12 +88,9 @@ pub fn extract_supplemental_html_link_candidates(
             &resolved_url,
             &link_text,
         );
-        let same_program_requirement_link = is_same_program_requirement_link(
-            &base_url,
-            &resolved_url,
-            &link_text,
-            high_signal,
-        ) || same_origin_high_signal_document;
+        let same_program_requirement_link =
+            is_same_program_requirement_link(&base_url, &resolved_url, &link_text, high_signal)
+                || same_origin_high_signal_document;
         let same_program_specialization_link =
             is_same_program_specialization_link(&base_url, &resolved_url, &link_text);
         if !title_tokens.is_empty()
@@ -176,9 +174,19 @@ pub fn extract_supplemental_html_link_candidates(
     }
     candidates.sort_by(|left, right| {
         right.1.cmp(&left.1).then_with(|| {
-            let left_label = left.2.get("label").and_then(Value::as_str).unwrap_or_default();
-            let right_label = right.2.get("label").and_then(Value::as_str).unwrap_or_default();
-            left_label.to_lowercase().cmp(&right_label.to_lowercase())
+            let left_label = left
+                .2
+                .get("label")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let right_label = right
+                .2
+                .get("label")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            left_label
+                .to_lowercase()
+                .cmp(&right_label.to_lowercase())
                 .then_with(|| left_label.cmp(right_label))
         })
     });
@@ -206,9 +214,12 @@ pub fn score_supplemental_document_link_candidate(
         .filter(|token| normalized_link_text.contains(token.as_str()))
         .count();
     let link_text = format!("{label} {href}");
-    let has_document_requirement_signal = document_requirement_signal_pattern().is_match(&link_text);
+    let has_document_requirement_signal =
+        document_requirement_signal_pattern().is_match(&link_text);
     let title_acronym_matches = if has_document_requirement_signal {
-        let text_tokens = normalized_link_text.split_whitespace().collect::<BTreeSet<_>>();
+        let text_tokens = normalized_link_text
+            .split_whitespace()
+            .collect::<BTreeSet<_>>();
         owner_acronym_tokens
             .iter()
             .filter(|token| text_tokens.contains(token.as_str()))
@@ -238,7 +249,11 @@ pub fn score_supplemental_document_link_candidate(
         score += 30;
     }
     if signals.title_acronym_match {
-        score += if signals.title_acronym_matches.iter().any(|token| token.len() >= 4) {
+        score += if signals
+            .title_acronym_matches
+            .iter()
+            .any(|token| token.len() >= 4)
+        {
             26
         } else {
             20
@@ -353,9 +368,12 @@ pub fn is_official_linked_asset_url(base_url: &str, resolved_url: &str) -> bool 
         && resolved_path.starts_with("/www-cse-public/")
 }
 
-pub fn has_recovery_link_signal(signals: &ParserRecoveryLinkSignals, owner_title_token_count: usize) -> bool {
-    let has_title_token_identity = signals.title_token_overlap_count
-        >= 1usize.max(2usize.min(owner_title_token_count));
+pub fn has_recovery_link_signal(
+    signals: &ParserRecoveryLinkSignals,
+    owner_title_token_count: usize,
+) -> bool {
+    let has_title_token_identity =
+        signals.title_token_overlap_count >= 1usize.max(2usize.min(owner_title_token_count));
     let has_owner_identity_signal = signals.exact_title_match
         || has_title_token_identity
         || signals.same_program_requirement_link
@@ -397,7 +415,7 @@ fn parser_recovery_link_signals(
         resolved_url,
         &link_text,
         high_signal || document_signal,
-    ) || is_same_origin_high_signal_requirement_document_link(base_url, resolved_url, &link_text);
+    );
     let same_program_specialization_link =
         is_same_program_specialization_link(base_url, resolved_url, &link_text);
     let same_origin_child_or_sibling_page = same_origin_child_or_sibling(base_url, resolved_url);
@@ -415,7 +433,11 @@ fn parser_recovery_link_signals(
 }
 
 fn title_scope_tokens(entry: &Value) -> Vec<String> {
-    let combined = format!("{} {}", string_field(entry, "ownerTitle"), string_field(entry, "sourceLabel"));
+    let combined = format!(
+        "{} {}",
+        string_field(entry, "ownerTitle"),
+        string_field(entry, "sourceLabel")
+    );
     normalize_matcher_text(&combined)
         .split_whitespace()
         .filter(|token| token.len() >= 4 && !title_scope_stopwords().contains(*token))
@@ -428,18 +450,32 @@ fn title_scope_tokens(entry: &Value) -> Vec<String> {
 
 fn same_program_path_prefix(url: &str) -> Option<String> {
     let parsed = Url::parse(url).ok()?;
-    let segments = parsed.path().split('/').filter(|segment| !segment.is_empty()).collect::<Vec<_>>();
-    if let Some(index) = segments.iter().position(|segment| credential_program_segment_pattern().is_match(segment)) {
+    let segments = parsed
+        .path()
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if let Some(index) = segments
+        .iter()
+        .position(|segment| credential_program_segment_pattern().is_match(segment))
+    {
         return Some(format!("/{}", segments[..=index].join("/")));
     }
     let pathname = parsed.path().trim_end_matches('/');
     if same_program_terminal_segment_pattern().is_match(pathname) {
-        return pathname.rsplit_once('/').map(|(prefix, _)| prefix.to_string());
+        return pathname
+            .rsplit_once('/')
+            .map(|(prefix, _)| prefix.to_string());
     }
     Some(pathname.to_string())
 }
 
-fn is_same_program_requirement_link(base_url: &str, resolved_url: &str, link_text: &str, high_signal: bool) -> bool {
+fn is_same_program_requirement_link(
+    base_url: &str,
+    resolved_url: &str,
+    link_text: &str,
+    high_signal: bool,
+) -> bool {
     if !high_signal {
         return false;
     }
@@ -475,7 +511,11 @@ fn is_same_origin_high_signal_requirement_document_link(
     base.origin() == resolved.origin() && document_file_path_pattern().is_match(resolved.path())
 }
 
-fn is_same_program_specialization_link(base_url: &str, resolved_url: &str, link_text: &str) -> bool {
+fn is_same_program_specialization_link(
+    base_url: &str,
+    resolved_url: &str,
+    link_text: &str,
+) -> bool {
     if !specialization_link_pattern().is_match(link_text) {
         return false;
     }
@@ -504,8 +544,16 @@ fn same_origin_child_or_sibling(base_url: &str, resolved_url: &str) -> bool {
     if base.origin() != resolved.origin() {
         return false;
     }
-    let base_segments = base.path().split('/').filter(|segment| !segment.is_empty()).collect::<Vec<_>>();
-    let resolved_segments = resolved.path().split('/').filter(|segment| !segment.is_empty()).collect::<Vec<_>>();
+    let base_segments = base
+        .path()
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let resolved_segments = resolved
+        .path()
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
     if base_segments.is_empty() || resolved_segments.is_empty() {
         return false;
     }
@@ -535,14 +583,39 @@ fn normalize_matcher_text(value: &str) -> String {
 }
 
 fn string_field(entry: &Value, key: &str) -> String {
-    entry.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
+    entry
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn title_scope_stopwords() -> BTreeSet<&'static str> {
     [
-        "and", "arts", "bachelor", "bothell", "campus", "catalog", "course", "courses",
-        "curriculum", "degree", "major", "of", "official", "overview", "page", "program",
-        "requirements", "science", "seattle", "studies", "tacoma", "the", "university", "uw",
+        "and",
+        "arts",
+        "bachelor",
+        "bothell",
+        "campus",
+        "catalog",
+        "course",
+        "courses",
+        "curriculum",
+        "degree",
+        "major",
+        "of",
+        "official",
+        "overview",
+        "page",
+        "program",
+        "requirements",
+        "science",
+        "seattle",
+        "studies",
+        "tacoma",
+        "the",
+        "university",
+        "uw",
         "washington",
     ]
     .into_iter()
@@ -553,38 +626,119 @@ macro_rules! regex {
     ($name:ident, $pattern:literal) => {
         fn $name() -> &'static Regex {
             static VALUE: OnceLock<Regex> = OnceLock::new();
-            VALUE.get_or_init(|| Regex::new($pattern).expect(stringify!($name)))
+            VALUE.get_or_init(|| {
+                let pattern = super::requirement_shape::js_regex_compatibility_pattern($pattern);
+                Regex::new(&pattern).expect(stringify!($name))
+            })
         }
     };
 }
 
-regex!(high_signal_link_pattern, r"(?i)\b(curriculum|requirements?|degree requirements?|major requirements?|prerequisites?|prereq|approved electives?|elective lists?|elective webpage|course lists?|worksheet|checklist|degree map|curriculum map|schedule planning grid|schedule grid|planning grid|plan of study|program of study|study plan|sample plan)\b");
-regex!(specialization_link_pattern, r"(?i)\b(track|option|concentration|specialization|route|pathway)\b");
-regex!(pathway_degree_sheet_pattern, r"(?i)\b(degree sheet|requirement sheet|requirements packet|checklist|worksheet|plan of study|study plan)\b|degreq");
-regex!(approved_course_list_pattern, r"(?i)\bapproved\b.{0,60}\b(courses?|course list|list)\b|\b(courses?|course list|list)\b.{0,60}\bapproved\b");
-regex!(elective_list_pattern, r"(?i)\b(?:engineering|technical|departmental|major|science|natural science|approved)?\s*electives?\b.{0,50}\b(courses?|list|options?|page)\b|\b(courses?|list|options?)\b.{0,50}\belectives?\b|/electives?(?:[-/]|$)");
-regex!(admission_prerequisite_pattern, r"(?i)\b(?:admissions?|admission|apply|application)\b.{0,80}\bprereq(?:uisites?|uisite courses?)\b|\bprereq(?:uisites?|uisite courses?)\b.{0,80}\b(?:admissions?|admission|apply|application)\b");
-regex!(support_link_pattern, r"(?i)\b(advising|adviser|advisor|support sources?|student resources?|student support|forms?|petitions?|policies|policy[-\s]*(?:procedures?|resources?|forms?)|faq|frequently asked questions)\b");
-regex!(pathway_hub_pattern, r"(?i)\b(curriculum|degree requirements?|major requirements?|program requirements?|tracks?|options?|routes?|pathways?|concentrations?|specializations?)\b|/(?:curriculum|requirements?|degree-requirements?|major-requirements?|tracks?|options?|routes?|pathways?|concentrations?|specializations?)(?:[/?#-]|$)");
-regex!(credential_program_segment_pattern, r"(?i)^(?:bachelor|bachelors?|b-a|b-s|bba|basw|major)[-_]");
-regex!(same_program_terminal_segment_pattern, r"(?i)(?:^|/)(?:admissions?|overview|curriculum|degree-requirements?|major-requirements?|requirements?|prerequisites?|checklist|worksheet|tracks?|options?|routes?|pathways?|concentrations?|specializations?)$");
-regex!(recovery_requirement_bonus_pattern, r"(?i)\b(admissions?|degree requirements?|major requirements?|curriculum|prereq|worksheet|checklist|plan of study|program of study|study plan)\b");
-regex!(recovery_requirement_path_bonus_pattern, r"(?i)/(?:requirements?|curriculum|degree|program|pathways?|tracks?|options?|concentrations?|worksheets?|checklists?|prereq|admissions?)(?:[-/?#]|$)");
-regex!(graduate_supplemental_pattern, r"(?i)\b(graduate|ph\.?\s*d\.?|doctor(?:al|ate)?|m\.?\s*a\.?|masters?|master(?:'s|s)?)\b|/(?:ma|phd|graduate|masters?|amp)(?:[-/]|$)");
-regex!(noisy_link_pattern, r"(?i)\b(apply|canvas|calendar|directory|map|myuw|library|tools|about|news|faculty|staff|contact|privacy|accessibility|terms|alumni|events|parking|transportation|research|housing|student life|jobs|visit|give|get involved|minors?|certificates?|graduate|scholarships?|course evaluations?|study abroad)\b");
+regex!(
+    high_signal_link_pattern,
+    r"(?i)\b(curriculum|requirements?|degree requirements?|major requirements?|prerequisites?|prereq|approved electives?|elective lists?|elective webpage|course lists?|worksheet|checklist|degree map|curriculum map|schedule planning grid|schedule grid|planning grid|plan of study|program of study|study plan|sample plan)\b"
+);
+regex!(
+    specialization_link_pattern,
+    r"(?i)\b(track|option|concentration|specialization|route|pathway)\b"
+);
+regex!(
+    pathway_degree_sheet_pattern,
+    r"(?i)\b(degree sheet|requirement sheet|requirements packet|checklist|worksheet|plan of study|study plan)\b|degreq"
+);
+regex!(
+    approved_course_list_pattern,
+    r"(?i)\bapproved\b.{0,60}\b(courses?|course list|list)\b|\b(courses?|course list|list)\b.{0,60}\bapproved\b"
+);
+regex!(
+    elective_list_pattern,
+    r"(?i)\b(?:engineering|technical|departmental|major|science|natural science|approved)?\s*electives?\b.{0,50}\b(courses?|list|options?|page)\b|\b(courses?|list|options?)\b.{0,50}\belectives?\b|/electives?(?:[-/]|$)"
+);
+regex!(
+    admission_prerequisite_pattern,
+    r"(?i)\b(?:admissions?|admission|apply|application)\b.{0,80}\bprereq(?:uisites?|uisite courses?)\b|\bprereq(?:uisites?|uisite courses?)\b.{0,80}\b(?:admissions?|admission|apply|application)\b"
+);
+regex!(
+    support_link_pattern,
+    r"(?i)\b(advising|adviser|advisor|support sources?|student resources?|student support|forms?|petitions?|policies|policy[-\s]*(?:procedures?|resources?|forms?)|faq|frequently asked questions)\b"
+);
+regex!(
+    pathway_hub_pattern,
+    r"(?i)\b(curriculum|degree requirements?|major requirements?|program requirements?|tracks?|options?|routes?|pathways?|concentrations?|specializations?)\b|/(?:curriculum|requirements?|degree-requirements?|major-requirements?|tracks?|options?|routes?|pathways?|concentrations?|specializations?)(?:[/?#-]|$)"
+);
+regex!(
+    credential_program_segment_pattern,
+    r"(?i)^(?:bachelor|bachelors?|b-a|b-s|bba|basw|major)[-_]"
+);
+regex!(
+    same_program_terminal_segment_pattern,
+    r"(?i)(?:^|/)(?:admissions?|overview|curriculum|degree-requirements?|major-requirements?|requirements?|prerequisites?|checklist|worksheet|tracks?|options?|routes?|pathways?|concentrations?|specializations?)$"
+);
+regex!(
+    recovery_requirement_bonus_pattern,
+    r"(?i)\b(admissions?|degree requirements?|major requirements?|curriculum|prereq|worksheet|checklist|plan of study|program of study|study plan)\b"
+);
+regex!(
+    recovery_requirement_path_bonus_pattern,
+    r"(?i)/(?:requirements?|curriculum|degree|program|pathways?|tracks?|options?|concentrations?|worksheets?|checklists?|prereq|admissions?)(?:[-/?#]|$)"
+);
+regex!(
+    graduate_supplemental_pattern,
+    r"(?i)\b(graduate|ph\.?\s*d\.?|doctor(?:al|ate)?|m\.?\s*a\.?|masters?|master(?:'s|s)?)\b|/(?:ma|phd|graduate|masters?|amp)(?:[-/]|$)"
+);
+regex!(
+    noisy_link_pattern,
+    r"(?i)\b(apply|canvas|calendar|directory|map|myuw|library|tools|about|news|faculty|staff|contact|privacy|accessibility|terms|alumni|events|parking|transportation|research|housing|student life|jobs|visit|give|get involved|minors?|certificates?|graduate|scholarships?|course evaluations?|study abroad)\b"
+);
 regex!(pdf_source_pattern, r"(?i)\.pdf(?:$|[?#])");
-regex!(cs_washington_host_pattern, r"(?i)(?:^|\.)cs\.washington\.edu$");
+regex!(
+    cs_washington_host_pattern,
+    r"(?i)(?:^|\.)cs\.washington\.edu$"
+);
 regex!(ignored_href_pattern, r"(?i)^(?:#|javascript:|mailto:|tel:)");
-regex!(primary_requirement_cue_pattern, r"(?i)\bdegree requirements?\b|\bmajor requirements?\b|\bgraduation requirements?\b|\bprogram requirements?\b|\bdegree structure\b|\brequirements packet\b|\bdegreq\b");
-regex!(docx_study_plan_pattern, r"(?i)\b(plan of study|program of study|study plan|sample plan)\b");
-regex!(document_file_path_pattern, r"(?i)(?:^|/)(?:sites/default/files|files|docs?|documents?)(?:/|$)");
-regex!(document_requirement_signal_pattern, r"(?i)\b(requirements?|degree|curriculum|worksheet|checklist|degree map|curriculum map|schedule planning grid|schedule grid|planning grid|plan of study|program of study|study plan|sample plan)\b");
-regex!(historical_document_label_pattern, r"(?i)\b(?:prior years?|pre-|before|through|archived?|historical|old)\b|\b(?:autumn|winter|spring|summer)\s+(?:19|20)\d{2}\b");
+regex!(
+    primary_requirement_cue_pattern,
+    r"(?i)\bdegree requirements?\b|\bmajor requirements?\b|\bgraduation requirements?\b|\bprogram requirements?\b|\bdegree structure\b|\brequirements packet\b|\bdegreq\b"
+);
+regex!(
+    docx_study_plan_pattern,
+    r"(?i)\b(plan of study|program of study|study plan|sample plan)\b"
+);
+regex!(
+    document_file_path_pattern,
+    r"(?i)(?:^|/)(?:sites/default/files|files|docs?|documents?)(?:/|$)"
+);
+regex!(
+    document_requirement_signal_pattern,
+    r"(?i)\b(requirements?|degree|curriculum|worksheet|checklist|degree map|curriculum map|schedule planning grid|schedule grid|planning grid|plan of study|program of study|study plan|sample plan)\b"
+);
+regex!(
+    historical_document_label_pattern,
+    r"(?i)\b(?:prior years?|pre-|before|through|archived?|historical|old)\b|\b(?:autumn|winter|spring|summer)\s+(?:19|20)\d{2}\b"
+);
 regex!(wordpress_upload_path_pattern, r"(?i)/wp-content/uploads/");
-regex!(supplemental_html_link_pattern, r"(?i)\b(curriculum|requirements?|degree requirements?|major requirements?|prerequisites?|prereq|approved electives?|elective lists?|elective webpage|course lists?|worksheet|checklist|degree map|curriculum map|schedule planning grid|schedule grid|planning grid|plan of study|program of study|study plan|sample plan|track|option|concentration|specialization|route|pathway|b\.?\s*a\.?|b\.?\s*s\.?|bachelor(?:'s)?|major(?: in)?|undergraduate studies?)\b");
-regex!(noisy_supplemental_html_label_pattern, r"(?i)\b(apply|canvas|calendar|directory|map|myuw|library|tools|about|news|faculty|staff|contact|privacy|accessibility|terms|alumni|events|parking|transportation|research|housing|student life|jobs|visit|give|get involved|post graduation|minor|certificate|graduate|scholarships?|course lists?|course evaluations?|capstone courses?|study abroad|policy(?:\s*&\s*|\s+and\s+)procedures|suggested course pathways?)\b");
-regex!(low_signal_degree_program_pattern, r"(?i)\b(?:b\.?\s*a\.?|b\.?\s*s\.?|bachelor(?:'s)?|major(?: in)?|undergraduate studies?)\b");
-regex!(supplemental_prerequisite_pattern, r"(?i)\b(prereq|prerequisite)\b");
+regex!(
+    supplemental_html_link_pattern,
+    r"(?i)\b(curriculum|requirements?|degree requirements?|major requirements?|prerequisites?|prereq|approved electives?|elective lists?|elective webpage|course lists?|worksheet|checklist|degree map|curriculum map|schedule planning grid|schedule grid|planning grid|plan of study|program of study|study plan|sample plan|track|option|concentration|specialization|route|pathway|b\.?\s*a\.?|b\.?\s*s\.?|bachelor(?:'s)?|major(?: in)?|undergraduate studies?)\b"
+);
+regex!(
+    noisy_supplemental_html_label_pattern,
+    r"(?i)\b(apply|canvas|calendar|directory|map|myuw|library|tools|about|news|faculty|staff|contact|privacy|accessibility|terms|alumni|events|parking|transportation|research|housing|student life|jobs|visit|give|get involved|post graduation|minor|certificate|graduate|scholarships?|course lists?|course evaluations?|capstone courses?|study abroad|policy(?:\s*&\s*|\s+and\s+)procedures|suggested course pathways?)\b"
+);
+regex!(
+    low_signal_degree_program_pattern,
+    r"(?i)\b(?:b\.?\s*a\.?|b\.?\s*s\.?|bachelor(?:'s)?|major(?: in)?|undergraduate studies?)\b"
+);
+regex!(
+    supplemental_prerequisite_pattern,
+    r"(?i)\b(prereq|prerequisite)\b"
+);
 regex!(supplemental_curriculum_pattern, r"(?i)\bcurriculum\b");
-regex!(supplemental_admission_degree_pattern, r"(?i)\b(admission requirements?|degree requirements?|major requirements?)\b");
-regex!(supplemental_pathway_segment_pattern, r"(?i)(?:^|/)(?:track|tracks|option|options|concentration|specialization|pathway|route)(?:/|$|-)");
+regex!(
+    supplemental_admission_degree_pattern,
+    r"(?i)\b(admission requirements?|degree requirements?|major requirements?)\b"
+);
+regex!(
+    supplemental_pathway_segment_pattern,
+    r"(?i)(?:^|/)(?:track|tracks|option|options|concentration|specialization|pathway|route)(?:/|$|-)"
+);

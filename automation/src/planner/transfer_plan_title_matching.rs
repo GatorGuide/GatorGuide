@@ -4,8 +4,21 @@ use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 const TITLE_SIGNATURE_STOPWORDS: &[&str] = &[
-    "and", "arts", "baseline", "culture", "degree", "finish", "major", "media", "overall",
-    "requirement", "requirements", "shared", "studies", "study", "the",
+    "and",
+    "arts",
+    "baseline",
+    "culture",
+    "degree",
+    "finish",
+    "major",
+    "media",
+    "overall",
+    "requirement",
+    "requirements",
+    "shared",
+    "studies",
+    "study",
+    "the",
 ];
 
 pub fn normalize_transfer_planner_text(value: &str) -> String {
@@ -23,7 +36,7 @@ pub fn normalize_transfer_planner_text(value: &str) -> String {
             separated.push(character);
         }
     }
-    separated.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::requirement_shape::normalize_js_whitespace(&separated)
 }
 
 pub fn strip_transfer_planner_plan_title_prefix_repeatedly(
@@ -107,7 +120,9 @@ pub fn normalize_transfer_planner_semantic_pathway_label(plan_title: &str, value
 pub fn build_transfer_planner_title_signature_tokens(value: &str) -> Vec<String> {
     tokenize_transfer_planner_text(value)
         .into_iter()
-        .filter(|token| token.chars().count() >= 4 && !TITLE_SIGNATURE_STOPWORDS.contains(&token.as_str()))
+        .filter(|token| {
+            token.chars().count() >= 4 && !TITLE_SIGNATURE_STOPWORDS.contains(&token.as_str())
+        })
         .collect()
 }
 
@@ -212,8 +227,12 @@ pub fn label_mentions_different_transfer_planner_major(
                 continue;
             }
             let other_tokens = build_transfer_planner_title_signature_tokens(title);
-            if other_tokens.iter().all(|token| current_plan_tokens.contains(token))
-                || !other_tokens.iter().any(|token| !current_plan_tokens.contains(token))
+            if other_tokens
+                .iter()
+                .all(|token| current_plan_tokens.contains(token))
+                || !other_tokens
+                    .iter()
+                    .any(|token| !current_plan_tokens.contains(token))
             {
                 continue;
             }
@@ -256,7 +275,8 @@ pub fn label_mentions_different_transfer_planner_major(
         if other_tokens.is_empty() {
             continue;
         }
-        let looks_like_standalone_pathway_label = standalone_pathway_label_pattern().is_match(&normalized_label)
+        let looks_like_standalone_pathway_label = standalone_pathway_label_pattern()
+            .is_match(&normalized_label)
             && !standalone_pathway_exclusion_pattern().is_match(&normalized_label);
         let minimum_matches = if looks_like_standalone_pathway_label && other_tokens.len() == 1 {
             2
@@ -304,11 +324,15 @@ fn normalized_plan_title_variants(title: &str) -> Vec<String> {
         push_unique(&mut variants, base.clone());
         push_unique(
             &mut variants,
-            communication_pattern().replace_all(&base, "communications").into_owned(),
+            communication_pattern()
+                .replace_all(&base, "communications")
+                .into_owned(),
         );
         push_unique(
             &mut variants,
-            communications_pattern().replace_all(&base, "communication").into_owned(),
+            communications_pattern()
+                .replace_all(&base, "communication")
+                .into_owned(),
         );
     }
     variants
@@ -347,20 +371,62 @@ macro_rules! regex {
     };
 }
 
-regex!(specialized_plan_title_pattern, r":\s*([^()]+?)(?:\s*\([^)]*\))?\s*$");
+regex!(
+    specialized_plan_title_pattern,
+    r":\s*([^()]+?)(?:\s*\([^)]*\))?\s*$"
+);
 regex!(trailing_parenthetical_pattern, r"\s*\([^)]*\)\s*$");
 regex!(communication_pattern, r"\bcommunication\b");
 regex!(communications_pattern, r"\bcommunications\b");
-regex!(pathway_prefix_pattern, r"(?i)^\s+(?:option|track|route|pathway|certificate|concentration)\b");
-regex!(standalone_pathway_label_pattern, r"(?i)\b(?:option|track|route|pathway|certificate|concentration)\b");
-regex!(standalone_pathway_exclusion_pattern, r"(?i)(?:\s[-–—:]\s|\|)|\bmajor\b");
-regex!(semantic_pathway_document_suffix_pattern, r"(?i)\s*(?:\[(?:pdf|docx?|html?)\]|\((?:pdf|docx?|html?)\)|\b(?:pdf|docx?|html)\b)\s*$");
-regex!(semantic_pathway_document_title_suffix_pattern, r"(?i)\s+(?:degree\s+program\s+sheet|program\s+sheet|degree\s+sheet|worksheet|check\s*list|checklist)\b.*$");
-regex!(semantic_pathway_requirements_suffix_pattern, r"(?i)\b(option|track|route|pathway|certificate|concentration)\b(?:\s*[:-]\s*|\s+)(?:older\s+|prior\s+|current\s+|academic\s+|course\s+|program\s+|degree\s+|major\s+|graduation\s+)*requirements?\b.*$");
-regex!(semantic_pathway_date_suffix_pattern, r"(?i)\b(option|track|route|pathway|certificate|concentration)\b(?:\s+(?:autumn|winter|spring|summer|fall)\s+\d{4})+(?:\s*[-–—]\s*(?:autumn|winter|spring|summer|fall)\s+\d{4})?\s*$");
-regex!(semantic_pathway_trailing_site_suffix_pattern, r"(?i)\s+[-–—]\s+(?:UW|University of Washington)\b.*$");
-regex!(semantic_pathway_with_kind_in_pattern, r"(?i)^(?:.*?\bwith\s+(option|track|route|pathway|certificate|concentration)\s+in\s+)(.{2,100})$");
-regex!(semantic_pathway_requirements_for_prefix_pattern, r"(?i)^requirements?\s+for\s+(?:the\s+)?");
-regex!(semantic_pathway_trailing_document_variant_pattern, r"(?i)\b(option|track|route|pathway|certificate|concentration)\b\s+[-â€“â€”–—]\s+.*$");
-regex!(semantic_pathway_trailing_credits_pattern, r"(?i)\s+\((?:\d+(?:-\d+)?\s+credits?)\)\s*$");
-regex!(semantic_pathway_trailing_punctuation_pattern, r"\s+[.;:]\s*$");
+regex!(
+    pathway_prefix_pattern,
+    r"(?i)^\s+(?:option|track|route|pathway|certificate|concentration)\b"
+);
+regex!(
+    standalone_pathway_label_pattern,
+    r"(?i)\b(?:option|track|route|pathway|certificate|concentration)\b"
+);
+regex!(
+    standalone_pathway_exclusion_pattern,
+    r"(?i)(?:\s[-–—:]\s|\|)|\bmajor\b"
+);
+regex!(
+    semantic_pathway_document_suffix_pattern,
+    r"(?i)\s*(?:\[(?:pdf|docx?|html?)\]|\((?:pdf|docx?|html?)\)|\b(?:pdf|docx?|html)\b)\s*$"
+);
+regex!(
+    semantic_pathway_document_title_suffix_pattern,
+    r"(?i)\s+(?:degree\s+program\s+sheet|program\s+sheet|degree\s+sheet|worksheet|check\s*list|checklist)\b.*$"
+);
+regex!(
+    semantic_pathway_requirements_suffix_pattern,
+    r"(?i)\b(option|track|route|pathway|certificate|concentration)\b(?:\s*[:-]\s*|\s+)(?:older\s+|prior\s+|current\s+|academic\s+|course\s+|program\s+|degree\s+|major\s+|graduation\s+)*requirements?\b.*$"
+);
+regex!(
+    semantic_pathway_date_suffix_pattern,
+    r"(?i)\b(option|track|route|pathway|certificate|concentration)\b(?:\s+(?:autumn|winter|spring|summer|fall)\s+\d{4})+(?:\s*[-–—]\s*(?:autumn|winter|spring|summer|fall)\s+\d{4})?\s*$"
+);
+regex!(
+    semantic_pathway_trailing_site_suffix_pattern,
+    r"(?i)\s+[-–—]\s+(?:UW|University of Washington)\b.*$"
+);
+regex!(
+    semantic_pathway_with_kind_in_pattern,
+    r"(?i)^(?:.*?\bwith\s+(option|track|route|pathway|certificate|concentration)\s+in\s+)(.{2,100})$"
+);
+regex!(
+    semantic_pathway_requirements_for_prefix_pattern,
+    r"(?i)^requirements?\s+for\s+(?:the\s+)?"
+);
+regex!(
+    semantic_pathway_trailing_document_variant_pattern,
+    r"(?i)\b(option|track|route|pathway|certificate|concentration)\b\s+[-â€“â€”–—]\s+.*$"
+);
+regex!(
+    semantic_pathway_trailing_credits_pattern,
+    r"(?i)\s+\((?:\d+(?:-\d+)?\s+credits?)\)\s*$"
+);
+regex!(
+    semantic_pathway_trailing_punctuation_pattern,
+    r"\s+[.;:]\s*$"
+);

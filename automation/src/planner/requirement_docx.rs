@@ -1,15 +1,15 @@
 use super::requirement_html::decode_transfer_planner_html_entities;
-use super::source_artifact_cache::{BoundedResultCache, DEFAULT_SOURCE_ARTIFACT_CACHE_MAX_ENTRIES};
 use super::requirement_source_fetching::{
     SOURCE_DOWNLOAD_MAX_BUFFER_BYTES, SourceDownloader, run_command_bounded_with_timeout,
 };
+use super::source_artifact_cache::{BoundedResultCache, DEFAULT_SOURCE_ARTIFACT_CACHE_MAX_ENTRIES};
 use regex::Regex;
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 const DOCX_BLOCK_END_TAGS: &[&str] = &["/w:p", "/w:tr", "/w:tbl", "/w:sectpr", "/w:tc"];
@@ -113,14 +113,15 @@ pub fn extract_docx_text(xml: &str) -> String {
     let mut index = 0usize;
     while index < bytes.len() {
         if bytes[index] == b'<' {
-            let Some(relative_end) = bytes[index + 1..].iter().position(|byte| *byte == b'>') else {
+            let Some(relative_end) = bytes[index + 1..].iter().position(|byte| *byte == b'>')
+            else {
                 break;
             };
             let tag_end = index + 1 + relative_end;
             let tag = String::from_utf8_lossy(&bytes[index + 1..tag_end]);
-            let mut tag_name = tag
-                .trim()
-                .split_whitespace()
+            let normalized_tag = normalize_whitespace(&tag);
+            let mut tag_name = normalized_tag
+                .split(' ')
                 .next()
                 .unwrap_or_default()
                 .to_ascii_lowercase();
@@ -148,7 +149,11 @@ pub fn build_docx_lines(document_xml: &str) -> Vec<String> {
         .split('\n')
         .map(|line| line.strip_suffix('\r').unwrap_or(line))
         .map(decode_transfer_planner_html_entities)
-        .map(|line| line.chars().filter(|character| *character != '<' && *character != '>').collect::<String>())
+        .map(|line| {
+            line.chars()
+                .filter(|character| *character != '<' && *character != '>')
+                .collect::<String>()
+        })
         .map(|line| normalize_whitespace(&line))
         .filter(|line| !line.is_empty())
         .collect()
@@ -161,12 +166,18 @@ pub fn extract_docx_document_xml(
     max_buffer_bytes: usize,
 ) -> Result<String, String> {
     fs::create_dir_all(temporary_root).map_err(|error| {
-        format!("could not create temporary DOCX extraction root {}: {error}", temporary_root.display())
+        format!(
+            "could not create temporary DOCX extraction root {}: {error}",
+            temporary_root.display()
+        )
     })?;
     let temp_dir = TemporaryDirectory(create_unique_temp_dir(temporary_root)?);
     let archive_path = temp_dir.0.join("source.docx");
     fs::write(&archive_path, docx_buffer).map_err(|error| {
-        format!("could not write temporary DOCX archive {}: {error}", archive_path.display())
+        format!(
+            "could not write temporary DOCX archive {}: {error}",
+            archive_path.display()
+        )
     })?;
     let output = run_command_bounded_with_timeout(
         Command::new("tar").args([
@@ -179,12 +190,20 @@ pub fn extract_docx_document_xml(
     )
     .map_err(|error| format!("could not extract DOCX document.xml: {error}"))?;
     if output.stdout.len() > max_buffer_bytes || output.stderr.len() > max_buffer_bytes {
-        return Err(format!("DOCX extraction exceeded the {max_buffer_bytes}-byte buffer limit"));
+        return Err(format!(
+            "DOCX extraction exceeded the {max_buffer_bytes}-byte buffer limit"
+        ));
     }
     if !output.status.success() {
-        let details = normalize_whitespace(&String::from_utf8_lossy(&output.stderr))
-            .or_else(|| normalize_whitespace(&String::from_utf8_lossy(&output.stdout)))
-            .unwrap_or_else(|| format!("tar exited with status {}", output.status));
+        let stderr_text = normalize_whitespace(&String::from_utf8_lossy(&output.stderr));
+        let stdout_text = normalize_whitespace(&String::from_utf8_lossy(&output.stdout));
+        let details = if !stderr_text.is_empty() {
+            stderr_text
+        } else if !stdout_text.is_empty() {
+            stdout_text
+        } else {
+            format!("tar exited with status {}", output.status)
+        };
         return Err(details);
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
@@ -194,37 +213,43 @@ fn create_unique_temp_dir(parent: &Path) -> Result<PathBuf, String> {
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
     for _ in 0..100 {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        let path = parent.join(format!(
-            "transfer-planner-docx-{}-{id}",
-            std::process::id()
-        ));
+        let path = parent.join(format!("transfer-planner-docx-{}-{id}", std::process::id()));
         match fs::create_dir(&path) {
             Ok(()) => return Ok(path),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
-                return Err(format!("could not create temporary DOCX directory {}: {error}", path.display()));
+                return Err(format!(
+                    "could not create temporary DOCX directory {}: {error}",
+                    path.display()
+                ));
             }
         }
     }
-    Err(format!("could not allocate a unique temporary DOCX directory under {}", parent.display()))
+    Err(format!(
+        "could not allocate a unique temporary DOCX directory under {}",
+        parent.display()
+    ))
 }
 
 fn normalize_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::requirement_shape::normalize_js_whitespace(value)
 }
 
 fn docx_url_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\.docx(?:$|[?#])").expect("DOCX URL pattern"))
+    VALUE.get_or_init(|| js_compatible_docx_pattern(r"(?i)\.docx(?:$|[?#])"))
 }
 fn pdf_url_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\.pdf(?:$|[?#])").expect("PDF URL pattern"))
+    VALUE.get_or_init(|| js_compatible_docx_pattern(r"(?i)\.pdf(?:$|[?#])"))
 }
 fn worksheet_label_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| {
-        Regex::new(r"(?i)\b(?:worksheet|check\s*list|checklist)\b")
-            .expect("worksheet parser type label pattern")
-    })
+    VALUE
+        .get_or_init(|| js_compatible_docx_pattern(r"(?i)\b(?:worksheet|check\s*list|checklist)\b"))
+}
+
+fn js_compatible_docx_pattern(pattern: &str) -> Regex {
+    let compatible_pattern = super::requirement_shape::js_regex_compatibility_pattern(pattern);
+    Regex::new(&compatible_pattern).expect("JavaScript-compatible DOCX pattern")
 }

@@ -114,7 +114,11 @@ pub fn build_pdf_page_line_texts(
         let mut items = group.items;
         items.sort_by(|left, right| left.x.partial_cmp(&right.x).unwrap_or(Ordering::Equal));
         let raw_gap = group.max_height * 5.5;
-        let segment_gap_threshold = 36.0_f64.max(if raw_gap == 0.0 { 48.0 } else { raw_gap.min(96.0) });
+        let segment_gap_threshold = 36.0_f64.max(if raw_gap == 0.0 {
+            48.0
+        } else {
+            raw_gap.min(96.0)
+        });
         let mut line_segments: Vec<SegmentBuilder> = Vec::new();
         for item in items {
             let estimated_width = estimate_item_width(&item, group.max_height);
@@ -188,11 +192,12 @@ pub fn scope_pdf_page_blocks(
                 .iter()
                 .filter(|token| normalized_line.contains(token.as_str()))
                 .count() as i64;
-            let exact_title_score = if !exact_title.is_empty() && normalized_line.contains(&exact_title) {
-                10
-            } else {
-                0
-            };
+            let exact_title_score =
+                if !exact_title.is_empty() && normalized_line.contains(&exact_title) {
+                    10
+                } else {
+                    0
+                };
             let requirement_signal_score = requirement_signal_regex()
                 .find_iter(&normalized_line)
                 .count() as i64;
@@ -241,8 +246,15 @@ pub fn scope_pdf_page_lines(
         .collect()
 }
 
-pub fn get_pdf_title_scope_tokens(owner_title: Option<&str>, source_label: Option<&str>) -> Vec<String> {
-    let combined = format!("{} {}", owner_title.unwrap_or_default(), source_label.unwrap_or_default());
+pub fn get_pdf_title_scope_tokens(
+    owner_title: Option<&str>,
+    source_label: Option<&str>,
+) -> Vec<String> {
+    let combined = format!(
+        "{} {}",
+        owner_title.unwrap_or_default(),
+        source_label.unwrap_or_default()
+    );
     let mut tokens = normalize_matcher_text(&combined)
         .split_whitespace()
         .filter(|token| token.len() >= 4 && !pdf_scope_stopwords().contains(*token))
@@ -305,22 +317,34 @@ fn should_use_column_major_pdf_ordering(segments: &[PdfLineSegment]) -> Option<f
         }
     }
     let (_, boundary) = split?;
-    let left = segments.iter().filter(|segment| segment.x < boundary).collect::<Vec<_>>();
-    let right = segments.iter().filter(|segment| segment.x >= boundary).collect::<Vec<_>>();
+    let left = segments
+        .iter()
+        .filter(|segment| segment.x < boundary)
+        .collect::<Vec<_>>();
+    let right = segments
+        .iter()
+        .filter(|segment| segment.x >= boundary)
+        .collect::<Vec<_>>();
     if left.len() < 5 || right.len() < 5 {
         return None;
     }
     let left_heading_count = left
         .iter()
-        .filter(|segment| numbered_pdf_heading_regex().is_match(&normalize_whitespace(&segment.text)))
+        .filter(|segment| {
+            numbered_pdf_heading_regex().is_match(&normalize_whitespace(&segment.text))
+        })
         .count();
     let right_heading_count = right
         .iter()
-        .filter(|segment| numbered_pdf_heading_regex().is_match(&normalize_whitespace(&segment.text)))
+        .filter(|segment| {
+            numbered_pdf_heading_regex().is_match(&normalize_whitespace(&segment.text))
+        })
         .count();
     let checklist_count = segments
         .iter()
-        .filter(|segment| bare_checklist_line_regex().is_match(&normalize_whitespace(&segment.text)))
+        .filter(|segment| {
+            bare_checklist_line_regex().is_match(&normalize_whitespace(&segment.text))
+        })
         .count();
     if left_heading_count < 1
         || right_heading_count < 1
@@ -366,18 +390,16 @@ fn should_start_new_pdf_line_segment(
     {
         return true;
     }
-    current
-        .items
-        .last()
-        .is_some_and(|previous| {
-            is_pdf_credit_marker_text(&previous.text)
-                && !is_pdf_credit_marker_text(&item.text)
-                && gap > 18.0_f64.max(gap_threshold * 0.35)
-        })
+    current.items.last().is_some_and(|previous| {
+        is_pdf_credit_marker_text(&previous.text)
+            && !is_pdf_credit_marker_text(&item.text)
+            && gap > 18.0_f64.max(gap_threshold * 0.35)
+    })
 }
 
 fn estimate_item_width(item: &PositionedItem, max_height: f64) -> f64 {
-    item.width.max(item.text.encode_utf16().count() as f64 * max_height.max(8.0) * 0.45)
+    item.width
+        .max(item.text.encode_utf16().count() as f64 * max_height.max(8.0) * 0.45)
 }
 
 fn compare_reading_order(left: &PositionedItem, right: &PositionedItem) -> Ordering {
@@ -417,16 +439,37 @@ fn normalize_matcher_text(value: &str) -> String {
 }
 
 fn normalize_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::requirement_shape::normalize_js_whitespace(value)
 }
 
 fn pdf_scope_stopwords() -> &'static std::collections::HashSet<&'static str> {
     static VALUE: OnceLock<std::collections::HashSet<&'static str>> = OnceLock::new();
     VALUE.get_or_init(|| {
         [
-            "and", "arts", "bachelor", "bothell", "campus", "catalog", "course", "courses",
-            "curriculum", "degree", "major", "of", "official", "overview", "page", "program",
-            "requirements", "science", "seattle", "studies", "tacoma", "the", "university", "uw",
+            "and",
+            "arts",
+            "bachelor",
+            "bothell",
+            "campus",
+            "catalog",
+            "course",
+            "courses",
+            "curriculum",
+            "degree",
+            "major",
+            "of",
+            "official",
+            "overview",
+            "page",
+            "program",
+            "requirements",
+            "science",
+            "seattle",
+            "studies",
+            "tacoma",
+            "the",
+            "university",
+            "uw",
             "washington",
         ]
         .into_iter()
@@ -440,40 +483,45 @@ fn matcher_non_alphanumeric_regex() -> &'static Regex {
 fn requirement_signal_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
     VALUE.get_or_init(|| {
-        Regex::new(r"\b(requirements?|credits?|courses?|major|minor|curriculum|prerequisite)\b")
-            .expect("PDF requirement-signal pattern")
+        js_compatible_pdf_pattern(
+            r"\b(requirements?|credits?|courses?|major|minor|curriculum|prerequisite)\b",
+        )
     })
 }
 fn numbered_pdf_heading_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
     VALUE.get_or_init(|| {
-        Regex::new(r"^\s*\d+\)\s+[A-Za-z][^()]{2,80}\([A-Z& ]{2,10}\)")
-            .expect("PDF heading pattern")
+        js_compatible_pdf_pattern(r"^\s*\d+\)\s+[A-Za-z][^()]{2,80}\([A-Z& ]{2,10}\)")
     })
 }
 fn bare_checklist_line_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
     VALUE.get_or_init(|| {
-        Regex::new(r"(?iu)^\s*(?:[^\w\d]{1,10}\s*)?\d{3}[A-Za-z]?\s*\(\d+(?:\.\d+)?\)")
-            .expect("PDF checklist pattern")
+        js_compatible_pdf_pattern(
+            r"(?iu)^\s*(?:[^\w\d]{1,10}\s*)?\d{3}[A-Za-z]?\s*\(\d+(?:\.\d+)?\)",
+        )
     })
 }
 fn numbered_item_start_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"^\d+\)(?:\s+|$)").expect("PDF numbered-item pattern"))
+    VALUE.get_or_init(|| js_compatible_pdf_pattern(r"^\d+\)(?:\s+|$)"))
 }
 fn source_course_code_line_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
     VALUE.get_or_init(|| {
-        Regex::new(r"(?i)^[-*•\s]*(?:\(\s*\d+(?:\.\d+)?\s*\)\s*)?(?:[A-Z&]+(?:\s+[A-Z&]+)?(?:\s*/\s*[A-Z&]+(?:\s+[A-Z&]+)?)?\s+\d{3}[A-Za-z]?\*?|\d{3}[A-Za-z]?\b)")
-            .expect("PDF course-code prefix pattern")
+        js_compatible_pdf_pattern(r"(?i)^[-*•\s]*(?:\(\s*\d+(?:\.\d+)?\s*\)\s*)?(?:[A-Z&]+(?:\s+[A-Z&]+)?(?:\s*/\s*[A-Z&]+(?:\s+[A-Z&]+)?)?\s+\d{3}[A-Za-z]?\*?|\d{3}[A-Za-z]?\b)")
     })
 }
 fn snapshot_page_prefix_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^\[Page\s+\d+\]\s*").expect("PDF page prefix pattern"))
+    VALUE.get_or_init(|| js_compatible_pdf_pattern(r"(?i)^\[Page\s+\d+\]\s*"))
 }
 fn pdf_credit_marker_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^\d+(?:-\d+)?\s*cr$").expect("PDF credit marker pattern"))
+    VALUE.get_or_init(|| js_compatible_pdf_pattern(r"(?i)^\d+(?:-\d+)?\s*cr$"))
+}
+
+fn js_compatible_pdf_pattern(pattern: &str) -> Regex {
+    let compatible_pattern = super::requirement_shape::js_regex_compatibility_pattern(pattern);
+    Regex::new(&compatible_pattern).expect("JavaScript-compatible PDF layout pattern")
 }

@@ -70,14 +70,23 @@ const GENERIC_HTML: RequirementSourceAdapter = RequirementSourceAdapter {
 };
 
 pub fn select_requirement_source_adapter(entry: &Value) -> RequirementSourceAdapter {
-    let campus_id = entry.get("campusId").and_then(Value::as_str).unwrap_or_default();
-    let parser_type = entry.get("parserType").and_then(Value::as_str).unwrap_or_default();
+    let campus_id = entry
+        .get("campusId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let parser_type = entry
+        .get("parserType")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let url = entry.get("url").and_then(Value::as_str).unwrap_or_default();
     let html_degree_type = matches!(
         parser_type,
         "html-degree-page" | "html-curriculum-page" | "html-overview-page"
     );
-    let pdf_type = matches!(parser_type, "pdf-degree-sheet" | "pdf-worksheet" | "generic-pdf");
+    let pdf_type = matches!(
+        parser_type,
+        "pdf-degree-sheet" | "pdf-worksheet" | "generic-pdf"
+    );
 
     if campus_id == "uw-seattle" && html_degree_type {
         UW_SEATTLE_HTML

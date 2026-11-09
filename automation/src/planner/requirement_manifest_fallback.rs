@@ -1,19 +1,17 @@
 use super::requirement_course_codes::CourseCodeParser;
 use super::requirement_docx::{get_linked_document_parser_type, is_linked_document_source_url};
-use super::requirement_snapshots::source_url_without_hash;
-use regex::Regex;
 use super::requirement_plan_matching::manifest_entry_matches_specialized_plan_title;
 use super::requirement_role_classifier::classify_requirement_source_role;
 use super::requirement_scope::{RequirementSourceRoleStatus, get_requirement_source_role_status};
+use super::requirement_snapshots::source_url_without_hash;
+use regex::Regex;
 use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-const ADMISSION_PREPARATION_SOURCE_ROLES: &[&str] = &[
-    "admission-prerequisite-source",
-    "admissions-preparation",
-];
+const ADMISSION_PREPARATION_SOURCE_ROLES: &[&str] =
+    &["admission-prerequisite-source", "admissions-preparation"];
 
 pub fn get_parser_recovery_candidate_parser_type(
     entry: &Value,
@@ -30,9 +28,13 @@ pub fn get_parser_recovery_candidate_parser_type(
         return "html-degree-page".to_string();
     }
     match entry.get("parserType").and_then(Value::as_str) {
-        Some("html-degree-page" | "html-curriculum-page" | "html-overview-page" | "generic-html") => {
-            entry.get("parserType").and_then(Value::as_str).unwrap_or_default().to_string()
-        }
+        Some(
+            "html-degree-page" | "html-curriculum-page" | "html-overview-page" | "generic-html",
+        ) => entry
+            .get("parserType")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
         _ => "html-degree-page".to_string(),
     }
 }
@@ -151,7 +153,7 @@ pub fn compare_manifest_fallback_candidates(left: &Value, right: &Value) -> Orde
     if confidence_delta != Ordering::Equal {
         return confidence_delta;
     }
-    let role_delta = source_role_score(right).cmp(&source_role_score(left));
+    let role_delta = get_source_role_score(right).cmp(&get_source_role_score(left));
     if role_delta != Ordering::Equal {
         return role_delta;
     }
@@ -166,16 +168,20 @@ pub fn compare_manifest_fallback_candidates(left: &Value, right: &Value) -> Orde
 fn candidate_curriculum_url_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
     VALUE.get_or_init(|| {
-        Regex::new(r"(?i)/curriculum(?:[/?#]|$)|\bcurriculum\b")
-            .expect("parser recovery curriculum URL")
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)/curriculum(?:[/?#]|$)|\bcurriculum\b",
+        ))
+        .expect("parser recovery curriculum URL")
     })
 }
 
 fn candidate_degree_requirements_url_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
     VALUE.get_or_init(|| {
-        Regex::new(r"(?i)/(?:degree|major)-requirements?(?:[/?#]|$)|\brequirements?\b")
-            .expect("parser recovery degree requirements URL")
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)/(?:degree|major)-requirements?(?:[/?#]|$)|\brequirements?\b",
+        ))
+        .expect("parser recovery degree requirements URL")
     })
 }
 
@@ -188,7 +194,7 @@ fn confidence_score(value: &str) -> i8 {
     }
 }
 
-fn source_role_score(entry: &Value) -> i8 {
+pub fn get_source_role_score(entry: &Value) -> i8 {
     match classify_requirement_source_role(entry) {
         "official-catalog" | "primary-degree-requirements" => 6,
         "pathway-degree-sheet" => 5,
@@ -259,11 +265,17 @@ fn js_string(value: &Value) -> String {
     match value {
         Value::Null => "null".to_string(),
         Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
+        Value::Number(value) => super::requirement_shape::js_number_to_string(value),
         Value::String(value) => value.clone(),
         Value::Array(values) => values
             .iter()
-            .map(|value| if value.is_null() { String::new() } else { js_string(value) })
+            .map(|value| {
+                if value.is_null() {
+                    String::new()
+                } else {
+                    js_string(value)
+                }
+            })
             .collect::<Vec<_>>()
             .join(","),
         Value::Object(_) => "[object Object]".to_string(),

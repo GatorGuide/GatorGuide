@@ -19,9 +19,7 @@ impl RequirementBootstrapPlanIndex {
                 .filter(|value| !value.is_null())
                 .map(js_string)
                 .unwrap_or_default();
-            index
-                .plan_titles_by_id
-                .insert(plan_id.to_string(), title);
+            index.plan_titles_by_id.insert(plan_id.to_string(), title);
             let pathway_count = plan
                 .get("pathways")
                 .and_then(Value::as_array)
@@ -49,10 +47,8 @@ impl RequirementBootstrapPlanIndex {
             .get("pathwayId")
             .filter(|value| !value.is_null())
             .map(js_string)
-            .unwrap_or_default()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+            .unwrap_or_default();
+        let pathway_id = super::requirement_shape::normalize_js_whitespace(&pathway_id);
         if pathway_id.is_empty() {
             return None;
         }
@@ -69,11 +65,17 @@ fn js_string(value: &Value) -> String {
     match value {
         Value::Null => "null".to_string(),
         Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
+        Value::Number(value) => super::requirement_shape::js_number_to_string(value),
         Value::String(value) => value.clone(),
         Value::Array(values) => values
             .iter()
-            .map(|value| if value.is_null() { String::new() } else { js_string(value) })
+            .map(|value| {
+                if value.is_null() {
+                    String::new()
+                } else {
+                    js_string(value)
+                }
+            })
             .collect::<Vec<_>>()
             .join(","),
         Value::Object(_) => "[object Object]".to_string(),

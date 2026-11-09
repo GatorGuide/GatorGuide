@@ -3,15 +3,319 @@ use std::sync::OnceLock;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequirementHtmlArtifacts {
+    pub html: String,
     pub title: Option<String>,
     pub headings: Vec<String>,
     pub lines: Vec<String>,
     pub links: Vec<(String, String)>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogAnchorMatch {
+    pub index: usize,
+    pub end_index: usize,
+    pub tag_html: String,
+    pub heading: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogPeerBoundary {
+    pub index: usize,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogProgramExpandableGroupMatch {
+    pub index: usize,
+    pub end_index: usize,
+    pub data_expand: String,
+    pub stop_search_start: usize,
+}
+
+pub fn find_next_catalog_peer_boundary(
+    html: &str,
+    search_start_index: usize,
+    anchor: Option<&str>,
+) -> CatalogPeerBoundary {
+    let mut search_start_index = search_start_index.min(html.len());
+    while !html.is_char_boundary(search_start_index) {
+        search_start_index -= 1;
+    }
+    let pattern = if anchor.is_some_and(|anchor| {
+        anchor
+            .get(..11)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("credential-"))
+    }) {
+        credential_catalog_peer_boundary_pattern()
+    } else {
+        program_catalog_peer_boundary_pattern()
+    };
+    let Some(found) = pattern.find_at(html, search_start_index) else {
+        return CatalogPeerBoundary {
+            index: html.len(),
+            label: "end of document".to_string(),
+        };
+    };
+    let matched = found.as_str();
+    let stripped = strip_html(matched);
+    let label = if stripped.is_empty() {
+        super::requirement_shape::js_slice_utf16_units(&normalize_whitespace(matched), 120)
+    } else {
+        stripped
+    };
+    CatalogPeerBoundary {
+        index: found.start(),
+        label,
+    }
+}
+
+pub fn find_next_catalog_credential_boundary(
+    html: &str,
+    search_start_index: usize,
+    search_end_index: usize,
+) -> Option<CatalogPeerBoundary> {
+    let mut search_start_index = search_start_index.min(html.len());
+    while !html.is_char_boundary(search_start_index) {
+        search_start_index -= 1;
+    }
+    let found = catalog_credential_boundary_pattern().find_at(html, search_start_index)?;
+    if found.start() >= search_end_index {
+        return None;
+    }
+    let matched = found.as_str();
+    let stripped = strip_html(matched);
+    let label = if stripped.is_empty() {
+        super::requirement_shape::js_slice_utf16_units(&normalize_whitespace(matched), 120)
+    } else {
+        stripped
+    };
+    Some(CatalogPeerBoundary {
+        index: found.start(),
+        label,
+    })
+}
+
+pub fn collect_ignored_catalog_neighboring_sections(
+    html: &str,
+    search_start_index: usize,
+    anchor: Option<&str>,
+) -> Vec<String> {
+    let mut search_start_index = search_start_index.min(html.len());
+    while !html.is_char_boundary(search_start_index) {
+        search_start_index -= 1;
+    }
+    let pattern = if anchor.is_some_and(|anchor| {
+        anchor
+            .get(..11)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("credential-"))
+    }) {
+        credential_catalog_heading_pattern()
+    } else {
+        program_catalog_heading_pattern()
+    };
+    let mut headings = Vec::new();
+    for captures in pattern.captures_iter(html) {
+        let Some(whole) = captures.get(0) else {
+            continue;
+        };
+        if whole.start() < search_start_index {
+            continue;
+        }
+        let Some(heading) = captures.get(1).map(|value| strip_html(value.as_str())) else {
+            continue;
+        };
+        if !heading.is_empty() {
+            headings.push(heading);
+        }
+        if headings.len() >= 6 {
+            break;
+        }
+    }
+    headings
+}
+
+fn credential_catalog_heading_pattern() -> &'static Regex {
+    static VALUE: OnceLock<Regex> = OnceLock::new();
+    VALUE.get_or_init(|| {
+        let pattern = r#"(?is)<h[3-5]\b[^>]*\bid=(?:"credential-[^"']+"|'credential-[^"']+')[^>]*>(.*?)</h[3-5]>"#;
+        let pattern = super::requirement_shape::js_regex_compatibility_pattern(pattern);
+        Regex::new(&pattern).expect("catalog credential heading pattern")
+    })
+}
+
+fn program_catalog_heading_pattern() -> &'static Regex {
+    static VALUE: OnceLock<Regex> = OnceLock::new();
+    VALUE.get_or_init(|| {
+        let pattern =
+            r#"(?is)<h[23]\b[^>]*\bid=(?:"program-[^"']+"|'program-[^"']+')[^>]*>(.*?)</h[23]>"#;
+        let pattern = super::requirement_shape::js_regex_compatibility_pattern(pattern);
+        Regex::new(&pattern).expect("catalog program heading pattern")
+    })
+}
+
+pub fn normalize_catalog_base_credential_heading(heading: &str) -> String {
+    let mut normalized =
+        super::transfer_plan_title_matching::normalize_transfer_planner_text(heading);
+    for pattern in catalog_base_credential_prefix_patterns() {
+        normalized = pattern.replace(&normalized, "").into_owned();
+    }
+    normalized
+        .trim_matches(super::requirement_shape::is_js_whitespace)
+        .to_string()
+}
+
+fn catalog_base_credential_prefix_patterns() -> &'static [Regex] {
+    static VALUE: OnceLock<Vec<Regex>> = OnceLock::new();
+    VALUE.get_or_init(|| {
+        [
+            r"(?i)^Bachelor\s+of\s+(?:Arts|Science)\s+degree\s+with\s+a\s+major\s+in\s+",
+            r"(?i)^Bachelor\s+of\s+[^:]+?\s+degree\s+with\s+a\s+major\s+in\s+",
+            r"(?i)^Bachelor\s+of\s+(?:Arts|Science)\s+in\s+",
+            r"(?i)^Bachelor\s+of\s+[^:]+?\s+in\s+",
+        ]
+        .into_iter()
+        .map(|pattern| Regex::new(pattern).expect("catalog base credential prefix pattern"))
+        .collect()
+    })
+}
+
+fn catalog_credential_boundary_pattern() -> &'static Regex {
+    static VALUE: OnceLock<Regex> = OnceLock::new();
+    VALUE.get_or_init(|| {
+        let pattern = r#"(?is)<div\b[^>]*\bclass=(?:"[^"']*\bexpandableGroup\b[^"']*"|'[^"']*\bexpandableGroup\b[^"']*')[^>]*\bdata-expand=(?:"[^"']*credential-[^"']+"|'[^"']*credential-[^"']+')[^>]*>.*?</div>"#;
+        let pattern = super::requirement_shape::js_regex_compatibility_pattern(pattern);
+        Regex::new(&pattern).expect("catalog credential boundary pattern")
+    })
+}
+
+fn catalog_program_expandable_group_pattern() -> &'static Regex {
+    static VALUE: OnceLock<Regex> = OnceLock::new();
+    VALUE.get_or_init(|| {
+        let pattern = r#"(?i)<div\b[^>]*\bclass=(?:"[^"']*\bexpandableGroup\b[^"']*"|'[^"']*\bexpandableGroup\b[^"']*')[^>]*\bdata-expand=(?:"([^"']*program-[^"']+)"|'([^"']*program-[^"']+)')[^>]*>"#;
+        let pattern = super::requirement_shape::js_regex_compatibility_pattern(pattern);
+        Regex::new(&pattern).expect("catalog expandable program group pattern")
+    })
+}
+
+fn catalog_undergraduate_program_pattern() -> &'static Regex {
+    static VALUE: OnceLock<Regex> = OnceLock::new();
+    VALUE.get_or_init(|| {
+        Regex::new(&super::requirement_shape::js_regex_compatibility_pattern(
+            r"(?i)\bprogram-UG-",
+        ))
+        .expect("catalog undergraduate program pattern")
+    })
+}
+
+fn program_catalog_peer_boundary_pattern() -> &'static Regex {
+    static VALUE: OnceLock<Regex> = OnceLock::new();
+    VALUE.get_or_init(|| {
+        let pattern = r#"(?is)<(?:(?:h[23]\b[^>]*\bid=(?:"program-[^"']+"|'program-[^"']+')[^>]*>.*?</h[23]>)|(?:div\b[^>]*\bclass=(?:"[^"']*\bexpandableGroup\b[^"']*"|'[^"']*\bexpandableGroup\b[^"']*')[^>]*\bdata-expand=(?:"[^"']*program-[^"']+"|'[^"']*program-[^"']+')[^>]*>))"#;
+        let pattern = super::requirement_shape::js_regex_compatibility_pattern(pattern);
+        Regex::new(&pattern).expect("catalog program peer boundary pattern")
+    })
+}
+
+fn credential_catalog_peer_boundary_pattern() -> &'static Regex {
+    static VALUE: OnceLock<Regex> = OnceLock::new();
+    VALUE.get_or_init(|| {
+        let pattern = r#"(?is)<(?:(?:h[23]\b[^>]*\bid=(?:"program-[^"']+"|'program-[^"']+')[^>]*>.*?</h[23]>)|(?:h[3-5]\b[^>]*\bid=(?:"credential-[^"']+"|'credential-[^"']+')[^>]*>.*?</h[3-5]>)|(?:div\b[^>]*\bclass=(?:"[^"']*\bexpandableGroup\b[^"']*"|'[^"']*\bexpandableGroup\b[^"']*')[^>]*\bdata-expand=(?:"[^"']*(?:program|credential)-[^"']+"|'[^"']*(?:program|credential)-[^"']+')[^>]*>))"#;
+        let pattern = super::requirement_shape::js_regex_compatibility_pattern(pattern);
+        Regex::new(&pattern).expect("catalog credential peer boundary pattern")
+    })
+}
+
+pub fn find_catalog_credential_heading_matches(html: &str) -> Vec<CatalogAnchorMatch> {
+    credential_catalog_heading_pattern()
+        .captures_iter(html)
+        .filter_map(|captures| {
+            let whole = captures.get(0)?;
+            let heading = captures
+                .get(1)
+                .map(|value| strip_html(value.as_str()))
+                .unwrap_or_default();
+            Some(CatalogAnchorMatch {
+                index: whole.start(),
+                end_index: whole.end(),
+                tag_html: whole.as_str().to_string(),
+                heading,
+            })
+        })
+        .collect()
+}
+
+pub fn find_catalog_program_expandable_group_matches(
+    html: &str,
+) -> Vec<CatalogProgramExpandableGroupMatch> {
+    let mut matches = Vec::new();
+    for captures in catalog_program_expandable_group_pattern().captures_iter(html) {
+        let Some(whole) = captures.get(0) else {
+            continue;
+        };
+        let data_expand = captures
+            .get(1)
+            .or_else(|| captures.get(2))
+            .map(|value| value.as_str())
+            .unwrap_or_default();
+        if !catalog_undergraduate_program_pattern().is_match(data_expand) {
+            continue;
+        }
+        let header_end = html
+            .get(whole.end()..)
+            .and_then(|remaining| remaining.find("</div>"))
+            .map(|relative_end| whole.end() + relative_end);
+        let stop_search_start = header_end
+            .map(|end| end + "</div>".len())
+            .unwrap_or(whole.end());
+        matches.push(CatalogProgramExpandableGroupMatch {
+            index: whole.start(),
+            end_index: whole.end(),
+            data_expand: data_expand.to_string(),
+            stop_search_start,
+        });
+    }
+    matches
+}
+
+pub fn find_catalog_anchor_tag(html: &str, anchor: &str) -> Option<CatalogAnchorMatch> {
+    if anchor.is_empty() {
+        return None;
+    }
+    let escaped_anchor = regex::escape(anchor);
+    let exact_attribute_pattern =
+        format!(r#"(?i)<[^>]+\b(?:id|name)=(?:"{escaped_anchor}"|'{escaped_anchor}')[^>]*>"#);
+    let exact_attribute_pattern =
+        super::requirement_shape::js_regex_compatibility_pattern(&exact_attribute_pattern);
+    if let Ok(pattern) = Regex::new(&exact_attribute_pattern) {
+        if let Some(found) = pattern.find(html) {
+            return Some(CatalogAnchorMatch {
+                index: found.start(),
+                end_index: found.end(),
+                tag_html: found.as_str().to_string(),
+                heading: strip_html(found.as_str()),
+            });
+        }
+    }
+
+    let data_expand_pattern = format!(
+        r#"(?i)<[^>]+\bdata-expand=(?:"[^"']*{escaped_anchor}[^"']*"|'[^"']*{escaped_anchor}[^"']*')[^>]*>"#
+    );
+    let data_expand_pattern =
+        super::requirement_shape::js_regex_compatibility_pattern(&data_expand_pattern);
+    let pattern = Regex::new(&data_expand_pattern).ok()?;
+    let found = pattern.find(html)?;
+    Some(CatalogAnchorMatch {
+        index: found.start(),
+        end_index: found.end(),
+        tag_html: found.as_str().to_string(),
+        heading: strip_html(found.as_str()),
+    })
+}
+
 pub fn parse_html_artifacts(html: &str) -> RequirementHtmlArtifacts {
     let chrome_stripped = strip_html_document_chrome(html);
     RequirementHtmlArtifacts {
+        html: html.to_string(),
         title: extract_title(html),
         headings: extract_headings(html),
         lines: build_html_lines_from_stripped(&chrome_stripped),
@@ -61,7 +365,11 @@ pub fn extract_headings(html: &str) -> Vec<String> {
             }
         }
     }
-    headings.sort();
+    headings.sort_by(|left, right| {
+        left.to_lowercase()
+            .cmp(&right.to_lowercase())
+            .then_with(|| right.cmp(left))
+    });
     headings.dedup();
     headings.truncate(20);
     headings
@@ -72,17 +380,26 @@ pub fn decode_transfer_planner_html_entities(value: &str) -> String {
     let numeric_decoded = numeric_entity_pattern()
         .replace_all(&repaired, |captures: &regex::Captures<'_>| {
             let Some(entity) = captures.get(1).map(|value| value.as_str()) else {
-                return captures.get(0).map_or_else(String::new, |value| value.as_str().to_string());
+                return captures
+                    .get(0)
+                    .map_or_else(String::new, |value| value.as_str().to_string());
             };
             decode_numeric_entity(entity).unwrap_or_else(|| {
-                captures.get(0).map_or_else(String::new, |value| value.as_str().to_string())
+                captures
+                    .get(0)
+                    .map_or_else(String::new, |value| value.as_str().to_string())
             })
         })
         .into_owned();
     named_entity_pattern()
         .replace_all(&numeric_decoded, |captures: &regex::Captures<'_>| {
-            let Some(entity) = captures.get(1).map(|value| value.as_str().to_ascii_lowercase()) else {
-                return captures.get(0).map_or_else(String::new, |value| value.as_str().to_string());
+            let Some(entity) = captures
+                .get(1)
+                .map(|value| value.as_str().to_ascii_lowercase())
+            else {
+                return captures
+                    .get(0)
+                    .map_or_else(String::new, |value| value.as_str().to_string());
             };
             match entity.as_str() {
                 "amp" => "&".to_string(),
@@ -93,7 +410,9 @@ pub fn decode_transfer_planner_html_entities(value: &str) -> String {
                 "nbsp" => " ".to_string(),
                 "quot" | "rdquo" | "ldquo" => "\"".to_string(),
                 "rsquo" | "lsquo" => "'".to_string(),
-                _ => captures.get(0).map_or_else(String::new, |value| value.as_str().to_string()),
+                _ => captures
+                    .get(0)
+                    .map_or_else(String::new, |value| value.as_str().to_string()),
             }
         })
         .replace('\u{00a0}', " ")
@@ -104,7 +423,9 @@ fn strip_html_document_chrome(html: &str) -> String {
     for pattern in chrome_patterns() {
         output = pattern.replace_all(&output, " ").into_owned();
     }
-    html_comment_pattern().replace_all(&output, " ").into_owned()
+    html_comment_pattern()
+        .replace_all(&output, " ")
+        .into_owned()
 }
 
 fn collapse_html_table_rows(html: &str) -> String {
@@ -141,7 +462,10 @@ fn table_cell_texts(row_body: &str) -> Vec<String> {
     for pattern in table_cell_patterns() {
         for captures in pattern.captures_iter(row_body) {
             if let Some(body) = captures.get(1) {
-                cells.push((captures.get(0).map_or(0, |value| value.start()), strip_html(body.as_str())));
+                cells.push((
+                    captures.get(0).map_or(0, |value| value.start()),
+                    strip_html(body.as_str()),
+                ));
             }
         }
     }
@@ -188,10 +512,10 @@ fn repair_loose_html_entity_artifacts(value: &str) -> String {
         let before = repaired_mojibake[..whole.start()].chars().next_back();
         let after = repaired_mojibake[whole.end()..].chars().next();
         let boundary_before = before.map_or(true, |character| {
-            character.is_whitespace() || "([{,;:".contains(character)
+            super::requirement_shape::is_js_whitespace(character) || "([{,;:".contains(character)
         });
         let boundary_after = after.map_or(true, |character| {
-            character.is_whitespace() || ")]},;:!?".contains(character)
+            super::requirement_shape::is_js_whitespace(character) || ")]},;:!?".contains(character)
         });
         if !boundary_before
             || !boundary_after
@@ -228,7 +552,12 @@ fn decode_numeric_entity(raw: &str) -> Option<String> {
 }
 
 fn normalize_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::requirement_shape::normalize_js_whitespace(value)
+}
+
+fn compile_js_regex(pattern: &str, message: &'static str) -> Regex {
+    let pattern = super::requirement_shape::js_regex_compatibility_pattern(pattern);
+    Regex::new(&pattern).expect(message)
 }
 
 fn chrome_patterns() -> &'static [Regex] {
@@ -237,8 +566,10 @@ fn chrome_patterns() -> &'static [Regex] {
         ["script", "style", "nav", "header", "footer", "aside"]
             .into_iter()
             .map(|tag| {
-                Regex::new(&format!(r"(?is)<{tag}\b[^>]*>.*?</{tag}\s*>"))
-                    .expect("HTML chrome pattern")
+                compile_js_regex(
+                    &format!(r"(?is)<{tag}\b[^>]*>.*?</{tag}\s*>"),
+                    "HTML chrome pattern",
+                )
             })
             .collect()
     })
@@ -246,46 +577,65 @@ fn chrome_patterns() -> &'static [Regex] {
 
 fn table_row_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?is)<tr\b[^>]*>(.*?)</tr\s*>").expect("HTML table row pattern"))
+    VALUE.get_or_init(|| {
+        compile_js_regex(r"(?is)<tr\b[^>]*>(.*?)</tr\s*>", "HTML table row pattern")
+    })
 }
 fn table_cell_patterns() -> &'static [Regex] {
     static VALUE: OnceLock<Vec<Regex>> = OnceLock::new();
     VALUE.get_or_init(|| {
         ["td", "th"]
             .into_iter()
-            .map(|tag| Regex::new(&format!(r"(?is)<{tag}\b[^>]*>(.*?)</{tag}\s*>" )).expect("HTML table cell pattern"))
+            .map(|tag| {
+                compile_js_regex(
+                    &format!(r"(?is)<{tag}\b[^>]*>(.*?)</{tag}\s*>"),
+                    "HTML table cell pattern",
+                )
+            })
             .collect()
     })
 }
 fn split_subject_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^[A-Za-z&]{1,20}(?:\s+[A-Za-z&]{1,20})?$").expect("split course subject pattern"))
+    VALUE.get_or_init(|| {
+        Regex::new(r"(?i)^[A-Za-z&]{1,20}(?:\s+[A-Za-z&]{1,20})?$")
+            .expect("split course subject pattern")
+    })
 }
 fn leading_course_number_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"^\d{3}[A-Za-z]?\b").expect("split course number pattern"))
+    VALUE.get_or_init(|| compile_js_regex(r"^\d{3}[A-Za-z]?\b", "split course number pattern"))
 }
 fn block_tag_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)</?(?:p|div|section|article|main|aside|header|footer|details|summary|nav|li|ul|ol|dl|dt|dd|table|thead|tbody|tfoot|caption|tr|td|th|button|h1|h2|h3|h4|h5|h6|br)\b[^>]*>").expect("HTML block tag pattern"))
+    VALUE.get_or_init(|| compile_js_regex(r"(?i)</?(?:p|div|section|article|main|aside|header|footer|details|summary|nav|li|ul|ol|dl|dt|dd|table|thead|tbody|tfoot|caption|tr|td|th|button|h1|h2|h3|h4|h5|h6|br)\b[^>]*>", "HTML block tag pattern"))
 }
 fn title_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?is)<title\b[^>]*>(.*?)</title\s*>").expect("HTML title pattern"))
+    VALUE.get_or_init(|| {
+        compile_js_regex(r"(?is)<title\b[^>]*>(.*?)</title\s*>", "HTML title pattern")
+    })
 }
 fn heading_patterns() -> &'static [Regex] {
     static VALUE: OnceLock<Vec<Regex>> = OnceLock::new();
     VALUE.get_or_init(|| {
         (1..=4)
-            .map(|level| Regex::new(&format!(r"(?is)<h{level}\b[^>]*>(.*?)</h{level}\s*>" )).expect("HTML heading pattern"))
+            .map(|level| {
+                compile_js_regex(
+                    &format!(r"(?is)<h{level}\b[^>]*>(.*?)</h{level}\s*>"),
+                    "HTML heading pattern",
+                )
+            })
             .collect()
     })
 }
 fn html_anchor_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
     VALUE.get_or_init(|| {
-        Regex::new(r#"(?is)<a\b[^>]*href=(?:"([^"]+)"|'([^']+)')[^>]*>(.*?)</a>"#)
-            .expect("html anchor")
+        compile_js_regex(
+            r#"(?is)<a\b[^>]*href=(?:"([^"]+)"|'([^']+)')[^>]*>(.*?)</a>"#,
+            "html anchor",
+        )
     })
 }
 
@@ -303,11 +653,13 @@ fn html_control_line_pattern() -> &'static Regex {
 }
 fn noisy_line_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)(?:src=|srcset=|aria-label=|title=|\.jpg\b|\.jpeg\b|\.png\b|\.svg\b|\.gif\b|^\[page\s+\d+\]\s*%pdf-|^\s*%pdf-|^\s*(?:<!--|-->|(?:pre-bubbling\s+)?cache\s+(?:contexts|tags|max-age):?$|(?:\*\s*)?(?:route\.name\.|url\.site$|languages:|user\.permissions$|theme$))").expect("noisy source line pattern"))
+    VALUE.get_or_init(|| compile_js_regex(r"(?i)(?:src=|srcset=|aria-label=|title=|\.jpg\b|\.jpeg\b|\.png\b|\.svg\b|\.gif\b|^\[page\s+\d+\]\s*%pdf-|^\s*%pdf-|^\s*(?:<!--|-->|(?:pre-bubbling\s+)?cache\s+(?:contexts|tags|max-age):?$|(?:\*\s*)?(?:route\.name\.|url\.site$|languages:|user\.permissions$|theme$)))", "noisy source line pattern"))
 }
 fn numeric_entity_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)&(\#x[0-9a-f]+|\#\d+);").expect("numeric HTML entity pattern"))
+    VALUE.get_or_init(|| {
+        compile_js_regex(r"(?i)&(\#x[0-9a-f]+|\#\d+);", "numeric HTML entity pattern")
+    })
 }
 fn named_entity_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
@@ -315,5 +667,12 @@ fn named_entity_pattern() -> &'static Regex {
 }
 fn loose_entity_artifact_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)((?:and\s+|amp\s+|&\s*|#\s*)?)(160|8211|8212|8216|8217|8220|8221)").expect("loose HTML entity artifact pattern"))
+    VALUE.get_or_init(|| {
+        let whitespace = r"[\t\n\x{000B}\f\r \x{00A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]";
+        let pattern = format!(
+            r"(?i)((?:and{whitespace}+|amp{whitespace}+|&{whitespace}*|#{whitespace}*)?)(160|8211|8212|8216|8217|8220|8221)",
+            whitespace = whitespace,
+        );
+        Regex::new(&pattern).expect("loose HTML entity artifact pattern")
+    })
 }

@@ -1,6 +1,7 @@
 /* global __dirname */
 const fs = require("fs");
 const path = require("path");
+const { spawnSync } = require("child_process");
 const parser = require("./parse-transfer-planner-requirement-sources.cjs");
 
 require("ts-node").register({
@@ -28,6 +29,7 @@ const {
 } = require("../../constants/transfer-planner-source/source-generated-visibility");
 const {
   getTransferPlannerCampusAliasGuideTargetCourseCodes,
+  TRANSFER_PLANNER_BOTHELL_CAMPUS_ALIAS_GUIDE_TARGET_COURSE_ALIASES,
 } = require("../../constants/transfer-planner-source/campus-course-aliases");
 const planner = require("../../services/planning/transfer-planner.service");
 const sourceBackedActionability = require("./source-backed-coverage-actionability.cjs");
@@ -9763,194 +9765,333 @@ function writeReports(report) {
   writeMarkdownReport(OUTPUT_MD_PATH, lines);
 }
 
-function runGeneratedRegistryAuditMode() {
-  ensureTmpDir();
-  const targetPlanId = getArgValue("--target-plan-id");
-  const reportOnly = hasFlag("--report-only");
-  const protectedOnly = hasFlag("--protected-only");
-  const {
-    owners,
-    generatedSourceSeedAuditRows,
-    generatedShapeAuditRows,
-    generatedRegistryRows,
-  } = buildGeneratedRegistryAuditRows(targetPlanId, protectedOnly);
-  const requirementShapeAuditRows = owners.flatMap(buildRequirementShapeAuditRowsForOwner);
-  const electiveApprovedListShapeAuditRows = owners.flatMap(
-    buildElectiveApprovedListShapeAuditRowsForOwner
-  );
-  const creditCategoryShapeAuditRows = owners.flatMap(buildCreditCategoryShapeAuditRowsForOwner);
-  const sequencePathwayShapeAuditRows = owners.flatMap(buildSequencePathwayShapeAuditRowsForOwner);
-  const singleEquivalencyAuditRows = [
-    ...buildKnownSingleEquivalencyAuditRows(),
-    ...owners.flatMap(buildSingleEquivalencyAuditRowsForOwner),
-  ];
-  const generatedRegistryIssueRows = generatedRegistryRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const requirementShapeIssueRows = requirementShapeAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const electiveApprovedListShapeIssueRows = electiveApprovedListShapeAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const creditCategoryShapeIssueRows = creditCategoryShapeAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const sequencePathwayShapeIssueRows = sequencePathwayShapeAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const singleEquivalencyIssueRows = singleEquivalencyAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const report = {
-    generatedAt: new Date().toISOString(),
-    outcome:
-      generatedRegistryIssueRows.length +
-      requirementShapeIssueRows.length +
-      electiveApprovedListShapeIssueRows.length +
-      creditCategoryShapeIssueRows.length +
-      sequencePathwayShapeIssueRows.length +
-      singleEquivalencyIssueRows.length
-        ? "failed"
-        : "passed",
-    summary: {
-      ownerCount: owners.length,
-      generatedRegistryRegressionRowCount: generatedRegistryRows.length,
-      generatedRegistryIssueCount: generatedRegistryIssueRows.length,
-      generatedSourceSeedAuditRowCount: generatedSourceSeedAuditRows.length,
-      generatedShapeAuditRowCount: generatedShapeAuditRows.length,
-      requirementShapeAuditRowCount: requirementShapeAuditRows.length,
-      requirementShapeIssueCount: requirementShapeIssueRows.length,
-      electiveApprovedListShapeAuditRowCount: electiveApprovedListShapeAuditRows.length,
-      electiveApprovedListShapeIssueCount: electiveApprovedListShapeIssueRows.length,
-      creditCategoryShapeAuditRowCount: creditCategoryShapeAuditRows.length,
-      creditCategoryShapeIssueCount: creditCategoryShapeIssueRows.length,
-      sequencePathwayShapeAuditRowCount: sequencePathwayShapeAuditRows.length,
-      sequencePathwayShapeIssueCount: sequencePathwayShapeIssueRows.length,
-      singleEquivalencyAuditRowCount: singleEquivalencyAuditRows.length,
-      singleEquivalencyIssueCount: singleEquivalencyIssueRows.length,
-      protectedOwnerRowCount: generatedRegistryRows.filter((row) => row.protectedPattern).length,
-      issueCountsByType: buildGeneratedRegistryIssueCounts([
-        ...generatedRegistryRows,
-        ...requirementShapeAuditRows,
-        ...electiveApprovedListShapeAuditRows,
-        ...creditCategoryShapeAuditRows,
-        ...sequencePathwayShapeAuditRows,
-        ...singleEquivalencyAuditRows,
-      ]),
-    },
-    generatedRegistryRegressionRows: generatedRegistryRows,
-    generatedSourceSeedAuditRows,
-    generatedShapeAuditRows,
-    requirementShapeAuditRows,
-    electiveApprovedListShapeAuditRows,
-    creditCategoryShapeAuditRows,
-    sequencePathwayShapeAuditRows,
-    singleEquivalencyAuditRows,
-  };
-
-  writeGeneratedRegistryReports(report, {
-    jsonPath: GENERATED_REGISTRY_OUTPUT_JSON_PATH,
-    markdownPath: GENERATED_REGISTRY_OUTPUT_MD_PATH,
-  });
-
-  console.log(`Generated registry regression audit outcome: ${report.outcome}`);
-  console.log(`Owners audited: ${report.summary.ownerCount}`);
-  console.log(`Generated registry audit rows: ${report.summary.generatedRegistryRegressionRowCount}`);
-  console.log(`Generated registry issues: ${report.summary.generatedRegistryIssueCount}`);
-  console.log(`Generated source seed rows: ${report.summary.generatedSourceSeedAuditRowCount}`);
-  console.log(`Generated shape rows: ${report.summary.generatedShapeAuditRowCount}`);
-  console.log(`Requirement shape audit rows: ${report.summary.requirementShapeAuditRowCount}`);
-  console.log(`Requirement shape issues: ${report.summary.requirementShapeIssueCount}`);
-  console.log(
-    `Elective/approved list shape audit rows: ${report.summary.electiveApprovedListShapeAuditRowCount}`
-  );
-  console.log(
-    `Elective/approved list shape issues: ${report.summary.electiveApprovedListShapeIssueCount}`
-  );
-  console.log(`Credit/category shape audit rows: ${report.summary.creditCategoryShapeAuditRowCount}`);
-  console.log(`Credit/category shape issues: ${report.summary.creditCategoryShapeIssueCount}`);
-  console.log(`Sequence/pathway shape audit rows: ${report.summary.sequencePathwayShapeAuditRowCount}`);
-  console.log(`Sequence/pathway shape issues: ${report.summary.sequencePathwayShapeIssueCount}`);
-  console.log(`Single equivalency audit rows: ${report.summary.singleEquivalencyAuditRowCount}`);
-  console.log(`Single equivalency issues: ${report.summary.singleEquivalencyIssueCount}`);
-  console.log(`Protected owner rows: ${report.summary.protectedOwnerRowCount}`);
-  console.log(`JSON report: ${GENERATED_REGISTRY_OUTPUT_JSON_PATH}`);
-  console.log(`Markdown report: ${GENERATED_REGISTRY_OUTPUT_MD_PATH}`);
-
-  if (
-    !reportOnly &&
-    (generatedRegistryIssueRows.length ||
-      requirementShapeIssueRows.length ||
-      electiveApprovedListShapeIssueRows.length ||
-      creditCategoryShapeIssueRows.length ||
-      sequencePathwayShapeIssueRows.length ||
-      singleEquivalencyIssueRows.length)
-  ) {
-    for (const row of generatedRegistryIssueRows.slice(0, 80)) {
-      console.error(`Generated registry regression failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of requirementShapeIssueRows.slice(0, 80)) {
-      console.error(`Requirement shape audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of electiveApprovedListShapeIssueRows.slice(0, 80)) {
-      console.error(`Elective/approved list shape audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of creditCategoryShapeIssueRows.slice(0, 80)) {
-      console.error(`Credit/category shape audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of sequencePathwayShapeIssueRows.slice(0, 80)) {
-      console.error(`Sequence/pathway shape audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of singleEquivalencyIssueRows.slice(0, 80)) {
-      console.error(`Single equivalency audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    process.exitCode = 1;
+function resolveCoveragePrimarySource(planId, pathwayId) {
+  const studentSource =
+    studentRuntime.getTransferPlannerPrimaryDegreeRequirementsSource(planId, pathwayId ?? null) ??
+    null;
+  const generatedSource =
+    source.getTransferPlannerPrimaryDegreeRequirementsSource(planId, pathwayId ?? null) ?? null;
+  if (studentSource?.url) {
+    return studentSource;
   }
+  if (generatedSource?.url) {
+    return generatedSource;
+  }
+  return studentSource ?? generatedSource ?? null;
+}
+
+function buildEquivalencyAliasRows() {
+  const rows = [];
+  const aliases = TRANSFER_PLANNER_BOTHELL_CAMPUS_ALIAS_GUIDE_TARGET_COURSE_ALIASES;
+  const entries = aliases instanceof Map ? aliases.entries() : Object.entries(aliases ?? {});
+  for (const [courseCode, targets] of entries) {
+    const normalizedCourseCode = normalizeCourseCode(courseCode);
+    if (!/^(?:BBIO|BCHEM|BPHYS|STMATH)\s/.test(normalizedCourseCode)) {
+      continue;
+    }
+    const target = Array.isArray(targets) ? targets[0] : null;
+    const normalizedTarget = normalizeCourseCode(target);
+    if (!normalizedTarget) {
+      continue;
+    }
+    rows.push({
+      uwCourseCode: normalizedCourseCode,
+      aliasTargetCourseCode: normalizedTarget,
+    });
+  }
+  return rows;
+}
+
+function buildSourceBackedAuditDelegationContext({
+  targetPlanId = null,
+  protectedOnly = false,
+  includeCoverageSchedules = false,
+} = {}) {
+  const owners = protectedOnly
+    ? buildGeneratedRegistryAuditOwners(targetPlanId, true)
+    : buildOwners(targetPlanId);
+  console.log(`Preparing ${owners.length} source-backed audit owners for Rust...`);
+  const context = {
+    owners,
+    targetPlanId: targetPlanId ?? null,
+    protectedOnly: Boolean(protectedOnly),
+    equivalencyRules: source.TRANSFER_PLANNER_EQUIVALENCY_RULE_REGISTRY ?? [],
+    equivalencyAliases: buildEquivalencyAliasRows(),
+    studentRuntimePlansByOwner: {},
+    seedRuntimePlansByOwner: {},
+    runtimePlansByOwner: {},
+    sourcePlansByOwner: {},
+    sourceRuntimePlansByOwner: {},
+    studentParsedBlocksByOwner: {},
+    parsedBlocksByOwner: {},
+    sourceParsedBlocksByOwner: {},
+    runtimeParsedBlocksByOwner: {},
+    compactParsedBlocksByOwner: {},
+    primarySourcesByOwner: {},
+    seedPrimarySourcesByOwner: {},
+    baseParsedBlocksByOwner: {},
+    basePrimarySourcesByOwner: {},
+    runtimePathwayContextsByOwner: {},
+    siblingPathwayBlocksByOwner: {},
+    manifestEntriesByOwner: {},
+    runtimeGrcCourseListsByOwner: {},
+    baseGrcCourseLabelsByOwner: {},
+    runtimeGrcCourseLabelsByOwner: {},
+  };
+  if (includeCoverageSchedules) {
+    context.studentQuarterPlansByOwner = {};
+    context.sourceQuarterPlansByOwner = {};
+    context.quarterPlansByOwner = {};
+    context.categoryMappingAuditRowsByOwner = {};
+    context.programApprovedFilterAuditRowsByOwner = {};
+    context.runtimeOptionResolutionAuditRowsByOwner = {};
+    context.runtimeCompoundSequenceAuditRowsByOwner = {};
+    context.requiredCoverageSequenceSuppressionAuditRowsByOwner = {};
+    context.runtimeCompoundSchedulingAuditRowsByOwner = {};
+  }
+
+  for (const owner of owners) {
+    const ownerId = owner.ownerId;
+    const studentPlan = resolveStudentVisibleRuntimePlan(owner.planId, owner.pathwayId) ?? null;
+    const compactPlan = resolveCompactStudentRuntimePlan(owner.planId, owner.pathwayId) ?? null;
+    const sourcePlan = resolveSourceGeneratedPlan(owner.planId, owner.pathwayId) ?? null;
+    const sourceRuntimePlan = resolveRuntimePlan(owner.planId, owner.pathwayId) ?? null;
+    const studentBlocks =
+      studentRuntime.getTransferPlannerParsedRequirementSourceBlocks(owner.planId, owner.pathwayId) ??
+      [];
+    const sourceBlocks =
+      source.getTransferPlannerParsedRequirementSourceBlocks(owner.planId, owner.pathwayId) ?? [];
+    context.studentRuntimePlansByOwner[ownerId] = studentPlan;
+    context.seedRuntimePlansByOwner[ownerId] = compactPlan;
+    context.runtimePlansByOwner[ownerId] = compactPlan;
+    context.sourcePlansByOwner[ownerId] = sourcePlan;
+    context.sourceRuntimePlansByOwner[ownerId] = sourceRuntimePlan;
+    context.studentParsedBlocksByOwner[ownerId] = studentBlocks;
+    context.parsedBlocksByOwner[ownerId] = sourceBlocks;
+    context.sourceParsedBlocksByOwner[ownerId] = sourceBlocks;
+    context.runtimeParsedBlocksByOwner[ownerId] = studentBlocks;
+    context.compactParsedBlocksByOwner[ownerId] = studentBlocks;
+    context.primarySourcesByOwner[ownerId] = resolveCoveragePrimarySource(owner.planId, owner.pathwayId);
+    context.seedPrimarySourcesByOwner[ownerId] =
+      studentRuntime.getTransferPlannerPrimaryDegreeRequirementsSource(owner.planId, owner.pathwayId) ??
+      null;
+    context.baseParsedBlocksByOwner[ownerId] = getParsedRequirementBlocksForScope(owner.planId, null);
+    const basePrimarySourceUrl = getPrimarySourceUrl(owner.planId, null);
+    context.basePrimarySourcesByOwner[ownerId] = basePrimarySourceUrl ? { url: basePrimarySourceUrl } : null;
+    const pathwayIds = getRuntimePlanPathwayIds(studentPlan);
+    context.runtimePathwayContextsByOwner[ownerId] = pathwayIds.map((pathwayId) => ({
+      id: pathwayId,
+      primarySourceUrl: getPrimarySourceUrl(owner.planId, pathwayId),
+      parsedBlocks: getParsedRequirementBlocksForScope(owner.planId, pathwayId),
+    }));
+    context.siblingPathwayBlocksByOwner[ownerId] = pathwayIds
+      .filter((pathwayId) => pathwayId !== owner.pathwayId)
+      .flatMap((pathwayId) => getParsedRequirementBlocksForScope(owner.planId, pathwayId));
+    context.manifestEntriesByOwner[ownerId] =
+      source.getTransferPlannerSourceManifestEntriesForPlan?.(owner.planId, owner.pathwayId) ?? [];
+    context.runtimeGrcCourseListsByOwner[ownerId] = compactPlan
+      ? studentRuntime.getTransferPlannerGrcCourseList(compactPlan)
+      : [];
+    context.baseGrcCourseLabelsByOwner[ownerId] = studentPlan
+      ? source.getTransferPlannerGrcCourseList(studentPlan)
+      : [];
+    context.runtimeGrcCourseLabelsByOwner[ownerId] = sourceRuntimePlan
+      ? source.getTransferPlannerGrcCourseList(sourceRuntimePlan)
+      : [];
+    if (includeCoverageSchedules) {
+      const studentQuarterPlan = studentPlan ? buildQuarterPlan(studentPlan) : [];
+      const sourceQuarterPlan = sourceRuntimePlan ? buildQuarterPlan(sourceRuntimePlan) : [];
+      context.studentQuarterPlansByOwner[ownerId] = studentQuarterPlan;
+      context.sourceQuarterPlansByOwner[ownerId] = sourceQuarterPlan;
+      context.quarterPlansByOwner[ownerId] = studentQuarterPlan;
+      context.categoryMappingAuditRowsByOwner[ownerId] = buildCategoryMappingAuditRowsForOwner(owner);
+      context.programApprovedFilterAuditRowsByOwner[ownerId] =
+        buildProgramApprovedFilterAuditRowsForOwner(owner);
+      context.runtimeOptionResolutionAuditRowsByOwner[ownerId] =
+        buildRuntimeOptionResolutionAuditRowsForOwner(owner);
+      context.runtimeCompoundSequenceAuditRowsByOwner[ownerId] =
+        buildRuntimeCompoundSequenceAuditRowsForOwner(owner);
+      context.requiredCoverageSequenceSuppressionAuditRowsByOwner[ownerId] =
+        buildRequiredCoverageSequenceSuppressionAuditRowsForOwner(owner);
+      context.runtimeCompoundSchedulingAuditRowsByOwner[ownerId] =
+        buildRuntimeCompoundSchedulingAuditRowsForOwner(owner);
+    }
+  }
+
+  if (includeCoverageSchedules) {
+    context.regressionChecks = runRegressionChecks(targetPlanId);
+    context.parserExtractionRegressionRows = buildParserExtractionRegressionRows(targetPlanId);
+  }
+  return context;
+}
+
+function categoryAuditRow(ownerId, plan, pattern) {
+  return (
+    planner
+      .auditCategoryMapping({
+        ownerId,
+        plan,
+        candidateCourseCodes: ["ANTH& 205"],
+      })
+      .find((row) => pattern.test(String(row?.requirement ?? ""))) ?? null
+  );
+}
+
+function buildMappingAuditDelegationInput() {
+  const civilPlan = resolveRuntimePlan("uw-seattle-civil-engineering", null);
+  const civilQuarterPlan = civilPlan ? buildQuarterPlan(civilPlan) : [];
+  const runtimeCompoundAuditRows = civilPlan
+    ? planner.auditCompoundEquivalencyPaths({
+        ownerId: "uw-seattle-civil-engineering",
+        plan: civilPlan,
+        suggestedPlan: civilQuarterPlan,
+        completedCourses: [],
+      })
+    : [];
+  const aeronauticsPlan = resolveCompactStudentRuntimePlan("uw-seattle-aeronautics-astronautics", null);
+  const computerEngineeringPlan = resolveCompactStudentRuntimePlan("uw-seattle-computer-engineering", null);
+  const computerSciencePlan = resolveCompactStudentRuntimePlan(
+    "uw-seattle-computer-science",
+    "data-science-option"
+  );
+  const aeronauticsRows = planner.auditCategoryMapping({
+    ownerId: "uw-seattle-aeronautics-astronautics",
+    plan: aeronauticsPlan,
+    candidateCourseCodes: ["ANTH& 205"],
+  });
+  const computerEngineeringBlocks =
+    studentRuntime.getTransferPlannerParsedRequirementSourceBlocks(
+      "uw-seattle-computer-engineering",
+      null
+    ) ?? [];
+  const computerScienceBlocks =
+    studentRuntime.getTransferPlannerParsedRequirementSourceBlocks(
+      "uw-seattle-computer-science",
+      "data-science-option"
+    ) ?? [];
+  const environmentalPlan = resolveRuntimePlan("uw-seattle-environmental-engineering", null);
+  const environmentalQuarterPlan = environmentalPlan ? buildQuarterPlan(environmentalPlan) : [];
+  const environmentalCoverageRow = environmentalPlan
+    ? planner
+        .auditRequiredMappedCourseCoverage({
+          plan: environmentalPlan,
+          suggestedPlan: environmentalQuarterPlan,
+          completedCourses: [],
+        })
+        .find((row) => row.uwCourse === "CEE 347") ?? null
+    : null;
+  const informaticsPlan = resolveRuntimePlan("uw-seattle-informatics", null);
+  const informaticsQuarterPlan = informaticsPlan ? buildQuarterPlan(informaticsPlan) : [];
+  const informaticsSuspiciousVisibleLabels = informaticsPlan
+    ? getVisiblePlannedLabels(informaticsQuarterPlan).filter((label) =>
+        /\b(?:PHYS|CHEM|BIOL|ENGR)&?\s*\d{3}\b|\b(?:INFO|BIME|CSE)\s*[34]\d{2}\b/i.test(label)
+      )
+    : [];
+
+  return {
+    knownSingleEquivalencyRows: buildKnownSingleEquivalencyAuditRows(),
+    equivalencyRules: source.TRANSFER_PLANNER_EQUIVALENCY_RULE_REGISTRY ?? [],
+    runtimePlanExists: Boolean(civilPlan),
+    runtimeCompoundAuditRows,
+    aeronauticsNscAuditRow:
+      aeronauticsRows.find((row) =>
+        /NSc|Natural Sciences/i.test(`${row?.requirement ?? ""} ${row?.category ?? ""}`)
+      ) ?? null,
+    computerEngineeringNscAuditRow: categoryAuditRow(
+      "uw-seattle-computer-engineering",
+      computerEngineeringPlan,
+      /Natural Sciences?|Natural Science/i
+    ),
+    computerScienceNscAuditRow: categoryAuditRow(
+      "uw-seattle-computer-science:pathway:data-science-option",
+      computerSciencePlan,
+      /Natural Sciences?|Natural Science/i
+    ),
+    computerEngineeringFilterRows: planner.auditProgramApprovedCourseFilters({
+      filterKey: "computer-engineering-natural-science",
+    }),
+    computerEngineeringSourceBlocks: computerEngineeringBlocks,
+    computerScienceFilterRows: planner.auditProgramApprovedCourseFilters({
+      filterKey: "computer-science-approved-science",
+    }),
+    computerScienceSourceBlocks: computerScienceBlocks,
+    environmentalPlanExists: Boolean(environmentalPlan),
+    environmentalCee347CoverageRow: environmentalCoverageRow,
+    informaticsPlanExists: Boolean(informaticsPlan),
+    informaticsSuspiciousVisibleLabels,
+  };
+}
+
+function runRustSourceBackedCoverageAudit() {
+  ensureTmpDir();
+  const targetPlanId = getArgValue("--target-plan-id") ?? null;
+  const protectedOnly = hasFlag("--protected-only");
+  const generatedAt = new Date().toISOString();
+  let bundle;
+  if (hasFlag("--mapping-only")) {
+    console.log("Preparing mapping audit inputs for Rust...");
+    bundle = {
+      generatedAt,
+      mappingInput: buildMappingAuditDelegationInput(),
+    };
+  } else {
+    bundle = {
+      generatedAt,
+      context: buildSourceBackedAuditDelegationContext({
+        targetPlanId,
+        protectedOnly: hasFlag("--generated-registry-only") && protectedOnly,
+        includeCoverageSchedules: !hasFlag("--generated-registry-only"),
+      }),
+    };
+  }
+
+  let serialized;
+  try {
+    serialized = JSON.stringify(bundle);
+  } catch (error) {
+    console.error(`Could not serialize source-backed audit context: ${error.message}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const manifestPath = path.resolve(SOURCE_ROOT, "..", "automation", "Cargo.toml");
+  const forwardedArgs = process.argv.slice(2).filter((argument) => argument !== "--context-stdin");
+  console.log(`Running source-backed audit in Rust (${serialized.length} bytes of planner context)...`);
+  const result = spawnSync(
+    "cargo",
+    [
+      "run",
+      "--offline",
+      "--locked",
+      "--quiet",
+      "--manifest-path",
+      manifestPath,
+      "--",
+      "audit-source-backed-coverage",
+      ...forwardedArgs,
+      "--context-stdin",
+    ],
+    {
+      cwd: SOURCE_ROOT,
+      input: serialized,
+      stdio: ["pipe", "inherit", "inherit"],
+      maxBuffer: 1024 * 1024 * 1024,
+    }
+  );
+  if (result.error) {
+    console.error(`Could not start Rust source-backed coverage audit: ${result.error.message}`);
+    process.exitCode = 1;
+    return;
+  }
+  process.exitCode = result.status ?? 1;
+}
+
+function runGeneratedRegistryAuditMode() {
+  runRustSourceBackedCoverageAudit();
 }
 
 function runMappingAuditMode() {
-  ensureTmpDir();
-  const reportOnly = hasFlag("--report-only");
-  const mappingRegressionRows = buildMappingRegressionRows();
-  const mappingRegressionIssueRows = mappingRegressionRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const report = {
-    generatedAt: new Date().toISOString(),
-    outcome: mappingRegressionIssueRows.length ? "failed" : "passed",
-    summary: {
-      mappingRegressionRowCount: mappingRegressionRows.length,
-      mappingRegressionIssueCount: mappingRegressionIssueRows.length,
-      issueCountsByType: buildMappingIssueCounts(mappingRegressionRows),
-    },
-    mappingRegressionRows,
-  };
-
-  writeMappingAuditReports(report, {
-    jsonPath: MAPPING_AUDIT_OUTPUT_JSON_PATH,
-    markdownPath: MAPPING_AUDIT_OUTPUT_MD_PATH,
-  });
-
-  console.log(`Mapping regression audit outcome: ${report.outcome}`);
-  console.log(`Mapping regression rows: ${report.summary.mappingRegressionRowCount}`);
-  console.log(`Mapping regression issues: ${report.summary.mappingRegressionIssueCount}`);
-  console.log(`JSON report: ${MAPPING_AUDIT_OUTPUT_JSON_PATH}`);
-  console.log(`Markdown report: ${MAPPING_AUDIT_OUTPUT_MD_PATH}`);
-
-  if (!reportOnly && mappingRegressionIssueRows.length) {
-    for (const row of mappingRegressionIssueRows.slice(0, 120)) {
-      console.error(`Mapping regression failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    process.exitCode = 1;
-  }
+  runRustSourceBackedCoverageAudit();
 }
 
 function main() {
@@ -9964,461 +10105,9 @@ function main() {
     return;
   }
 
-  ensureTmpDir();
-  const targetPlanId = getArgValue("--target-plan-id");
-  const reportOnly = hasFlag("--report-only");
-  const owners = buildOwners(targetPlanId);
-  const coverageRows = owners.flatMap(buildCoverageRowsForOwner);
-  const protectedRows = buildProtectedRows(targetPlanId);
-  const allRows = [...coverageRows, ...protectedRows];
-  const requirementCoverageIssueRows = allRows.filter((row) => row.issueType);
-  const sourceScopeAuditRows = owners.flatMap(buildSourceScopeAuditRowsForOwner);
-  const sourceScopeIssueRows = sourceScopeAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const generatedSourceSeedAuditRows = owners.flatMap(buildGeneratedSourceSeedAuditRowsForOwner);
-  const generatedSourceSeedIssueRows = generatedSourceSeedAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const generatedSourceSeedAuditRowsByOwner = new Map();
-  for (const row of generatedSourceSeedAuditRows) {
-    const ownerRows = generatedSourceSeedAuditRowsByOwner.get(row.ownerId) ?? [];
-    ownerRows.push(row);
-    generatedSourceSeedAuditRowsByOwner.set(row.ownerId, ownerRows);
-  }
-  const generatedShapeAuditRows = owners.flatMap((owner) =>
-    buildGeneratedShapeAuditRowsForOwner(
-      owner,
-      generatedSourceSeedAuditRowsByOwner.get(owner.ownerId) ?? []
-    )
-  );
-  const generatedShapeIssueRows = generatedShapeAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const requirementShapeAuditRows = owners.flatMap(buildRequirementShapeAuditRowsForOwner);
-  const requirementShapeIssueRows = requirementShapeAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const electiveApprovedListShapeAuditRows = owners.flatMap(
-    buildElectiveApprovedListShapeAuditRowsForOwner
-  );
-  const electiveApprovedListShapeIssueRows = electiveApprovedListShapeAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const creditCategoryShapeAuditRows = owners.flatMap(buildCreditCategoryShapeAuditRowsForOwner);
-  const creditCategoryShapeIssueRows = creditCategoryShapeAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const categoryMappingAuditRows = owners.flatMap(buildCategoryMappingAuditRowsForOwner);
-  const categoryMappingIssueRows = categoryMappingAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const programApprovedFilterAuditRows = owners.flatMap(buildProgramApprovedFilterAuditRowsForOwner);
-  const programApprovedFilterIssueRows = programApprovedFilterAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const sequencePathwayShapeAuditRows = owners.flatMap(buildSequencePathwayShapeAuditRowsForOwner);
-  const sequencePathwayShapeIssueRows = sequencePathwayShapeAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const singleEquivalencyAuditRows = [
-    ...buildKnownSingleEquivalencyAuditRows(),
-    ...owners.flatMap(buildSingleEquivalencyAuditRowsForOwner),
-  ];
-  const singleEquivalencyIssueRows = singleEquivalencyAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const runtimeOptionResolutionAuditRows = owners.flatMap(
-    buildRuntimeOptionResolutionAuditRowsForOwner
-  );
-  const runtimeOptionResolutionIssueRows = runtimeOptionResolutionAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const runtimeCompoundSequenceAuditRows = owners.flatMap(
-    buildRuntimeCompoundSequenceAuditRowsForOwner
-  );
-  const runtimeCompoundSequenceIssueRows = runtimeCompoundSequenceAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const requiredCoverageSequenceSuppressionAuditRows = owners.flatMap(
-    buildRequiredCoverageSequenceSuppressionAuditRowsForOwner
-  );
-  const requiredCoverageSequenceSuppressionIssueRows =
-    requiredCoverageSequenceSuppressionAuditRows.filter(
-      (row) => row.issue && row.issue !== "none"
-    );
-  const runtimeCompoundSchedulingAuditRows = owners.flatMap(
-    buildRuntimeCompoundSchedulingAuditRowsForOwner
-  );
-  const runtimeCompoundSchedulingIssueRows = runtimeCompoundSchedulingAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const parserOptionExtractionAuditRows = owners.flatMap(
-    buildParserOptionExtractionAuditRowsForOwner
-  );
-  const parserOptionExtractionIssueRows = parserOptionExtractionAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const parserCreditBucketAuditRows = owners.flatMap(buildParserCreditBucketAuditRowsForOwner);
-  const parserCreditBucketIssueRows = parserCreditBucketAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const parserCategoryOptionAuditRows = owners.flatMap(buildParserCategoryOptionAuditRowsForOwner);
-  const parserCategoryOptionIssueRows = parserCategoryOptionAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const parserPrerequisiteFilterAuditRows = owners.flatMap(
-    buildParserPrerequisiteFilterAuditRowsForOwner
-  );
-  const parserPrerequisiteFilterIssueRows = parserPrerequisiteFilterAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const parserSequenceChoiceAuditRows = owners.flatMap(buildParserSequenceChoiceAuditRowsForOwner);
-  const parserSequenceChoiceIssueRows = parserSequenceChoiceAuditRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const parserExtractionRegressionRows = buildParserExtractionRegressionRows(targetPlanId);
-  const parserExtractionRegressionIssueRows = parserExtractionRegressionRows.filter(
-    (row) => row.issue && row.issue !== "none"
-  );
-  const regressionChecks = runRegressionChecks(targetPlanId);
-  const failedRegressionChecks = regressionChecks.filter((check) => check.status === "failed");
-  const sourceRoleCoverageRows = buildSourceRoleCoverageRows(owners, sourceScopeAuditRows);
-  const sourceScopeRegressionRows = buildSourceScopeRegressionRows(regressionChecks);
-  const issueCountsByType = buildIssueCounts(
-    [
-      ...allRows,
-      ...sourceScopeAuditRows,
-      ...generatedSourceSeedAuditRows,
-      ...generatedShapeAuditRows,
-      ...requirementShapeAuditRows,
-      ...electiveApprovedListShapeAuditRows,
-      ...creditCategoryShapeAuditRows,
-      ...categoryMappingAuditRows,
-      ...programApprovedFilterAuditRows,
-      ...sequencePathwayShapeAuditRows,
-      ...singleEquivalencyAuditRows,
-      ...runtimeOptionResolutionAuditRows,
-      ...runtimeCompoundSequenceAuditRows,
-      ...requiredCoverageSequenceSuppressionAuditRows,
-      ...runtimeCompoundSchedulingAuditRows,
-      ...parserOptionExtractionAuditRows,
-      ...parserCreditBucketAuditRows,
-      ...parserCategoryOptionAuditRows,
-      ...parserPrerequisiteFilterAuditRows,
-      ...parserSequenceChoiceAuditRows,
-      ...parserExtractionRegressionRows,
-    ],
-    regressionChecks
-  );
-  const sourceScopeIssueCountsByType = buildSourceScopeIssueCounts([
-    ...sourceScopeAuditRows,
-    ...generatedSourceSeedAuditRows,
-    ...generatedShapeAuditRows,
-    ...requirementShapeAuditRows,
-    ...electiveApprovedListShapeAuditRows,
-    ...creditCategoryShapeAuditRows,
-    ...categoryMappingAuditRows,
-    ...programApprovedFilterAuditRows,
-    ...sequencePathwayShapeAuditRows,
-    ...singleEquivalencyAuditRows,
-  ]);
-  const failedSourceScopeChecks =
-    requirementCoverageIssueRows.length +
-    sourceScopeIssueRows.length +
-    generatedSourceSeedIssueRows.length +
-    generatedShapeIssueRows.length +
-    requirementShapeIssueRows.length +
-    electiveApprovedListShapeIssueRows.length +
-    creditCategoryShapeIssueRows.length +
-    categoryMappingIssueRows.length +
-    programApprovedFilterIssueRows.length +
-    sequencePathwayShapeIssueRows.length +
-    singleEquivalencyIssueRows.length +
-    runtimeOptionResolutionIssueRows.length +
-    runtimeCompoundSequenceIssueRows.length +
-    requiredCoverageSequenceSuppressionIssueRows.length +
-    runtimeCompoundSchedulingIssueRows.length +
-    parserOptionExtractionIssueRows.length +
-    parserCreditBucketIssueRows.length +
-    parserCategoryOptionIssueRows.length +
-    parserPrerequisiteFilterIssueRows.length +
-    parserSequenceChoiceIssueRows.length +
-    parserExtractionRegressionIssueRows.length +
-    failedRegressionChecks.length;
-  const report = enrichSourceBackedCoverageReport({
-    generatedAt: new Date().toISOString(),
-    outcome: failedSourceScopeChecks ? "failed" : "passed",
-    summary: {
-      ownerCount: owners.length,
-      requirementCoverageRowCount: allRows.length,
-      requirementCoverageIssueCount: requirementCoverageIssueRows.length,
-      sourceScopeAuditRowCount: sourceScopeAuditRows.length,
-      sourceScopeIssueCount: sourceScopeIssueRows.length,
-      generatedSourceSeedAuditRowCount: generatedSourceSeedAuditRows.length,
-      generatedSourceSeedIssueCount: generatedSourceSeedIssueRows.length,
-      generatedShapeAuditRowCount: generatedShapeAuditRows.length,
-      generatedShapeIssueCount: generatedShapeIssueRows.length,
-      requirementShapeAuditRowCount: requirementShapeAuditRows.length,
-      requirementShapeIssueCount: requirementShapeIssueRows.length,
-      electiveApprovedListShapeAuditRowCount: electiveApprovedListShapeAuditRows.length,
-      electiveApprovedListShapeIssueCount: electiveApprovedListShapeIssueRows.length,
-      creditCategoryShapeAuditRowCount: creditCategoryShapeAuditRows.length,
-      creditCategoryShapeIssueCount: creditCategoryShapeIssueRows.length,
-      categoryMappingAuditRowCount: categoryMappingAuditRows.length,
-      categoryMappingIssueCount: categoryMappingIssueRows.length,
-      programApprovedFilterAuditRowCount: programApprovedFilterAuditRows.length,
-      programApprovedFilterIssueCount: programApprovedFilterIssueRows.length,
-      sequencePathwayShapeAuditRowCount: sequencePathwayShapeAuditRows.length,
-      sequencePathwayShapeIssueCount: sequencePathwayShapeIssueRows.length,
-      singleEquivalencyAuditRowCount: singleEquivalencyAuditRows.length,
-      singleEquivalencyIssueCount: singleEquivalencyIssueRows.length,
-      runtimeOptionResolutionAuditRowCount: runtimeOptionResolutionAuditRows.length,
-      runtimeOptionResolutionIssueCount: runtimeOptionResolutionIssueRows.length,
-      runtimeCompoundSequenceAuditRowCount: runtimeCompoundSequenceAuditRows.length,
-      runtimeCompoundSequenceIssueCount: runtimeCompoundSequenceIssueRows.length,
-      requiredCoverageSequenceSuppressionAuditRowCount:
-        requiredCoverageSequenceSuppressionAuditRows.length,
-      requiredCoverageSequenceSuppressionIssueCount:
-        requiredCoverageSequenceSuppressionIssueRows.length,
-      runtimeCompoundSchedulingAuditRowCount: runtimeCompoundSchedulingAuditRows.length,
-      runtimeCompoundSchedulingIssueCount: runtimeCompoundSchedulingIssueRows.length,
-      sourceRoleCoverageRowCount: sourceRoleCoverageRows.length,
-      parserOptionExtractionAuditRowCount: parserOptionExtractionAuditRows.length,
-      parserOptionExtractionIssueCount: parserOptionExtractionIssueRows.length,
-      parserCreditBucketAuditRowCount: parserCreditBucketAuditRows.length,
-      parserCreditBucketIssueCount: parserCreditBucketIssueRows.length,
-      parserCategoryOptionAuditRowCount: parserCategoryOptionAuditRows.length,
-      parserCategoryOptionIssueCount: parserCategoryOptionIssueRows.length,
-      parserPrerequisiteFilterAuditRowCount: parserPrerequisiteFilterAuditRows.length,
-      parserPrerequisiteFilterIssueCount: parserPrerequisiteFilterIssueRows.length,
-      parserSequenceChoiceAuditRowCount: parserSequenceChoiceAuditRows.length,
-      parserSequenceChoiceIssueCount: parserSequenceChoiceIssueRows.length,
-      parserExtractionRegressionRowCount: parserExtractionRegressionRows.length,
-      parserExtractionRegressionIssueCount: parserExtractionRegressionIssueRows.length,
-      sourceScopeRegressionReportRowCount: sourceScopeRegressionRows.length,
-      protectedRegressionRowCount: protectedRows.length,
-      passedRegressionCheckCount: regressionChecks.length - failedRegressionChecks.length,
-      failedRegressionCheckCount: failedRegressionChecks.length,
-      issueCountsByType,
-      sourceScopeIssueCountsByType,
-    },
-    requirementCoverageRows: allRows,
-    sourceScopeAuditRows,
-    generatedSourceSeedAuditRows,
-    generatedShapeAuditRows,
-    requirementShapeAuditRows,
-    electiveApprovedListShapeAuditRows,
-    creditCategoryShapeAuditRows,
-    categoryMappingAuditRows,
-    programApprovedFilterAuditRows,
-    sequencePathwayShapeAuditRows,
-    singleEquivalencyAuditRows,
-    runtimeOptionResolutionAuditRows,
-    runtimeCompoundSequenceAuditRows,
-    requiredCoverageSequenceSuppressionAuditRows,
-    runtimeCompoundSchedulingAuditRows,
-    parserOptionExtractionAuditRows,
-    parserCreditBucketAuditRows,
-    parserCategoryOptionAuditRows,
-    parserPrerequisiteFilterAuditRows,
-    parserSequenceChoiceAuditRows,
-    parserExtractionRegressionRows,
-    sourceRoleCoverageRows,
-    sourceScopeRegressionRows,
-    regressionChecks,
-  });
-
-  writeReports(report);
-
-  console.log(`coverage audit outcome: ${report.outcome}`);
-  console.log(`Blocking gate: ${report.summary.blockingGate}`);
-  console.log(`Blocking gate issues: ${report.summary.blockingGateIssueCount}`);
-  console.log(
-    `Issues by suspected layer: ${JSON.stringify(report.summary.issueCountsBySuspectedLayer)}`
-  );
-  console.log(`UW owners audited: ${report.summary.ownerCount}`);
-  console.log(`Requirement coverage rows: ${report.summary.requirementCoverageRowCount}`);
-  console.log(`Requirement coverage issues: ${report.summary.requirementCoverageIssueCount}`);
-  console.log(`Source scope audit rows: ${report.summary.sourceScopeAuditRowCount}`);
-  console.log(`Source scope issues: ${report.summary.sourceScopeIssueCount}`);
-  console.log(`Generated source seed audit rows: ${report.summary.generatedSourceSeedAuditRowCount}`);
-  console.log(`Generated source seed issues: ${report.summary.generatedSourceSeedIssueCount}`);
-  console.log(`Generated shape audit rows: ${report.summary.generatedShapeAuditRowCount}`);
-  console.log(`Generated shape issues: ${report.summary.generatedShapeIssueCount}`);
-  console.log(`Requirement shape audit rows: ${report.summary.requirementShapeAuditRowCount}`);
-  console.log(`Requirement shape issues: ${report.summary.requirementShapeIssueCount}`);
-  console.log(
-    `Elective/approved list shape audit rows: ${report.summary.electiveApprovedListShapeAuditRowCount}`
-  );
-  console.log(
-    `Elective/approved list shape issues: ${report.summary.electiveApprovedListShapeIssueCount}`
-  );
-  console.log(`Credit/category shape audit rows: ${report.summary.creditCategoryShapeAuditRowCount}`);
-  console.log(`Credit/category shape issues: ${report.summary.creditCategoryShapeIssueCount}`);
-  console.log(`Category mapping audit rows: ${report.summary.categoryMappingAuditRowCount}`);
-  console.log(`Category mapping issues: ${report.summary.categoryMappingIssueCount}`);
-  console.log(
-    `Program approved filter audit rows: ${report.summary.programApprovedFilterAuditRowCount}`
-  );
-  console.log(
-    `Program approved filter issues: ${report.summary.programApprovedFilterIssueCount}`
-  );
-  console.log(`Sequence/pathway shape audit rows: ${report.summary.sequencePathwayShapeAuditRowCount}`);
-  console.log(`Sequence/pathway shape issues: ${report.summary.sequencePathwayShapeIssueCount}`);
-  console.log(`Single equivalency audit rows: ${report.summary.singleEquivalencyAuditRowCount}`);
-  console.log(`Single equivalency issues: ${report.summary.singleEquivalencyIssueCount}`);
-  console.log(
-    `Runtime option resolution audit rows: ${report.summary.runtimeOptionResolutionAuditRowCount}`
-  );
-  console.log(
-    `Runtime option resolution issues: ${report.summary.runtimeOptionResolutionIssueCount}`
-  );
-  console.log(
-    `Runtime compound sequence audit rows: ${report.summary.runtimeCompoundSequenceAuditRowCount}`
-  );
-  console.log(
-    `Runtime compound sequence issues: ${report.summary.runtimeCompoundSequenceIssueCount}`
-  );
-  console.log(
-    `Required coverage sequence suppression audit rows: ${report.summary.requiredCoverageSequenceSuppressionAuditRowCount}`
-  );
-  console.log(
-    `Required coverage sequence suppression issues: ${report.summary.requiredCoverageSequenceSuppressionIssueCount}`
-  );
-  console.log(
-    `Runtime compound scheduling audit rows: ${report.summary.runtimeCompoundSchedulingAuditRowCount}`
-  );
-  console.log(
-    `Runtime compound scheduling issues: ${report.summary.runtimeCompoundSchedulingIssueCount}`
-  );
-  console.log(`Source role coverage rows: ${report.summary.sourceRoleCoverageRowCount}`);
-  console.log(
-    `Parser option extraction audit rows: ${report.summary.parserOptionExtractionAuditRowCount}`
-  );
-  console.log(
-    `Parser option extraction issues: ${report.summary.parserOptionExtractionIssueCount}`
-  );
-  console.log(`Parser credit bucket audit rows: ${report.summary.parserCreditBucketAuditRowCount}`);
-  console.log(`Parser credit bucket issues: ${report.summary.parserCreditBucketIssueCount}`);
-  console.log(
-    `Parser category option audit rows: ${report.summary.parserCategoryOptionAuditRowCount}`
-  );
-  console.log(`Parser category option issues: ${report.summary.parserCategoryOptionIssueCount}`);
-  console.log(
-    `Parser prerequisite filter audit rows: ${report.summary.parserPrerequisiteFilterAuditRowCount}`
-  );
-  console.log(
-    `Parser prerequisite filter issues: ${report.summary.parserPrerequisiteFilterIssueCount}`
-  );
-  console.log(
-    `Parser sequence-choice audit rows: ${report.summary.parserSequenceChoiceAuditRowCount}`
-  );
-  console.log(`Parser sequence-choice issues: ${report.summary.parserSequenceChoiceIssueCount}`);
-  console.log(
-    `Parser extraction regression rows: ${report.summary.parserExtractionRegressionRowCount}`
-  );
-  console.log(
-    `Parser extraction regression issues: ${report.summary.parserExtractionRegressionIssueCount}`
-  );
-  console.log(`Failed regression checks: ${report.summary.failedRegressionCheckCount}`);
-  console.log(`JSON report: ${OUTPUT_JSON_PATH}`);
-  console.log(`Markdown report: ${OUTPUT_MD_PATH}`);
-
-  if (!reportOnly && failedSourceScopeChecks) {
-    for (const row of requirementCoverageIssueRows.slice(0, 40)) {
-      console.error(`Requirement coverage audit failed: ${row.issueType}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of sourceScopeIssueRows.slice(0, 40)) {
-      console.error(`Source scope audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of generatedSourceSeedIssueRows.slice(0, 40)) {
-      console.error(`Generated source seed audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of generatedShapeIssueRows.slice(0, 40)) {
-      console.error(`Generated shape audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of requirementShapeIssueRows.slice(0, 40)) {
-      console.error(`Requirement shape audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of electiveApprovedListShapeIssueRows.slice(0, 40)) {
-      console.error(`Elective/approved list shape audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of creditCategoryShapeIssueRows.slice(0, 40)) {
-      console.error(`Credit/category shape audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of categoryMappingIssueRows.slice(0, 40)) {
-      console.error(`Category mapping audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of programApprovedFilterIssueRows.slice(0, 40)) {
-      console.error(`Program approved filter audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of sequencePathwayShapeIssueRows.slice(0, 40)) {
-      console.error(`Sequence/pathway shape audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of singleEquivalencyIssueRows.slice(0, 40)) {
-      console.error(`Single equivalency audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of runtimeOptionResolutionIssueRows.slice(0, 40)) {
-      console.error(`Runtime option resolution audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of runtimeCompoundSequenceIssueRows.slice(0, 40)) {
-      console.error(`Runtime compound sequence audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of requiredCoverageSequenceSuppressionIssueRows.slice(0, 40)) {
-      console.error(`Required coverage sequence suppression audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of runtimeCompoundSchedulingIssueRows.slice(0, 40)) {
-      console.error(`Runtime compound scheduling audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of parserOptionExtractionIssueRows.slice(0, 40)) {
-      console.error(`Parser option extraction audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of parserCreditBucketIssueRows.slice(0, 40)) {
-      console.error(`Parser credit bucket audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of parserCategoryOptionIssueRows.slice(0, 40)) {
-      console.error(`Parser category option audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of parserPrerequisiteFilterIssueRows.slice(0, 40)) {
-      console.error(`Parser prerequisite filter audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of parserSequenceChoiceIssueRows.slice(0, 40)) {
-      console.error(`Parser sequence-choice audit failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const row of parserExtractionRegressionIssueRows.slice(0, 40)) {
-      console.error(`Parser extraction regression failed: ${row.issue}`);
-      console.error(`- ${row.copyOnlyDebugText}`);
-    }
-    for (const check of failedRegressionChecks) {
-      console.error(`Coverage regression failed: ${check.label}`);
-      for (const detail of check.details ?? []) {
-        console.error(`- ${detail}`);
-      }
-    }
-    process.exitCode = 1;
-  }
+  runRustSourceBackedCoverageAudit();
 }
+
 
 if (require.main === module) {
   main();

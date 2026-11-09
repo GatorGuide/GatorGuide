@@ -53,7 +53,10 @@ impl RequirementSnapshotStore {
         headings: &[String],
     ) -> Result<PathBuf, String> {
         fs::create_dir_all(&self.directory).map_err(|error| {
-            format!("could not create requirement snapshot directory {}: {error}", self.directory.display())
+            format!(
+                "could not create requirement snapshot directory {}: {error}",
+                self.directory.display()
+            )
         })?;
         let output_path = self.snapshot_path(owner_key, Some(source_url));
         let heading_values = unique_in_order(
@@ -69,19 +72,27 @@ impl RequirementSnapshotStore {
             format!("Owner: {owner_key}"),
             format!("Source: {source_url}"),
             format!("Title: {}", title.unwrap_or("")),
-            format!("Headings: {}", serde_json::to_string(&heading_values).map_err(|error| error.to_string())?),
+            format!(
+                "Headings: {}",
+                serde_json::to_string(&heading_values).map_err(|error| error.to_string())?
+            ),
             String::new(),
         ];
         body.extend(lines.iter().cloned());
         fs::write(&output_path, format!("{}\n", body.join("\n"))).map_err(|error| {
-            format!("could not write requirement snapshot {}: {error}", output_path.display())
+            format!(
+                "could not write requirement snapshot {}: {error}",
+                output_path.display()
+            )
         })?;
         Ok(output_path)
     }
 
     pub fn snapshot_path(&self, owner_key: &str, source_url: Option<&str>) -> PathBuf {
         let source_hash = source_url.and_then(snapshot_source_hash);
-        let suffix = source_hash.map(|hash| format!("-{hash}")).unwrap_or_default();
+        let suffix = source_hash
+            .map(|hash| format!("-{hash}"))
+            .unwrap_or_default();
         self.directory
             .join(format!("{}{suffix}.txt", slugify(owner_key)))
     }
@@ -92,10 +103,13 @@ impl RequirementSnapshotStore {
         expected_source_url: Option<&str>,
     ) -> Option<RequirementSourceSnapshot> {
         let raw = fs::read_to_string(path).ok()?;
-        let raw_lines = raw.split('\n').map(|line| line.trim_end_matches('\r')).collect::<Vec<_>>();
+        let raw_lines = raw
+            .split('\n')
+            .map(|line| line.trim_end_matches('\r'))
+            .collect::<Vec<_>>();
         let source_line = raw_lines.iter().find(|line| line.starts_with("Source:"));
-        let source_url = source_line
-            .map(|line| normalize_whitespace(line.trim_start_matches("Source:").trim()));
+        let source_url =
+            source_line.map(|line| normalize_whitespace(line.trim_start_matches("Source:").trim()));
         if let (Some(expected), Some(actual)) = (expected_source_url, source_url.as_deref()) {
             if !actual.is_empty() {
                 let expected_exact = normalize_snapshot_source_url(expected);
@@ -131,7 +145,8 @@ impl RequirementSnapshotStore {
         Some(RequirementSourceSnapshot {
             snapshot_path: path.to_path_buf(),
             source_url,
-            title: title_line.map(|line| normalize_whitespace(line.trim_start_matches("Title:").trim())),
+            title: title_line
+                .map(|line| normalize_whitespace(line.trim_start_matches("Title:").trim())),
             has_heading_metadata: headings_line.is_some(),
             headings: headings_line
                 .map(|line| parse_heading_metadata(line.trim_start_matches("Headings:").trim()))
@@ -182,9 +197,10 @@ impl RequirementSnapshotStore {
             .map(|entry| entry.path())
             .filter(|path| {
                 path.extension().and_then(|extension| extension.to_str()) == Some("txt")
-                    && path.file_name().and_then(|name| name.to_str()).is_some_and(|name| {
-                        name == exact_name || name.starts_with(&hashed_prefix)
-                    })
+                    && path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name == exact_name || name.starts_with(&hashed_prefix))
             })
             .filter_map(|path| self.read_snapshot_file(&path, None))
             .collect()
@@ -211,7 +227,8 @@ impl RequirementSnapshotStore {
                     .unwrap_or_default(),
                 source_url: source_url.map(str::to_string),
                 title: extracted_title.map(str::to_string),
-                has_heading_metadata: extracted_headings.is_some_and(|headings| !headings.is_empty()),
+                has_heading_metadata: extracted_headings
+                    .is_some_and(|headings| !headings.is_empty()),
                 headings: extracted_headings.unwrap_or_default().to_vec(),
                 snapshot_lines: lines.to_vec(),
             })
@@ -295,7 +312,13 @@ pub fn normalize_snapshot_source_url(value: &str) -> Option<String> {
 
 pub fn source_url_without_hash(value: &str) -> Option<String> {
     let normalized = normalize_snapshot_source_url(value)?;
-    Some(normalized.split('#').next().unwrap_or(&normalized).to_string())
+    Some(
+        normalized
+            .split('#')
+            .next()
+            .unwrap_or(&normalized)
+            .to_string(),
+    )
 }
 
 pub fn source_url_has_hash(value: &str) -> bool {
@@ -332,7 +355,12 @@ pub fn parse_heading_metadata(value: &str) -> Vec<String> {
 fn snapshot_source_hash(source_url: &str) -> Option<String> {
     let normalized = normalize_snapshot_source_url(source_url)?;
     let digest = sha1(normalized.as_bytes());
-    Some(digest[..5].iter().map(|byte| format!("{byte:02x}")).collect())
+    Some(
+        digest[..5]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    )
 }
 
 fn build_synthetic_snapshot_link_html(snapshot_lines: &[String]) -> String {
@@ -373,13 +401,22 @@ fn find_snapshot_link_label(lines: &[String], href_index: usize, href: &str) -> 
         }
     }
     let label = normalize_whitespace(&parts.join(" "));
-    if label.is_empty() { href.to_string() } else { label }
+    if label.is_empty() {
+        href.to_string()
+    } else {
+        label
+    }
 }
 
 fn snapshot_href_value(line: &str) -> String {
     snapshot_href_pattern()
         .captures(line)
-        .and_then(|captures| captures.get(1).or_else(|| captures.get(2)).or_else(|| captures.get(3)))
+        .and_then(|captures| {
+            captures
+                .get(1)
+                .or_else(|| captures.get(2))
+                .or_else(|| captures.get(3))
+        })
         .map(|value| normalize_whitespace(value.as_str()))
         .unwrap_or_default()
 }
@@ -397,7 +434,10 @@ fn escape_html_attribute(value: &str) -> String {
 }
 
 fn escape_html_text(value: &str) -> String {
-    value.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn strip_html(value: &str) -> String {
@@ -430,14 +470,18 @@ fn json_heading_text(value: &Value) -> String {
         Value::Null => String::new(),
         Value::String(value) => value.clone(),
         Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
-        Value::Array(values) => values.iter().map(json_heading_text).collect::<Vec<_>>().join(","),
+        Value::Number(value) => super::requirement_shape::js_number_to_string(value),
+        Value::Array(values) => values
+            .iter()
+            .map(json_heading_text)
+            .collect::<Vec<_>>()
+            .join(","),
         Value::Object(_) => "[object Object]".to_string(),
     }
 }
 
 fn normalize_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::requirement_shape::normalize_js_whitespace(value)
 }
 
 fn unique_in_order(values: impl IntoIterator<Item = String>) -> Vec<String> {
@@ -452,43 +496,56 @@ fn unique_in_order(values: impl IntoIterator<Item = String>) -> Vec<String> {
 
 fn heading_separator_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"\s*\|\s*").expect("snapshot heading separator pattern"))
+    VALUE.get_or_init(|| js_compatible_snapshot_pattern(r"\s*\|\s*"))
 }
 fn noisy_line_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)(?:src=|srcset=|aria-label=|title=|\.jpg\b|\.jpeg\b|\.png\b|\.svg\b|\.gif\b|^\[page\s+\d+\]\s*%pdf-|^\s*%pdf-|^\s*(?:<!--|-->|(?:pre-bubbling\s+)?cache\s+(?:contexts|tags|max-age):?$|(?:\*\s*)?(?:route\.name\.|url\.site$|languages:|user\.permissions$|theme$))").expect("snapshot noise pattern"))
+    VALUE.get_or_init(|| js_compatible_snapshot_pattern(r"(?i)(?:src=|srcset=|aria-label=|title=|\.jpg\b|\.jpeg\b|\.png\b|\.svg\b|\.gif\b|^\[page\s+\d+\]\s*%pdf-|^\s*%pdf-|^\s*(?:<!--|-->|(?:pre-bubbling\s+)?cache\s+(?:contexts|tags|max-age):?$|(?:\*\s*)?(?:route\.name\.|url\.site$|languages:|user\.permissions$|theme$)))"))
 }
 fn snapshot_href_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r#"(?i)\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))"#).expect("snapshot href pattern"))
+    VALUE.get_or_init(|| {
+        js_compatible_snapshot_pattern(r#"(?i)\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))"#)
+    })
 }
 fn snapshot_href_attribute_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r#"(?i)\bhref\s*=\s*(?:"[^"]+"|'[^']+'|[^\s>]+)"#).expect("snapshot href removal pattern"))
+    VALUE.get_or_init(|| {
+        js_compatible_snapshot_pattern(r#"(?i)\bhref\s*=\s*(?:"[^"]+"|'[^']+'|[^\s>]+)"#)
+    })
 }
 fn snapshot_tag_only_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^</?[a-z][^>]*>?$").expect("snapshot tag-only pattern"))
+    VALUE.get_or_init(|| js_compatible_snapshot_pattern(r"(?i)^</?[a-z][^>]*>?$"))
 }
 fn snapshot_attribute_line_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^(?:class|style|target|rel|aria-[\w-]+|data-[\w-]+|id|title)\s*=").expect("snapshot attribute line pattern"))
+    VALUE.get_or_init(|| {
+        js_compatible_snapshot_pattern(
+            r"(?i)^(?:class|style|target|rel|aria-[\w-]+|data-[\w-]+|id|title)\s*=",
+        )
+    })
 }
 fn snapshot_src_href_line_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^(?:href|src)\s*=").expect("snapshot src/href line pattern"))
+    VALUE.get_or_init(|| js_compatible_snapshot_pattern(r"(?i)^(?:href|src)\s*="))
 }
 fn snapshot_angle_only_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"^[<>/]+$").expect("snapshot angle-only pattern"))
+    VALUE.get_or_init(|| js_compatible_snapshot_pattern(r"^[<>/]+$"))
 }
 fn unsafe_snapshot_href_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^(?:#|javascript:|mailto:|tel:)").expect("unsafe snapshot href pattern"))
+    VALUE.get_or_init(|| js_compatible_snapshot_pattern(r"(?i)^(?:#|javascript:|mailto:|tel:)"))
 }
 fn html_tag_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"<[^>]+>").expect("snapshot HTML tag pattern"))
+    VALUE.get_or_init(|| js_compatible_snapshot_pattern(r"<[^>]+>"))
+}
+
+fn js_compatible_snapshot_pattern(pattern: &str) -> Regex {
+    let compatible_pattern = super::requirement_shape::js_regex_compatibility_pattern(pattern);
+    Regex::new(&compatible_pattern).expect("JavaScript-compatible snapshot pattern")
 }
 
 fn sha1(input: &[u8]) -> [u8; 20] {
@@ -512,7 +569,9 @@ fn sha1(input: &[u8]) -> [u8; 20] {
             words[index] = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
         }
         for index in 16..80 {
-            words[index] = (words[index - 3] ^ words[index - 8] ^ words[index - 14] ^ words[index - 16]).rotate_left(1);
+            words[index] =
+                (words[index - 3] ^ words[index - 8] ^ words[index - 14] ^ words[index - 16])
+                    .rotate_left(1);
         }
         let [mut a, mut b, mut c, mut d, mut e] = state;
         for (index, word) in words.iter().enumerate() {

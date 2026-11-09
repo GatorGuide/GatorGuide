@@ -7,28 +7,142 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 const SUPPLEMENTAL_UW_SUBJECTS: &[&str] = &[
-    "ATMS", "B ECON", "BGIS", "BCMU", "BSE", "CSSSKL", "ENTRE", "FIN", "IBUS", "IS",
-    "MKTG", "OPMGT", "THLEAD", "TIAS", "TSTAT",
+    "ATMS", "B ECON", "BGIS", "BCMU", "BSE", "CSSSKL", "ENTRE", "FIN", "IBUS", "IS", "MKTG",
+    "OPMGT", "THLEAD", "TIAS", "TSTAT",
 ];
 
 const INVALID_SUBJECTS: &[&str] = &[
-    "ABOVE", "APPLY", "AND", "ANY", "APPROVED", "ARE", "AREA", "AT", "AUTUMN", "BASIC",
-    "BE", "BEFORE", "BETWEEN", "BELOW", "BEYOND", "BEGIN", "BOTH", "BOX", "BLDG",
-    "BUILDING", "BUT", "BY", "CALL", "CLASSES", "COURSES", "COURSE", "CORE", "CREDITS",
-    "CREDIT", "COMPLETE", "CONSIDER", "DATA", "DOES", "DIVISION", "EARN", "EARNED", "EITHER",
-    "ENGLISH", "EXCEPT", "FAX", "FORTUNE", "FOR", "FOREIGN", "FORMERLY", "HALL", "FROM",
-    "GRADED", "HAS", "HAVE", "HAVEA", "IF", "IN", "INCLUDE", "INCLUDES", "INTO", "IS",
-    "JUST", "LANG", "LANGUAGE", "LEVEL", "LEAST", "LIKE", "MINIMUM", "MAX", "MORE", "MUST",
-    "NUMBERED", "NOT", "OF", "ONE", "ON", "OFFERINGS", "OCCUPIES", "OFFICE", "OR", "OTHER",
-    "PLUS", "REACH", "REQUIRE", "REQUIREMENTS", "RECOMMENDED", "REQUIRES", "REQUIRED", "ROOM",
-    "SECTION", "SEPARATE", "SPRING", "RM", "BREADTH", "GROCERY", "SUITE", "SUMMER", "TAKE",
-    "TAKING", "THAT", "THAN", "THE", "THEN", "THROUGH", "TO", "TOTALS", "TWO", "USE", "WANT",
-    "WHILE", "WILL", "WINTER", "WITH", "YOUR",
+    "ABOVE",
+    "APPLY",
+    "AND",
+    "ANY",
+    "APPROVED",
+    "ARE",
+    "AREA",
+    "AT",
+    "AUTUMN",
+    "BASIC",
+    "BE",
+    "BEFORE",
+    "BETWEEN",
+    "BELOW",
+    "BEYOND",
+    "BEGIN",
+    "BOTH",
+    "BOX",
+    "BLDG",
+    "BUILDING",
+    "BUT",
+    "BY",
+    "CALL",
+    "CLASSES",
+    "COURSES",
+    "COURSE",
+    "CORE",
+    "CREDITS",
+    "CREDIT",
+    "COMPLETE",
+    "CONSIDER",
+    "DATA",
+    "DOES",
+    "DIVISION",
+    "EARN",
+    "EARNED",
+    "EITHER",
+    "ENGLISH",
+    "EXCEPT",
+    "FAX",
+    "FORTUNE",
+    "FOR",
+    "FOREIGN",
+    "FORMERLY",
+    "HALL",
+    "FROM",
+    "GRADED",
+    "HAS",
+    "HAVE",
+    "HAVEA",
+    "IF",
+    "IN",
+    "INCLUDE",
+    "INCLUDES",
+    "INTO",
+    "IS",
+    "JUST",
+    "LANG",
+    "LANGUAGE",
+    "LEVEL",
+    "LEAST",
+    "LIKE",
+    "MINIMUM",
+    "MAX",
+    "MORE",
+    "MUST",
+    "NUMBERED",
+    "NOT",
+    "OF",
+    "ONE",
+    "ON",
+    "OFFERINGS",
+    "OCCUPIES",
+    "OFFICE",
+    "OR",
+    "OTHER",
+    "PLUS",
+    "REACH",
+    "REQUIRE",
+    "REQUIREMENTS",
+    "RECOMMENDED",
+    "REQUIRES",
+    "REQUIRED",
+    "ROOM",
+    "SECTION",
+    "SEPARATE",
+    "SPRING",
+    "RM",
+    "BREADTH",
+    "GROCERY",
+    "SUITE",
+    "SUMMER",
+    "TAKE",
+    "TAKING",
+    "THAT",
+    "THAN",
+    "THE",
+    "THEN",
+    "THROUGH",
+    "TO",
+    "TOTALS",
+    "TWO",
+    "USE",
+    "WANT",
+    "WHILE",
+    "WILL",
+    "WINTER",
+    "WITH",
+    "YOUR",
 ];
 
 const RECOVERABLE_LEADING_SUBJECT_TOKENS: &[&str] = &[
-    "AND", "APPROVED", "AS", "BOTH", "CHOOSE", "COMPLETE", "EITHER", "FROM", "IN", "OF", "ONE",
-    "IS", "OR", "PREREQ", "PREREQUISITE", "REQUIRED", "SELECT", "TAKE", "THE",
+    "AND",
+    "APPROVED",
+    "AS",
+    "BOTH",
+    "CHOOSE",
+    "COMPLETE",
+    "EITHER",
+    "FROM",
+    "IN",
+    "OF",
+    "ONE",
+    "IS",
+    "OR",
+    "PREREQ",
+    "PREREQUISITE",
+    "REQUIRED",
+    "SELECT",
+    "TAKE",
+    "THE",
 ];
 const LEADING_SUBJECT_TOKENS: &[&str] = &["AND", "AS", "OR"];
 const LEADING_LIST_MARKERS: &[&str] = &["I", "II", "III", "IV"];
@@ -98,7 +212,7 @@ impl CourseCodeParser {
                 metadata_directory.display()
             )
         })?;
-        let subject_pattern = Regex::new(r"^([A-Z&]+(?: [A-Z&]+)*) \d")
+        let subject_pattern = Regex::new(r"^([A-Z&]+(?: [A-Z&]+)*) [0-9]")
             .map_err(|error| format!("invalid course metadata subject pattern: {error}"))?;
         let mut parser = Self::default();
         let mut parsed_partition_count = 0usize;
@@ -108,14 +222,21 @@ impl CourseCodeParser {
                 format!("could not enumerate course metadata partitions: {error}")
             })?;
             let path = entry.path();
-            if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("json") {
+            if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("json")
+            {
                 continue;
             }
             let bytes = fs::read(&path).map_err(|error| {
-                format!("could not read course metadata partition {}: {error}", path.display())
+                format!(
+                    "could not read course metadata partition {}: {error}",
+                    path.display()
+                )
             })?;
             let rows: Value = serde_json::from_slice(&bytes).map_err(|error| {
-                format!("invalid course metadata partition {}: {error}", path.display())
+                format!(
+                    "invalid course metadata partition {}: {error}",
+                    path.display()
+                )
             })?;
             let Some(rows) = rows.as_array() else {
                 return Err(format!(
@@ -140,9 +261,7 @@ impl CourseCodeParser {
                     .captures(&normalized_code)
                     .and_then(|capture| capture.get(1))
                 {
-                    parser
-                        .known_subjects
-                        .insert(subject.as_str().to_string());
+                    parser.known_subjects.insert(subject.as_str().to_string());
                 }
                 parser
                     .metadata_by_code
@@ -157,9 +276,11 @@ impl CourseCodeParser {
                 metadata_directory.display()
             ));
         }
-        parser
-            .known_subjects
-            .extend(SUPPLEMENTAL_UW_SUBJECTS.iter().map(|subject| (*subject).to_string()));
+        parser.known_subjects.extend(
+            SUPPLEMENTAL_UW_SUBJECTS
+                .iter()
+                .map(|subject| (*subject).to_string()),
+        );
         Ok(parser)
     }
 
@@ -168,9 +289,11 @@ impl CourseCodeParser {
             known_subjects: subjects.into_iter().collect(),
             metadata_by_code: HashMap::new(),
         };
-        parser
-            .known_subjects
-            .extend(SUPPLEMENTAL_UW_SUBJECTS.iter().map(|subject| (*subject).to_string()));
+        parser.known_subjects.extend(
+            SUPPLEMENTAL_UW_SUBJECTS
+                .iter()
+                .map(|subject| (*subject).to_string()),
+        );
         parser
     }
 
@@ -203,7 +326,10 @@ impl CourseCodeParser {
 
     pub fn metadata_for(&self, course_code: &str) -> Option<&Value> {
         self.metadata_by_code
-            .get(&normalize_course_code_with_subjects(course_code, &self.known_subjects))
+            .get(&normalize_course_code_with_subjects(
+                course_code,
+                &self.known_subjects,
+            ))
     }
 
     pub fn credit_range_for(&self, course_code: &str) -> CourseCreditRange {
@@ -237,8 +363,12 @@ impl CourseCodeParser {
             .filter(|value| !value.is_empty());
         if let Some(label) = credit_text.as_deref() {
             if let Some(captures) = credit_range_regex().captures(label) {
-                let minimum = captures.get(1).and_then(|value| value.as_str().parse::<f64>().ok());
-                let maximum = captures.get(2).and_then(|value| value.as_str().parse::<f64>().ok());
+                let minimum = captures
+                    .get(1)
+                    .and_then(|value| value.as_str().parse::<f64>().ok());
+                let maximum = captures
+                    .get(2)
+                    .and_then(|value| value.as_str().parse::<f64>().ok());
                 if let (Some(minimum), Some(maximum)) = (minimum, maximum) {
                     if minimum.is_finite() && maximum.is_finite() && maximum >= minimum {
                         return CourseCreditRange {
@@ -290,7 +420,8 @@ impl CourseCodeParser {
 
         if english_composition_regex().is_match(&normalized)
             && !english_composition_exclusion_regex().is_match(&normalized)
-            && (normalized.len() <= 140 || english_composition_context_regex().is_match(&normalized))
+            && (normalized.len() <= 140
+                || english_composition_context_regex().is_match(&normalized))
         {
             codes.push("ENGL 131".to_string());
         }
@@ -406,7 +537,13 @@ impl CourseCodeParser {
                 }
                 let normalized_subject = self.normalize_subject(subject)?;
                 let explicit_code = self.normalize_code(subject, number)?;
-                Some((whole.start(), whole.end(), number.to_string(), normalized_subject, explicit_code))
+                Some((
+                    whole.start(),
+                    whole.end(),
+                    number.to_string(),
+                    normalized_subject,
+                    explicit_code,
+                ))
             })
             .collect::<Vec<_>>();
 
@@ -444,8 +581,7 @@ impl CourseCodeParser {
                 continue;
             }
             let escaped = regex::escape(alias).replace(' ', r"\s+");
-            let pattern = Regex::new(&format!(r"(?i)\b{escaped}\s+(\d{{3}}[A-Za-z]?)\b"))
-                .expect("course subject alias pattern");
+            let pattern = dynamic_pattern(&format!(r"(?i)\b{escaped}\s+(\d{{3}}[A-Za-z]?)\b"));
             for captures in pattern.captures_iter(&normalized) {
                 let Some(whole) = captures.get(0) else {
                     continue;
@@ -492,10 +628,26 @@ impl CourseCodeParser {
         } else {
             let start = &numbers[0];
             let end = &numbers[1];
-            let start_numeric = start.chars().take_while(|character| character.is_ascii_digit()).collect::<String>().parse::<i32>().ok();
-            let end_numeric = end.chars().take_while(|character| character.is_ascii_digit()).collect::<String>().parse::<i32>().ok();
-            let has_suffix = start.chars().last().is_some_and(|character| character.is_ascii_alphabetic())
-                || end.chars().last().is_some_and(|character| character.is_ascii_alphabetic());
+            let start_numeric = start
+                .chars()
+                .take_while(|character| character.is_ascii_digit())
+                .collect::<String>()
+                .parse::<i32>()
+                .ok();
+            let end_numeric = end
+                .chars()
+                .take_while(|character| character.is_ascii_digit())
+                .collect::<String>()
+                .parse::<i32>()
+                .ok();
+            let has_suffix = start
+                .chars()
+                .last()
+                .is_some_and(|character| character.is_ascii_alphabetic())
+                || end
+                    .chars()
+                    .last()
+                    .is_some_and(|character| character.is_ascii_alphabetic());
             if let (Some(start_numeric), Some(end_numeric)) = (start_numeric, end_numeric) {
                 let distance = (end_numeric - start_numeric).abs();
                 if has_suffix && start_numeric == end_numeric {
@@ -550,11 +702,16 @@ fn normalize_subject(raw_subject: &str, known_subjects: &HashSet<String>) -> Opt
         || tokens.len() > 2
         || (tokens.len() == 1 && tokens[0].len() < 2)
         || dangling_ampersand
-        || tokens
-            .iter()
-            .any(|token| token.len() > 8 || !token.chars().all(|character| character.is_ascii_uppercase() || character == '&'))
+        || tokens.iter().any(|token| {
+            token.len() > 8
+                || !token
+                    .chars()
+                    .all(|character| character.is_ascii_uppercase() || character == '&')
+        })
         || ((INVALID_SUBJECTS.contains(&subject.as_str())
-            || tokens.iter().any(|token| INVALID_SUBJECTS.contains(&token.as_str())))
+            || tokens
+                .iter()
+                .any(|token| INVALID_SUBJECTS.contains(&token.as_str())))
             && !subject_known
             && !collapsed_known)
         || (!subject_known && !collapsed_known)
@@ -604,9 +761,7 @@ fn normalize_course_code_with_subjects(raw: &str, known_subjects: &HashSet<Strin
         .split_whitespace()
         .map(str::to_string)
         .collect::<Vec<_>>();
-    while tokens.len() > 1
-        && RECOVERABLE_LEADING_SUBJECT_TOKENS.contains(&tokens[0].as_str())
-    {
+    while tokens.len() > 1 && RECOVERABLE_LEADING_SUBJECT_TOKENS.contains(&tokens[0].as_str()) {
         let candidates = tokens[1..].join(" ");
         let collapsed = tokens[1..].join("");
         if known_subjects.contains(&candidates) || known_subjects.contains(&collapsed) {
@@ -624,7 +779,11 @@ fn normalize_course_code_with_subjects(raw: &str, known_subjects: &HashSet<Strin
         .map(str::to_string)
         .unwrap_or(subject);
     let code = format!("{subject} {}", number_match.as_str());
-    if code == "MATH& 254" { "MATH& 264".to_string() } else { code }
+    if code == "MATH& 254" {
+        "MATH& 264".to_string()
+    } else {
+        code
+    }
 }
 
 fn normalize_known_spaced_subjects(line: &str, known_subjects: &HashSet<String>) -> String {
@@ -680,12 +839,19 @@ fn standalone_parenthetical_continuation(segment: &str, start: usize, end: usize
 
 fn trim_transfer_noise_punctuation(value: &str) -> String {
     normalize_whitespace(value.trim_end_matches(|character: char| {
-        character == ';' || character == ',' || character == ':' || character == ')' || character.is_whitespace()
+        character == ';'
+            || character == ','
+            || character == ':'
+            || character == ')'
+            || character.is_whitespace()
     }))
 }
 
 fn unique_sorted(values: Vec<String>) -> Vec<String> {
-    let mut values = values.into_iter().filter(|value| !value.is_empty()).collect::<Vec<_>>();
+    let mut values = values
+        .into_iter()
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
     values.sort();
     values.dedup();
     values
@@ -693,7 +859,8 @@ fn unique_sorted(values: Vec<String>) -> Vec<String> {
 
 fn is_course_code_level_reference(text: &str, course_code: &str) -> bool {
     let normalized_course_code = normalize_course_code(course_code);
-    let Some(subject_match) = course_code_subject_pattern().captures(&normalized_course_code) else {
+    let Some(subject_match) = course_code_subject_pattern().captures(&normalized_course_code)
+    else {
         return false;
     };
     let Some(subject) = subject_match.get(1).map(|value| value.as_str()) else {
@@ -707,8 +874,10 @@ fn is_course_code_level_reference(text: &str, course_code: &str) -> bool {
         return false;
     };
     let escaped_subject = regex::escape(subject).replace(" ", r"\s+");
-    dynamic_pattern(&format!(r"(?i)\b{escaped_subject}\s+{level}\s*[-\s]*level\b"))
-        .is_match(text)
+    dynamic_pattern(&format!(
+        r"(?i)\b{escaped_subject}\s+{level}\s*[-\s]*level\b"
+    ))
+    .is_match(text)
 }
 
 fn course_code_mention_pattern(course_code: &str) -> Option<String> {
@@ -722,48 +891,49 @@ fn course_code_mention_pattern(course_code: &str) -> Option<String> {
 }
 
 fn dynamic_pattern(pattern: &str) -> Regex {
-    Regex::new(pattern).expect("dynamic course-code evidence pattern")
+    let compatible_pattern = super::requirement_shape::js_regex_compatibility_pattern(pattern);
+    Regex::new(&compatible_pattern).expect("dynamic course-code evidence pattern")
 }
 
 fn course_code_subject_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"^([A-Z& ]+)\s+\d").expect("course-code subject pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"^([A-Z& ]+)\s+\d"))
 }
 fn course_code_numeric_level_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"\b(\d{3})").expect("course-code numeric level pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"\b(\d{3})"))
 }
 fn course_code_full_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"^([A-Z&]+(?: [A-Z&]+)*)\s+(\d{3}[A-Z]?)$").expect("course-code full pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"^([A-Z&]+(?: [A-Z&]+)*)\s+(\d{3}[A-Z]?)$"))
 }
 fn historical_parenthetical_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\([^)]*\b(?:formerly|previously|renumbered)\b[^)]*\)").expect("historical parenthetical pattern"))
+    VALUE.get_or_init(|| {
+        dynamic_pattern(r"(?i)\([^)]*\b(?:formerly|previously|renumbered)\b[^)]*\)")
+    })
 }
 fn historical_formerly_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:formerly|previously)(?:\s+known\s+as)?\b[^.;)]*").expect("historical formerly pattern"))
+    VALUE.get_or_init(|| {
+        dynamic_pattern(r"(?i)\b(?:formerly|previously)(?:\s+known\s+as)?\b[^.;)]*")
+    })
 }
 fn renumbered_from_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\brenumbered\s+from\b[^.;)]*").expect("historical renumbered-from pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\brenumbered\s+from\b[^.;)]*"))
 }
 fn renumbered_to_pattern() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:was\s+)?renumbered\s+(?:as|to)\b").expect("historical renumbered-to pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\b(?:was\s+)?renumbered\s+(?:as|to)\b"))
 }
 
 fn normalize_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::requirement_shape::normalize_js_whitespace(value)
 }
 
 fn format_number(value: f64) -> String {
-    if value.fract() == 0.0 {
-        format!("{value:.0}")
-    } else {
-        value.to_string()
-    }
+    super::requirement_shape::js_number_f64_to_string(value)
 }
 
 fn subject_alias(subject: &str) -> Option<&'static str> {
@@ -794,81 +964,106 @@ fn subject_alias(subject: &str) -> Option<&'static str> {
 
 fn credit_range_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^(\d+(?:\.\d+)?)\s*(?:-|to)\s*(\d+(?:\.\d+)?)$").expect("credit range pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)^(\d+(?:\.\d+)?)\s*(?:-|to)\s*(\d+(?:\.\d+)?)$"))
 }
 fn canonical_course_code_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"^([A-Z&]+(?: [A-Z&]+)*) (\d{3}(?:\.\d+)?[A-Z]?)$").expect("course code pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"^([A-Z&]+(?: [A-Z&]+)*) (\d{3}(?:\.\d+)?[A-Z]?)$"))
 }
 fn course_number_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"^\d{3}[A-Z]?$|^000[A-Z]?$").expect("course number pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"^\d{3}(?:\.\d+)?[A-Z]?$|^000[A-Z]?$"))
 }
 fn explicit_course_code_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"\b([A-Z&][A-Za-z&]{0,19}(?:\s+[A-Z&][A-Za-z&]{0,19})?)\s*(\d{3}[A-Za-z]?)\b").expect("explicit course code pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"\b([A-Z&][A-Za-z&]{0,19}(?:\s+[A-Z&][A-Za-z&]{0,19})?)\s*(\d{3}(?:\.\d+)?[A-Za-z]?)\b"))
 }
 fn continuation_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?:^|[,(;/+&]\s*|\b(?:or|and)\s+)(\d{3}[A-Za-z]?)").expect("course continuation pattern"))
+    VALUE.get_or_init(|| {
+        dynamic_pattern(r"(?:^|[,(;/+&]\s*|\b(?:or|and)\s+)(\d{3}(?:\.\d+)?[A-Za-z]?)")
+    })
 }
 fn shared_number_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"\b([A-Za-z&]+(?:\s+[A-Za-z&]+)*)\s*/\s*([A-Za-z&]+(?:\s+[A-Za-z&]+)*)\s+(\d{3}[A-Za-z]?)\b").expect("shared-number course pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"\b([A-Za-z&]+(?:\s+[A-Za-z&]+)*)\s*/\s*([A-Za-z&]+(?:\s+[A-Za-z&]+)*)\s+(\d{3}[A-Za-z]?)\b"))
 }
 fn repeated_subject_alternative_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"\b(?:or|and)\s+([A-Za-z&]+(?:\s+[A-Za-z&]+)?)\s*(\d{3}[A-Za-z]?)\b").expect("repeated-subject alternative pattern"))
+    VALUE.get_or_init(|| {
+        dynamic_pattern(r"\b(?:or|and)\s+([A-Za-z&]+(?:\s+[A-Za-z&]+)?)\s*(\d{3}[A-Za-z]?)\b")
+    })
 }
 fn hyphenated_number_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"^\s*[-–—]\s*(\d{3}[A-Za-z]?)").expect("hyphenated course number pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"^\s*[-–—]\s*(\d{3}[A-Za-z]?)"))
 }
 fn single_letter_spaced_subject_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"\b([A-Za-z])\s+([A-Za-z&]{2,})\s+(\d{3}[A-Za-z]?\b)").expect("spaced course subject pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"\b([A-Za-z])\s+([A-Za-z&]{2,})\s+(\d{3}[A-Za-z]?\b)"))
 }
 fn normalize_course_connector_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b([A-Za-z&]+(?:\s+[A-Za-z&]+)*\s+\d{3})\s*(or|and)\b").expect("course connector spacing pattern"))
+    VALUE.get_or_init(|| {
+        dynamic_pattern(r"(?i)\b([A-Za-z&]+(?:\s+[A-Za-z&]+)*\s+\d{3})\s*(or|and)\b")
+    })
 }
 fn level_suffix_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)^\s*(?:(?:-\s*)?level\b|\+\s*(?:level\b|courses?\b|$))").expect("course level suffix pattern"))
+    VALUE.get_or_init(|| {
+        dynamic_pattern(r"(?i)^\s*(?:(?:-\s*)?level\b|\+\s*(?:level\b|courses?\b|$))")
+    })
 }
 fn parenthetical_close_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"^\s*\)").expect("parenthetical close pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"^\s*\)"))
 }
 fn parenthetical_logic_separator_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(?:or|and)\b|[,;/+&]").expect("parenthetical continuation pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\b(?:or|and)\b|[,;/+&]"))
 }
 fn noisy_line_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)(?:src=|srcset=|aria-label=|title=|\.jpg\b|\.jpeg\b|\.png\b|\.svg\b|\.gif\b|^\[page\s+\d+\]\s*%pdf-|^\s*%pdf-|^\s*(?:<!--|-->|(?:pre-bubbling\s+)?cache\s+(?:contexts|tags|max-age):?$|(?:\*\s*)?(?:route\.name\.|url\.site$|languages:|user\.permissions$|theme$))").expect("noisy source line pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)(?:src=|srcset=|aria-label=|title=|\.jpg\b|\.jpeg\b|\.png\b|\.svg\b|\.gif\b|^\[page\s+\d+\]\s*%pdf-|^\s*%pdf-|^\s*(?:<!--|-->|(?:pre-bubbling\s+)?cache\s+(?:contexts|tags|max-age):?$|(?:\*\s*)?(?:route\.name\.|url\.site$|languages:|user\.permissions$|theme$)))"))
 }
 fn transfer_credit_noise_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(transfer credits?|transfer equivalenc(?:y|ies)|articulation agreement|community colleges?|community college)\b").expect("transfer credit noise pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\b(transfer credits?|transfer equivalenc(?:y|ies)|articulation agreement|community colleges?|community college)\b"))
 }
 fn english_composition_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\benglish composition\b").expect("English composition pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\benglish composition\b"))
 }
 fn english_composition_context_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(5 credits of|five credits of|min(?:imum)?(?:\s+course)? requirements?|prerequisite|admission|complete|completed|required|eligibility|preferred)\b").expect("English composition context pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\b(5 credits of|five credits of|min(?:imum)?(?:\s+course)? requirements?|prerequisite|admission|complete|completed|required|eligibility|preferred)\b"))
 }
 fn english_composition_exclusion_regex() -> &'static Regex {
     static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| Regex::new(r"(?i)\b(additional english composition|except the 5-?credit english composition requirement|writing-intensive|w course|w courses)\b").expect("English composition exclusion pattern"))
+    VALUE.get_or_init(|| dynamic_pattern(r"(?i)\b(additional english composition|except the 5-?credit english composition requirement|writing-intensive|w course|w courses)\b"))
 }
 fn subject_aliases() -> &'static [&'static str] {
     &[
-        "A A", "A MATH", "ART H", "B GIS", "B HTLH", "ACCOUNTING", "ASTRONOMY",
-        "APPLIED MATHEMATICS", "BIOENGINEERING", "BIOSTATISTICS", "BIOLOGY", "CHEM E", "E E",
-        "I S", "IND E", "CSSKL", "M E", "MATHEMATICS", "PHYSICS", "SPANISH",
+        "A A",
+        "A MATH",
+        "ART H",
+        "B GIS",
+        "B HTLH",
+        "ACCOUNTING",
+        "ASTRONOMY",
+        "APPLIED MATHEMATICS",
+        "BIOENGINEERING",
+        "BIOSTATISTICS",
+        "BIOLOGY",
+        "CHEM E",
+        "E E",
+        "I S",
+        "IND E",
+        "CSSKL",
+        "M E",
+        "MATHEMATICS",
+        "PHYSICS",
+        "SPANISH",
     ]
 }
 

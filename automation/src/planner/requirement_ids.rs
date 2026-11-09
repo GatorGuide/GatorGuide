@@ -45,7 +45,10 @@ pub fn build_requirement_source_block_id(owner: &Value) -> String {
     let needs_disambiguator = role_status != "primary"
         || owner.get("supportOnly").and_then(Value::as_bool) == Some(true)
         || owner.get("nonSchedulable").and_then(Value::as_bool) == Some(true)
-        || owner.get("canCreateSchedulableRows").and_then(Value::as_bool) == Some(false)
+        || owner
+            .get("canCreateSchedulableRows")
+            .and_then(Value::as_bool)
+            == Some(false)
         || owner.get("canCreateScheduleRows").and_then(Value::as_bool) == Some(false);
     let suffix = if needs_disambiguator {
         let role_slug = slugify_requirement_identifier(if source_role.is_empty() {
@@ -61,7 +64,10 @@ pub fn build_requirement_source_block_id(owner: &Value) -> String {
     } else {
         adapter_slug
     };
-    format!("{}:source-block:{suffix}", js_interpolate(owner.get("ownerId")))
+    format!(
+        "{}:source-block:{suffix}",
+        js_interpolate(owner.get("ownerId"))
+    )
 }
 
 pub fn build_unique_derived_id(base_id: &str, seen_counts: &mut HashMap<String, usize>) -> String {
@@ -79,7 +85,7 @@ pub fn build_unique_derived_id(base_id: &str, seen_counts: &mut HashMap<String, 
 }
 
 fn normalize_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::requirement_shape::normalize_js_whitespace(value)
 }
 
 fn nullish_string(value: Option<&Value>) -> String {
@@ -101,11 +107,17 @@ fn js_string(value: &Value) -> String {
     match value {
         Value::Null => "null".to_string(),
         Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
+        Value::Number(value) => super::requirement_shape::js_number_to_string(value),
         Value::String(value) => value.clone(),
         Value::Array(values) => values
             .iter()
-            .map(|value| if value.is_null() { String::new() } else { js_string(value) })
+            .map(|value| {
+                if value.is_null() {
+                    String::new()
+                } else {
+                    js_string(value)
+                }
+            })
             .collect::<Vec<_>>()
             .join(","),
         Value::Object(_) => "[object Object]".to_string(),
@@ -128,4 +140,3 @@ fn to_base36(mut value: u32) -> String {
     }
     digits.iter().rev().collect()
 }
-

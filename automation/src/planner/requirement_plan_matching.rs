@@ -156,12 +156,7 @@ pub fn parser_recovery_candidate_conflicts_with_owner_identity(
     manifest_entries: &[Value],
     course_parser: &CourseCodeParser,
 ) -> bool {
-    if pathway_label_mentions_different_major(
-        entry,
-        label,
-        primary_major_titles,
-        course_parser,
-    ) {
+    if pathway_label_mentions_different_major(entry, label, primary_major_titles, course_parser) {
         return true;
     }
 
@@ -236,7 +231,8 @@ pub fn manifest_entry_mentions_different_major(
             let normalized_title = normalize_transfer_planner_text(title).to_lowercase();
             !normalized_title.is_empty() && normalized_candidate.contains(&normalized_title)
         });
-        let matches_own_pathway = manifest_entry_candidate_matches_own_pathway_identity(entry, &candidate);
+        let matches_own_pathway =
+            manifest_entry_candidate_matches_own_pathway_identity(entry, &candidate);
         !matches_catalog_alias
             && !matches_own_pathway
             && pathway_label_mentions_different_major(
@@ -248,7 +244,7 @@ pub fn manifest_entry_mentions_different_major(
     })
 }
 
-fn pathway_label_mentions_different_major(
+pub fn pathway_label_mentions_different_major(
     entry: &Value,
     label: &str,
     primary_plan_titles: &HashMap<String, String>,
@@ -297,9 +293,7 @@ fn get_catalog_owner_scope_titles(
         .unwrap_or(&normalized_owner_title)
         .to_string();
     let primary_title = normalize_transfer_planner_text(
-        primary_plan_titles
-            .get(&plan_id)
-            .unwrap_or(&fallback_title),
+        primary_plan_titles.get(&plan_id).unwrap_or(&fallback_title),
     );
     let mut titles = Vec::new();
     for title in [primary_title, normalize_transfer_planner_text(&owner_title)] {
@@ -368,7 +362,31 @@ fn manifest_url_is_shared_across_ba_bs_variants(
     })
 }
 
-fn get_source_degree_kind(text: &str) -> Option<&'static str> {
+pub fn is_dedicated_selected_pathway_route_source(entry: &Value, full_title: Option<&str>) -> bool {
+    if !js_truthy(entry.get("pathwayId"))
+        || super::requirement_recovery_scope::is_legacy_student_catalog_source(entry)
+    {
+        return false;
+    }
+    let pathway_degree_kind = get_ba_bs_degree_kind(&format!(
+        "{} {}",
+        string_field(entry, "pathwayId"),
+        string_field(entry, "ownerTitle")
+    ));
+    let Some(pathway_degree_kind) = pathway_degree_kind else {
+        return false;
+    };
+    let source_degree_kind = get_ba_bs_degree_kind(&format!(
+        "{} {} {} {}",
+        string_field(entry, "url"),
+        string_field(entry, "label"),
+        string_field(entry, "sourceLabel"),
+        full_title.unwrap_or_default()
+    ));
+    source_degree_kind == Some(pathway_degree_kind)
+}
+
+pub fn get_source_degree_kind(text: &str) -> Option<&'static str> {
     if ba_source_degree_pattern().is_match(text) {
         Some("ba")
     } else if bs_source_degree_pattern().is_match(text) {
@@ -378,7 +396,7 @@ fn get_source_degree_kind(text: &str) -> Option<&'static str> {
     }
 }
 
-fn get_ba_bs_degree_kind(title: &str) -> Option<&'static str> {
+pub fn get_ba_bs_degree_kind(title: &str) -> Option<&'static str> {
     let normalized = normalize_matcher_text(title);
     if ba_degree_pattern().is_match(&normalized) {
         Some("ba")
@@ -438,11 +456,17 @@ fn js_string(value: &Value) -> String {
     match value {
         Value::Null => "null".to_string(),
         Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
+        Value::Number(value) => super::requirement_shape::js_number_to_string(value),
         Value::String(value) => value.clone(),
         Value::Array(values) => values
             .iter()
-            .map(|value| if value.is_null() { String::new() } else { js_string(value) })
+            .map(|value| {
+                if value.is_null() {
+                    String::new()
+                } else {
+                    js_string(value)
+                }
+            })
             .collect::<Vec<_>>()
             .join(","),
         Value::Object(_) => "[object Object]".to_string(),
@@ -459,11 +483,23 @@ macro_rules! matcher {
 }
 
 matcher!(owner_title_prefix_pattern, r"\s+-\s+");
-matcher!(pathway_label_cue_pattern, r"(?i)\b(option|track|route|pathway|concentration)\b");
-matcher!(pathway_label_exclusion_pattern, r"(?i)\b(?:major|degree|program|department|school|college|admissions?|application|requirements?|courses?|curriculum)\b");
+matcher!(
+    pathway_label_cue_pattern,
+    r"(?i)\b(option|track|route|pathway|concentration)\b"
+);
+matcher!(
+    pathway_label_exclusion_pattern,
+    r"(?i)\b(?:major|degree|program|department|school|college|admissions?|application|requirements?|courses?|curriculum)\b"
+);
 matcher!(ba_source_degree_pattern, r"(?i)\bB\.?\s*A\.?\b|\bba[-\s]");
 matcher!(bs_source_degree_pattern, r"(?i)\bB\.?\s*S\.?\b|\bbs[-\s]");
 matcher!(ba_degree_pattern, r"\b(?:b\s*a|ba|bachelor\s+of\s+arts)\b");
-matcher!(bs_degree_pattern, r"\b(?:b\s*s|bs|bachelor\s+of\s+science)\b");
-matcher!(degree_kind_parenthetical_pattern, r"(?i)\([^)]*\bB[AS]\b[^)]*\)");
+matcher!(
+    bs_degree_pattern,
+    r"\b(?:b\s*s|bs|bachelor\s+of\s+science)\b"
+);
+matcher!(
+    degree_kind_parenthetical_pattern,
+    r"(?i)\([^)]*\bB[AS]\b[^)]*\)"
+);
 matcher!(degree_kind_suffix_pattern, r"(?i)\bB\.?\s*[AS]\.?\b");

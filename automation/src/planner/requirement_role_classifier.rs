@@ -4,6 +4,123 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
+pub fn source_content_indicates_inactive_major(
+    entry: &Value,
+    parsed_title: Option<&str>,
+    headings: &[String],
+    requirement_cue_lines: &[String],
+    choose_statements: &[String],
+    snapshot_lines: &[String],
+) -> bool {
+    let mut searchable = ["ownerTitle", "label", "sourceLabel"]
+        .into_iter()
+        .filter_map(|field| entry.get(field))
+        .filter(|value| is_js_truthy(value))
+        .map(js_string)
+        .collect::<Vec<_>>();
+    searchable.extend(
+        parsed_title
+            .filter(|title| !title.is_empty())
+            .map(str::to_string),
+    );
+    searchable.extend(headings.iter().filter(|line| !line.is_empty()).cloned());
+    searchable.extend(
+        requirement_cue_lines
+            .iter()
+            .filter(|line| !line.is_empty())
+            .cloned(),
+    );
+    searchable.extend(
+        choose_statements
+            .iter()
+            .filter(|line| !line.is_empty())
+            .cloned(),
+    );
+    searchable.extend(
+        snapshot_lines
+            .iter()
+            .filter(|line| !line.is_empty())
+            .cloned(),
+    );
+    inactive_major_pattern().is_match(&normalize_matcher_text(&searchable.join(" ")))
+}
+
+pub fn should_promote_primary_overview_from_parsed_evidence(
+    entry: &Value,
+    parsed_source_role: Option<&str>,
+    metadata_source_role: &str,
+    parsed_course_codes: &[String],
+    headings: &[String],
+    requirement_cue_lines: &[String],
+    choose_statements: &[String],
+) -> bool {
+    let resolved_source_role = parsed_source_role.unwrap_or(metadata_source_role);
+    if entry
+        .get("isPrimaryDegreeRequirementsLink")
+        .and_then(Value::as_bool)
+        != Some(true)
+        || resolved_source_role != "overview"
+        || parsed_course_codes.is_empty()
+    {
+        return false;
+    }
+    headings
+        .iter()
+        .chain(requirement_cue_lines.iter())
+        .chain(choose_statements.iter())
+        .any(|line| parsed_primary_requirement_heading_pattern().is_match(line.trim()))
+}
+
+pub fn should_use_tacoma_metadata_primary_role(
+    entry: &Value,
+    parsed_source_role: Option<&str>,
+    metadata_source_role: &str,
+    parsed_course_codes: &[String],
+    requirement_cue_lines: &[String],
+    choose_statements: &[String],
+    pathway_labels: &[String],
+) -> bool {
+    if entry.get("campusId").and_then(Value::as_str) != Some("uw-tacoma")
+        || metadata_source_role != "primary-degree-requirements"
+        || super::requirement_scope::get_requirement_source_role_status(
+            parsed_source_role.or(Some(metadata_source_role)),
+        )
+        .as_str()
+            == "primary"
+    {
+        return false;
+    }
+    if !parsed_course_codes.is_empty() || !pathway_labels.is_empty() {
+        return true;
+    }
+    let evidence = requirement_cue_lines
+        .iter()
+        .chain(choose_statements.iter())
+        .chain(pathway_labels.iter())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
+    primary_requirement_cue_pattern().is_match(&evidence)
+        || tacoma_parsed_primary_requirement_pattern().is_match(&evidence)
+}
+
+pub fn get_inactive_major_evidence_lines(
+    requirement_cue_lines: &[String],
+    choose_statements: &[String],
+    snapshot_lines: &[String],
+) -> Vec<String> {
+    let mut seen = HashSet::new();
+    requirement_cue_lines
+        .iter()
+        .chain(choose_statements.iter())
+        .chain(snapshot_lines.iter())
+        .map(|line| super::requirement_shape::normalize_js_whitespace(line))
+        .filter(|line| !line.is_empty() && inactive_major_evidence_line_pattern().is_match(line))
+        .filter(|line| seen.insert(line.clone()))
+        .take(4)
+        .collect()
+}
+
 pub fn classify_requirement_source_role(entry: &Value) -> &'static str {
     let source_identity = normalize_matcher_text(&joined_truthy_fields(
         entry,
@@ -38,7 +155,9 @@ pub fn classify_requirement_source_role(entry: &Value) -> &'static str {
     if is_historical_requirement_source_identity(&source_identity) {
         return "old-archival";
     }
-    if entry.get("isPrimaryDegreeRequirementsLink").and_then(Value::as_bool) == Some(true)
+    if entry
+        .get("isPrimaryDegreeRequirementsLink")
+        .is_some_and(is_js_truthy)
         && is_materialized_primary_requirement_link(entry, &source_searchable, &searchable)
     {
         return "primary-degree-requirements";
@@ -79,8 +198,9 @@ pub fn classify_requirement_source_role(entry: &Value) -> &'static str {
         "admission-prerequisite-source" => return "admission-prerequisite-source",
         "admissions" => return "admissions-preparation",
         "degree-requirements" | "curriculum" | "worksheet"
-            if entry.get("isPrimaryDegreeRequirementsLink").and_then(Value::as_bool)
-                != Some(true) =>
+            if !entry
+                .get("isPrimaryDegreeRequirementsLink")
+                .is_some_and(is_js_truthy) =>
         {
             return "support-source";
         }
@@ -136,7 +256,9 @@ pub fn classify_requirement_source_role(entry: &Value) -> &'static str {
     if upper_division_prerequisite_pattern().is_match(&searchable) {
         return "upper-division-prerequisite-table";
     }
-    if entry.get("isPrimaryDegreeRequirementsLink").and_then(Value::as_bool) == Some(true)
+    if entry
+        .get("isPrimaryDegreeRequirementsLink")
+        .is_some_and(is_js_truthy)
         && is_materialized_primary_requirement_link(entry, &source_searchable, &searchable)
     {
         return "primary-degree-requirements";
@@ -188,24 +310,23 @@ fn is_materialized_primary_requirement_link(
     }
     let url = string_field(entry, "url");
     let owner_id = string_field(entry, "ownerId");
-    let owner_is_pathway = !string_field(entry, "pathwayId").is_empty() || owner_id.contains(":pathway:");
+    let owner_is_pathway =
+        !string_field(entry, "pathwayId").is_empty() || owner_id.contains(":pathway:");
     if admission_terms_pattern().is_match(source_searchable)
         || support_cue_pattern().is_match(source_searchable)
     {
         return false;
     }
-    let source_looks_like_pathway = pathway_cue_pattern().is_match(source_searchable)
-        || pathway_url_pattern().is_match(&url);
+    let source_looks_like_pathway =
+        pathway_cue_pattern().is_match(source_searchable) || pathway_url_pattern().is_match(&url);
     let source_looks_like_degree_program = degree_program_pattern().is_match(source_searchable)
         || bachelors_program_url_pattern().is_match(&url);
     let source_looks_like_requirements = primary_requirement_cue_pattern().is_match(searchable)
         || requirements_program_pattern().is_match(searchable);
     let owner_title = string_field(entry, "ownerTitle");
     let source_label = string_field(entry, "sourceLabel");
-    let owner_title_tokens = get_pdf_title_scope_tokens(
-        Some(owner_title.as_str()),
-        Some(source_label.as_str()),
-    );
+    let owner_title_tokens =
+        get_pdf_title_scope_tokens(Some(owner_title.as_str()), Some(source_label.as_str()));
     let overlap = owner_title_tokens
         .iter()
         .filter(|token| source_searchable.contains(token.as_str()))
@@ -216,7 +337,8 @@ fn is_materialized_primary_requirement_link(
     (owner_is_pathway && (source_looks_like_pathway || source_looks_like_degree_program))
         || source_looks_like_owner_degree_program
         || (source_looks_like_requirements
-            && primary_requirement_parser_type_pattern().is_match(&string_field(entry, "parserType")))
+            && primary_requirement_parser_type_pattern()
+                .is_match(&string_field(entry, "parserType")))
         || is_tacoma_primary_program_page(entry, source_searchable, searchable)
 }
 
@@ -228,7 +350,9 @@ fn is_tacoma_primary_program_page(
     let parser_type = string_field(entry, "parserType");
     let url = string_field(entry, "url");
     if string_field(entry, "campusId") != "uw-tacoma"
-        || entry.get("isPrimaryDegreeRequirementsLink").and_then(Value::as_bool) != Some(true)
+        || !entry
+            .get("isPrimaryDegreeRequirementsLink")
+            .is_some_and(is_js_truthy)
         || !tacoma_primary_parser_type_pattern().is_match(&parser_type)
         || !official_tacoma_url(&url)
     {
@@ -287,7 +411,9 @@ fn tacoma_base_title(title: &str) -> String {
             continue;
         }
         let before_space = index > 0 && chars[index - 1].1.is_whitespace();
-        let after_space = chars.get(index + 1).is_some_and(|(_, next)| next.is_whitespace());
+        let after_space = chars
+            .get(index + 1)
+            .is_some_and(|(_, next)| next.is_whitespace());
         if before_space && after_space {
             return title[..character.0].trim().to_string();
         }
@@ -295,11 +421,7 @@ fn tacoma_base_title(title: &str) -> String {
     title.trim().to_string()
 }
 
-pub fn has_conflicting_supplemental_degree_route(
-    entry: &Value,
-    label: &str,
-    url: &str,
-) -> bool {
+pub fn has_conflicting_supplemental_degree_route(entry: &Value, label: &str, url: &str) -> bool {
     let entry_tokens = degree_route_tokens(&format!(
         "{} {} {} {}",
         string_field(entry, "ownerTitle"),
@@ -411,11 +533,17 @@ fn js_string(value: &Value) -> String {
     match value {
         Value::Null => "null".to_string(),
         Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
+        Value::Number(value) => super::requirement_shape::js_number_to_string(value),
         Value::String(value) => value.clone(),
         Value::Array(values) => values
             .iter()
-            .map(|value| if value.is_null() { String::new() } else { js_string(value) })
+            .map(|value| {
+                if value.is_null() {
+                    String::new()
+                } else {
+                    js_string(value)
+                }
+            })
             .collect::<Vec<_>>()
             .join(","),
         Value::Object(_) => "[object Object]".to_string(),
@@ -441,56 +569,187 @@ fn normalize_matcher_text(value: &str) -> String {
 
 fn phrase_pattern(phrase: &str) -> Regex {
     let tokens = phrase.split_whitespace().collect::<Vec<_>>().join(r"\s+");
-    Regex::new(&format!(r"(?i)\b{tokens}\b")).expect("title phrase pattern")
+    let pattern = format!(r"(?i)\b{tokens}\b");
+    Regex::new(&js_regex_compatibility_pattern(&pattern)).expect("title phrase pattern")
+}
+
+fn parsed_primary_requirement_heading_pattern() -> &'static Regex {
+    static VALUE: OnceLock<Regex> = OnceLock::new();
+    VALUE.get_or_init(|| Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:(?:undergraduate|bachelor(?:'s)?)\s+)?(?:major|degree|program)\s+(?:and\s+minor\s+)?requirements?\b|\b(?:required|core)\s+(?:courses?|coursework)\b")).expect("parsed primary requirement heading"))
+}
+
+fn inactive_major_pattern() -> &'static Regex {
+    static VALUE: OnceLock<Regex> = OnceLock::new();
+    VALUE.get_or_init(|| Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:not able|unable|cannot|can not|not currently able)\b.{0,120}\baccept(?:ing)?\b.{0,80}\bstudents?\b.{0,80}\bmajor\b|\bstudents?\b.{0,60}\bmay not declare\b.{0,80}\bmajor\b|\bmajor\b.{0,80}\b(?:not\b.{0,30}|no\s+longer\s+)accepting\b.{0,60}\bstudents?\b")).expect("inactive major source pattern"))
+}
+
+fn inactive_major_evidence_line_pattern() -> &'static Regex {
+    static VALUE: OnceLock<Regex> = OnceLock::new();
+    VALUE.get_or_init(|| Regex::new(&js_regex_compatibility_pattern(r"(?i)\b(?:not able|unable|cannot|can not|not currently able)\b.{0,120}\b(?:accept(?:ing)?\b.{0,80}\bstudents?|offer\b.{0,80}\bupper\s+level\s+courses?)\b.{0,120}\bmajor\b|\bstudents?\b.{0,60}\bmay not declare\b.{0,80}\bmajor\b|\bmajor\b.{0,80}\bno\s+longer\s+accepting\b.{0,60}\bstudents?\b")).expect("inactive major evidence line pattern"))
+}
+
+fn js_regex_compatibility_pattern(pattern: &str) -> String {
+    pattern.replace(r"\b", r"(?-u:\b)").replace(r"\d", "[0-9]")
 }
 
 macro_rules! matcher {
     ($name:ident, $pattern:literal) => {
         fn $name() -> &'static Regex {
             static VALUE: OnceLock<Regex> = OnceLock::new();
-            VALUE.get_or_init(|| Regex::new($pattern).expect(stringify!($name)))
+            VALUE.get_or_init(|| {
+                Regex::new(&js_regex_compatibility_pattern($pattern)).expect(stringify!($name))
+            })
         }
     };
 }
 
-matcher!(approved_course_list_pattern, r"(?i)\bapproved\b.{0,60}\b(courses?|course list|list)\b|\b(courses?|course list|list)\b.{0,60}\bapproved\b");
-matcher!(elective_list_pattern, r"(?i)\b(?:engineering|technical|departmental|major|science|natural science|approved)?\s*electives?\b.{0,50}\b(courses?|list|options?|page)\b|\b(courses?|list|options?)\b.{0,50}\belectives?\b|/electives?(?:[-/]|$)");
-matcher!(engineering_electives_pattern, r"(?i)\b(?:engineering|technical|departmental|major|science|natural science|approved)\s+electives?\b");
+matcher!(
+    approved_course_list_pattern,
+    r"(?i)\bapproved\b.{0,60}\b(courses?|course list|list)\b|\b(courses?|course list|list)\b.{0,60}\bapproved\b"
+);
+matcher!(
+    elective_list_pattern,
+    r"(?i)\b(?:engineering|technical|departmental|major|science|natural science|approved)?\s*electives?\b.{0,50}\b(courses?|list|options?|page)\b|\b(courses?|list|options?)\b.{0,50}\belectives?\b|/electives?(?:[-/]|$)"
+);
+matcher!(
+    engineering_electives_pattern,
+    r"(?i)\b(?:engineering|technical|departmental|major|science|natural science|approved)\s+electives?\b"
+);
 matcher!(electives_html_pattern, r"(?i)\belectives?\s+html\b");
-matcher!(primary_requirement_cue_pattern, r"(?i)\bdegree requirements?\b|\bmajor requirements?\b|\bgraduation requirements?\b|\bprogram requirements?\b|\bdegree structure\b|\brequirements packet\b|\bdegreq\b");
-matcher!(admission_prerequisite_pattern, r"(?i)\b(?:admissions?|admission|apply|application)\b.{0,80}\bprereq(?:uisites?|uisite courses?)\b|\bprereq(?:uisites?|uisite courses?)\b.{0,80}\b(?:admissions?|admission|apply|application)\b");
-matcher!(admission_terms_pattern, r"(?i)\b(?:admissions?|apply|application|preparation|prereq(?:uisites?)?)\b");
-matcher!(support_cue_pattern, r"(?i)\b(advising|adviser|advisor|support sources?|student resources?|student support|forms?|petitions?|policies|policy[-\s]*(?:procedures?|resources?|forms?)|faq|frequently asked questions)\b");
-matcher!(historical_identity_pattern, r"(?i)\b(?:archive|archived|retired|old requirements?|previous requirements?|pre[-\s]?(?:winter|spring|summer|autumn|fall)?[-\s]?20\d{2})\b");
-matcher!(historical_fallback_pattern, r"\b(?:archive|archived|retired|old requirements?|prior to|pre-20\d{2})\b");
-matcher!(pathway_cue_pattern, r"(?i)\b(track|option|route|pathway|concentration|specialization)\b");
-matcher!(pathway_url_pattern, r"(?i)(?:^|[-/])(?:track|option|route|pathway|concentration|specialization)(?:[-/?#]|$)");
-matcher!(degree_program_pattern, r"(?i)\b(?:bachelor|bachelors?|b\.?\s*a\.?|b\.?\s*s\.?|ba|bs|bba)\b");
+matcher!(
+    primary_requirement_cue_pattern,
+    r"(?i)\bdegree requirements?\b|\bmajor requirements?\b|\bgraduation requirements?\b|\bprogram requirements?\b|\bdegree structure\b|\brequirements packet\b|\bdegreq\b"
+);
+matcher!(
+    tacoma_parsed_primary_requirement_pattern,
+    r"(?i)\b(admission requirements?|degree requirements?|graduation requirements?|students? choose\b.{0,80}\b(?:options?|tracks?|routes?|pathways?)|core courses?|preparatory courses?)\b"
+);
+matcher!(
+    admission_prerequisite_pattern,
+    r"(?i)\b(?:admissions?|admission|apply|application)\b.{0,80}\bprereq(?:uisites?|uisite courses?)\b|\bprereq(?:uisites?|uisite courses?)\b.{0,80}\b(?:admissions?|admission|apply|application)\b"
+);
+matcher!(
+    admission_terms_pattern,
+    r"(?i)\b(?:admissions?|apply|application|preparation|prereq(?:uisites?)?)\b"
+);
+matcher!(
+    support_cue_pattern,
+    r"(?i)\b(advising|adviser|advisor|support sources?|student resources?|student support|forms?|petitions?|policies|policy[-\s]*(?:procedures?|resources?|forms?)|faq|frequently asked questions)\b"
+);
+matcher!(
+    historical_identity_pattern,
+    r"(?i)\b(?:archive|archived|retired|old requirements?|previous requirements?|pre[-\s]?(?:winter|spring|summer|autumn|fall)?[-\s]?20\d{2})\b"
+);
+matcher!(
+    historical_fallback_pattern,
+    r"\b(?:archive|archived|retired|old requirements?|prior to|pre-20\d{2})\b"
+);
+matcher!(
+    pathway_cue_pattern,
+    r"(?i)\b(track|option|route|pathway|concentration|specialization)\b"
+);
+matcher!(
+    pathway_url_pattern,
+    r"(?i)(?:^|[-/])(?:track|option|route|pathway|concentration|specialization)(?:[-/?#]|$)"
+);
+matcher!(
+    degree_program_pattern,
+    r"(?i)\b(?:bachelor|bachelors?|b\.?\s*a\.?|b\.?\s*s\.?|ba|bs|bba)\b"
+);
 matcher!(bachelors_program_url_pattern, r"(?i)(?:^|/)b(?:a|s|ba)[-/]");
-matcher!(requirements_program_pattern, r"(?i)\b(?:curriculum|requirements?|degree|major|program)\b");
-matcher!(primary_requirement_parser_type_pattern, r"^(?:html-degree-page|html-curriculum-page|pdf-degree-sheet|pdf-worksheet|generic-html)$");
-matcher!(tacoma_primary_parser_type_pattern, r"^(?:generic-html|html-curriculum-page|html-degree-page|html-overview-page)$");
-matcher!(uwb_major_admissions_url_pattern, r"(?i)uwb\.edu/[^?#]*/majors/[^/?#]+/admissions/?(?:[?#].*)?$");
-matcher!(uwb_mpw_registration_url_pattern, r"(?i)admissions\.uwb\.edu/register/mpw-");
+matcher!(
+    requirements_program_pattern,
+    r"(?i)\b(?:curriculum|requirements?|degree|major|program)\b"
+);
+matcher!(
+    primary_requirement_parser_type_pattern,
+    r"^(?:html-degree-page|html-curriculum-page|pdf-degree-sheet|pdf-worksheet|generic-html)$"
+);
+matcher!(
+    tacoma_primary_parser_type_pattern,
+    r"^(?:generic-html|html-curriculum-page|html-degree-page|html-overview-page)$"
+);
+matcher!(
+    uwb_major_admissions_url_pattern,
+    r"(?i)uwb\.edu/[^?#]*/majors/[^/?#]+/admissions/?(?:[?#].*)?$"
+);
+matcher!(
+    uwb_mpw_registration_url_pattern,
+    r"(?i)admissions\.uwb\.edu/register/mpw-"
+);
 matcher!(document_url_pattern, r"(?i)\.(?:pdf|docx)(?:$|[?#])");
-matcher!(major_planning_worksheet_pattern, r"(?i)\bmajor planning worksheet\b");
-matcher!(uw_general_catalog_program_url_pattern, r"(?i)//(?:www\.)?washington\.edu/students/gencat/program/");
-matcher!(tacoma_set_undergrad_url_pattern, r"(?i)//(?:www\.)?tacoma\.uw\.edu/set/programs/undergrad/[^/?#]+/?(?:[?#].*)?$");
-matcher!(tacoma_set_requirement_terms_pattern, r"(?i)\b(?:degree requirements?|major requirements?|program requirements?|curriculum|courses?|schedule planning|prerequisites?|admission requirements?)\b");
-matcher!(degree_map_pattern, r"(?i)\b(?:curriculum map|degree map|four[-\s]?year plan|schedule planning grid|schedule grid|planning grid)\b");
-matcher!(pathway_degree_sheet_pattern, r"(?i)\b(degree sheet|requirement sheet|requirements packet|checklist|worksheet|plan of study|study plan)\b|degreq");
-matcher!(non_major_options_pattern, r"(?i)\bnon[-\s]?major options?\b|/non-major-options(?:[/?#-]|$)");
-matcher!(equivalency_pattern, r"(?i)\bequivalenc(?:y|ies)\b|equivalency guide");
-matcher!(green_river_pattern, r"(?i)\bgreen river\b|\bgrc\b|\bassociate\b|\bast-?2\b|\bmrp\b");
-matcher!(sample_schedule_pattern, r"(?i)\bsample (?:schedule|plan)\b|\bstudy plan\b|\bplan of study\b");
-matcher!(upper_division_prerequisite_pattern, r"(?i)\b(?:upper[-\s]?division|[34]00[-\s]?level|[34]00\s+level)\b.{0,80}\bprereq(?:uisites?)?\b|\bprereq(?:uisites?)?\b.{0,80}\b(?:upper[-\s]?division|[34]00[-\s]?level|[34]00\s+level)\b");
-matcher!(non_schedulable_course_list_pattern, r"(?i)\b(course lists?|list of courses|courses by track|course descriptions?|all courses|course catalog|print courses?|suggested course pathways?|computing specializations?|capstones?)\b|/(?:courses?|course-list|course-lists|print/courses|capstones?|computing-specializations)(?:[-/?#]|$)");
-matcher!(generic_degree_sheet_pattern, r"(?i)\bdegree sheet\b|\brequirement sheet\b|\bchecklist\b");
-matcher!(admissions_preparation_pattern, r"\badmissions?\b|\bapply\b|\bapplication\b|\bpreparation\b|\bprerequisites?\b");
-matcher!(curriculum_map_fallback_pattern, r"\bcurriculum(?: map)?\b|\bdegree map\b|\bfour-year plan\b");
-matcher!(department_requirements_fallback_pattern, r"\brequirements?\b|\bundergraduate\b|\bmajor\b|\bprogram\b");
+matcher!(
+    major_planning_worksheet_pattern,
+    r"(?i)\bmajor planning worksheet\b"
+);
+matcher!(
+    uw_general_catalog_program_url_pattern,
+    r"(?i)//(?:www\.)?washington\.edu/students/gencat/program/"
+);
+matcher!(
+    tacoma_set_undergrad_url_pattern,
+    r"(?i)//(?:www\.)?tacoma\.uw\.edu/set/programs/undergrad/[^/?#]+/?(?:[?#].*)?$"
+);
+matcher!(
+    tacoma_set_requirement_terms_pattern,
+    r"(?i)\b(?:degree requirements?|major requirements?|program requirements?|curriculum|courses?|schedule planning|prerequisites?|admission requirements?)\b"
+);
+matcher!(
+    degree_map_pattern,
+    r"(?i)\b(?:curriculum map|degree map|four[-\s]?year plan|schedule planning grid|schedule grid|planning grid)\b"
+);
+matcher!(
+    pathway_degree_sheet_pattern,
+    r"(?i)\b(degree sheet|requirement sheet|requirements packet|checklist|worksheet|plan of study|study plan)\b|degreq"
+);
+matcher!(
+    non_major_options_pattern,
+    r"(?i)\bnon[-\s]?major options?\b|/non-major-options(?:[/?#-]|$)"
+);
+matcher!(
+    equivalency_pattern,
+    r"(?i)\bequivalenc(?:y|ies)\b|equivalency guide"
+);
+matcher!(
+    green_river_pattern,
+    r"(?i)\bgreen river\b|\bgrc\b|\bassociate\b|\bast-?2\b|\bmrp\b"
+);
+matcher!(
+    sample_schedule_pattern,
+    r"(?i)\bsample (?:schedule|plan)\b|\bstudy plan\b|\bplan of study\b"
+);
+matcher!(
+    upper_division_prerequisite_pattern,
+    r"(?i)\b(?:upper[-\s]?division|[34]00[-\s]?level|[34]00\s+level)\b.{0,80}\bprereq(?:uisites?)?\b|\bprereq(?:uisites?)?\b.{0,80}\b(?:upper[-\s]?division|[34]00[-\s]?level|[34]00\s+level)\b"
+);
+matcher!(
+    non_schedulable_course_list_pattern,
+    r"(?i)\b(course lists?|list of courses|courses by track|course descriptions?|all courses|course catalog|print courses?|suggested course pathways?|computing specializations?|capstones?)\b|/(?:courses?|course-list|course-lists|print/courses|capstones?|computing-specializations)(?:[-/?#]|$)"
+);
+matcher!(
+    generic_degree_sheet_pattern,
+    r"(?i)\bdegree sheet\b|\brequirement sheet\b|\bchecklist\b"
+);
+matcher!(
+    admissions_preparation_pattern,
+    r"\badmissions?\b|\bapply\b|\bapplication\b|\bpreparation\b|\bprerequisites?\b"
+);
+matcher!(
+    curriculum_map_fallback_pattern,
+    r"\bcurriculum(?: map)?\b|\bdegree map\b|\bfour-year plan\b"
+);
+matcher!(
+    department_requirements_fallback_pattern,
+    r"\brequirements?\b|\bundergraduate\b|\bmajor\b|\bprogram\b"
+);
 matcher!(degree_ba_pattern, r"\b(?:ba|b a|bachelor of arts)\b");
 matcher!(degree_bs_pattern, r"\b(?:bs|b s|bachelor of science)\b");
-matcher!(acs_pattern, r"\bacs(?:[-_\s]?(?:certified|\d{2,4}))?\b|\bamerican chemical society\b");
-matcher!(ell_pattern, r"\b(?:ell|tell)\b|\benglish language learners?\b|\bteaching english language learners?\b");
+matcher!(
+    acs_pattern,
+    r"\bacs(?:[-_\s]?(?:certified|\d{2,4}))?\b|\bamerican chemical society\b"
+);
+matcher!(
+    ell_pattern,
+    r"\b(?:ell|tell)\b|\benglish language learners?\b|\bteaching english language learners?\b"
+);
 matcher!(sped_pattern, r"\b(?:sped|special education)\b");

@@ -101,7 +101,9 @@ pub struct FlattenedRequirementSourceScope {
     pub non_schedulable: bool,
 }
 
-pub fn get_requirement_source_role_status(source_role: Option<&str>) -> RequirementSourceRoleStatus {
+pub fn get_requirement_source_role_status(
+    source_role: Option<&str>,
+) -> RequirementSourceRoleStatus {
     match source_role.unwrap_or("ignored") {
         role if PRIMARY_SOURCE_ROLES.contains(&role) => RequirementSourceRoleStatus::Primary,
         role if SUPPORT_SOURCE_ROLES.contains(&role) => RequirementSourceRoleStatus::Support,
@@ -146,14 +148,15 @@ pub fn get_schedulable_source_section_lines(
         let Some(index) = row.get("sourceLineIndex").and_then(js_integer) else {
             continue;
         };
-        decision_by_source_line_index.insert(index, row.get("schedulable").and_then(Value::as_bool) == Some(true));
+        decision_by_source_line_index.insert(
+            index,
+            row.get("schedulable").and_then(Value::as_bool) == Some(true),
+        );
     }
     snapshot_lines
         .iter()
         .enumerate()
-        .filter(|(index, _)| {
-            decision_by_source_line_index.get(&(*index as i64)) != Some(&false)
-        })
+        .filter(|(index, _)| decision_by_source_line_index.get(&(*index as i64)) != Some(&false))
         .map(|(_, line)| line.clone())
         .collect()
 }
@@ -246,25 +249,35 @@ pub fn get_block_scope_boolean(block: &Value, key: &str, fallback: bool) -> bool
         .unwrap_or(fallback)
 }
 
+fn source_role_status_for_block(block: &Value) -> RequirementSourceRoleStatus {
+    let role = block
+        .get("sourceRole")
+        .filter(|value| !value.is_null())
+        .map(js_string)
+        .unwrap_or_else(|| "ignored".to_string());
+    get_requirement_source_role_status(Some(&role))
+}
+
 pub fn is_block_support_only(block: &Value) -> bool {
     block.get("supportOnly").and_then(Value::as_bool) == Some(true)
         || block.get("sourceRoleStatus").and_then(Value::as_str) == Some("support")
-        || get_requirement_source_role_status(
-            block.get("sourceRole").and_then(Value::as_str),
-        ) == RequirementSourceRoleStatus::Support
+        || source_role_status_for_block(block) == RequirementSourceRoleStatus::Support
 }
 
 pub fn is_block_non_schedulable(block: &Value) -> bool {
     block.get("nonSchedulable").and_then(Value::as_bool) == Some(true)
         || block.get("sourceRoleStatus").and_then(Value::as_str) == Some("non-schedulable")
         || matches!(
-            get_requirement_source_role_status(block.get("sourceRole").and_then(Value::as_str)),
+            source_role_status_for_block(block),
             RequirementSourceRoleStatus::NonSchedulable | RequirementSourceRoleStatus::Ignored
         )
 }
 
 pub fn can_parsed_block_create_schedulable_rows(block: &Value) -> bool {
-    if block.get("canCreateSchedulableRows").and_then(Value::as_bool) == Some(false)
+    if block
+        .get("canCreateSchedulableRows")
+        .and_then(Value::as_bool)
+        == Some(false)
         || block.get("canCreateScheduleRows").and_then(Value::as_bool) == Some(false)
         || block.get("canCreateRequiredRows").and_then(Value::as_bool) == Some(false)
         || block.get("supportOnly").and_then(Value::as_bool) == Some(true)
@@ -275,8 +288,11 @@ pub fn can_parsed_block_create_schedulable_rows(block: &Value) -> bool {
 
     block
         .get("sourceRole")
-        .and_then(Value::as_str)
-        .map(can_requirement_source_role_create_schedulable_rows)
+        .filter(|value| js_truthy(value))
+        .map(|value| {
+            let role = js_string(value);
+            can_requirement_source_role_create_schedulable_rows(Some(&role))
+        })
         .unwrap_or(true)
 }
 
@@ -303,11 +319,17 @@ fn js_string(value: &Value) -> String {
     match value {
         Value::Null => String::new(),
         Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
+        Value::Number(value) => super::requirement_shape::js_number_to_string(value),
         Value::String(value) => value.clone(),
         Value::Array(values) => values
             .iter()
-            .map(|value| if value.is_null() { String::new() } else { js_string(value) })
+            .map(|value| {
+                if value.is_null() {
+                    String::new()
+                } else {
+                    js_string(value)
+                }
+            })
             .collect::<Vec<_>>()
             .join(","),
         Value::Object(_) => "[object Object]".to_string(),

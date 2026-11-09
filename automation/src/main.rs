@@ -5,14 +5,17 @@ use gator_guide_automation::{
         EquivalencyRulesOutputInput, GrcAnnualScheduleCandidatesInput,
         GrcAnnualScheduleFilterInput, GrcCatalogArchiveEntriesInput, GrcCourseCatalogInput,
         GrcCourseDetailsInput, GrcCurrentCatalogDetailsInput, SequenceCourseCodeInput,
-        SequenceInlineSegmentsInput, build_equivalency_guide_report, detect_catalog_page_numbers,
+        SequenceInlineSegmentsInput, build_equivalency_guide_report,
+        build_source_pipeline_core_execution_from_json, detect_catalog_page_numbers,
         discover_grc_public_materials, expand_sequence_course_codes,
         filter_relevant_annual_schedule_values, parse_annual_schedule_candidates,
         parse_catalog_archive_entries, parse_current_catalog_details,
         parse_equivalency_guide_rows_with_titles, parse_grc_course_catalog,
-        parse_grc_course_details, refresh_deadlines, refresh_uw_catalog,
+        parse_grc_course_details, parse_target_plan_ids, refresh_deadlines, refresh_uw_catalog,
         render_equivalency_guide_report_markdown, render_equivalency_guide_typescript,
-        render_transfer_equivalency_catalog_typescript, split_inline_sequence_segments,
+        render_transfer_equivalency_catalog_typescript, run_build_source_fingerprints,
+        run_owner_source_link_probe, run_planner_refresh, run_publish_readiness,
+        run_source_backed_coverage_audit, run_spot_check_major, split_inline_sequence_segments,
         synthesize_equivalency_rules,
     },
 };
@@ -21,16 +24,144 @@ use std::env;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    match run(env::args().skip(1).collect()) {
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    if args
+        .first()
+        .is_some_and(|command| command == "verify-source-pipeline-core")
+    {
+        return verify_source_pipeline_core_command(&args[1..]);
+    }
+    if args
+        .first()
+        .is_some_and(|command| command == "spot-check-planner-major")
+    {
+        return match repository_root().and_then(|root| run_spot_check_major(&root, &args[1..])) {
+            Ok(true) => ExitCode::SUCCESS,
+            Ok(false) => ExitCode::FAILURE,
+            Err(error) => {
+                eprintln!("Error: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    if args
+        .first()
+        .is_some_and(|command| command == "probe-owner-source-links")
+    {
+        return match repository_root()
+            .and_then(|root| run_owner_source_link_probe(&root, &args[1..]))
+        {
+            Ok(true) => ExitCode::SUCCESS,
+            Ok(false) => ExitCode::FAILURE,
+            Err(error) => {
+                eprintln!("Error: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    if args
+        .first()
+        .is_some_and(|command| command == "audit-planner-publish-readiness")
+    {
+        return match repository_root().and_then(|root| run_publish_readiness(&root, &args[1..])) {
+            Ok(true) => ExitCode::SUCCESS,
+            Ok(false) => ExitCode::FAILURE,
+            Err(error) => {
+                eprintln!("automation failed: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    if args
+        .first()
+        .is_some_and(|command| command == "audit-source-backed-coverage")
+    {
+        return match repository_root()
+            .and_then(|root| run_source_backed_coverage_audit(&root, &args[1..]))
+        {
+            Ok(0) => ExitCode::SUCCESS,
+            Ok(_) => ExitCode::FAILURE,
+            Err(error) => {
+                eprintln!("automation failed: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    match run(args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("automation failed: {error}");
             ExitCode::FAILURE
         }
     }
+}
+
+fn verify_source_pipeline_core_command(args: &[String]) -> ExitCode {
+    let target_plan_ids = match parse_target_plan_ids(args) {
+        Ok(target_plan_ids) => target_plan_ids,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if target_plan_ids.len() > 1 {
+        eprintln!(
+            "Source pipeline validation supports one target plan at a time; received {}.",
+            target_plan_ids.join(", ")
+        );
+        return ExitCode::FAILURE;
+    }
+    let mut input_json = String::new();
+    if let Err(error) = std::io::stdin().read_to_string(&mut input_json) {
+        eprintln!("could not read source-pipeline input from stdin: {error}");
+        return ExitCode::FAILURE;
+    }
+    let mut input: Value = match serde_json::from_str(&input_json) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("could not decode source-pipeline input: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Some(target_plan_id) = target_plan_ids.first() {
+        let Some(object) = input.as_object_mut() else {
+            eprintln!("source-pipeline input must be an object");
+            return ExitCode::FAILURE;
+        };
+        object.insert(
+            "validationTargetPlanId".to_string(),
+            Value::String(target_plan_id.clone()),
+        );
+    }
+    let execution = match build_source_pipeline_core_execution_from_json(&input) {
+        Ok(execution) => execution,
+        Err(error) => {
+            eprintln!("could not validate source-pipeline input: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let exit_code = execution.exit_code;
+    let output = serde_json::json!({
+        "report": execution.report,
+        "json": execution.artifacts.json,
+        "markdown": execution.artifacts.markdown,
+        "exitCode": exit_code
+    });
+    let encoded = match serde_json::to_vec(&output) {
+        Ok(encoded) => encoded,
+        Err(error) => {
+            eprintln!("could not encode source-pipeline output: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(error) = std::io::stdout().write_all(&encoded) {
+        eprintln!("could not write source-pipeline output: {error}");
+        return ExitCode::FAILURE;
+    }
+    ExitCode::from(u8::try_from(exit_code).unwrap_or(1))
 }
 
 fn run(args: Vec<String>) -> Result<(), String> {
@@ -45,7 +176,19 @@ fn run(args: Vec<String>) -> Result<(), String> {
 
     let repository_root = repository_root()?;
     match command {
-        "refresh-planner" => run_planner_refresh(&repository_root),
+        "refresh-planner" => {
+            let mut refresh_args = args[1..].to_vec();
+            if !refresh_args
+                .iter()
+                .any(|argument| argument == "--skip-auto-repair")
+            {
+                refresh_args.push("--skip-auto-repair".to_string());
+            }
+            run_planner_refresh(&repository_root, &refresh_args)
+        }
+        "build-source-fingerprints" => {
+            run_build_source_fingerprints(&repository_root, &args[1..]).map(|_| ())
+        }
         "discover-grc-materials" => discover_grc_materials(&repository_root, &args[1..]),
         "refresh-deadlines" => refresh_deadlines_command(&repository_root, &args[1..]),
         "ingest-uw-catalog" => ingest_uw_catalog_command(&repository_root, &args[1..]),
@@ -77,29 +220,6 @@ fn run(args: Vec<String>) -> Result<(), String> {
         other => Err(format!(
             "unknown command {other:?}; run with --help for usage"
         )),
-    }
-}
-
-fn run_planner_refresh(repository_root: &Path) -> Result<(), String> {
-    let source_root = repository_root.join("source");
-    let script = source_root.join("scripts/planner/refresh-transfer-planner-sources.cjs");
-    if !script.is_file() {
-        return Err(format!(
-            "planner refresh script not found: {}",
-            script.display()
-        ));
-    }
-    println!("Running deterministic planner refresh through the maintained source adapters…");
-    let status = Command::new("node")
-        .arg(script)
-        .arg("--skip-auto-repair")
-        .current_dir(&source_root)
-        .status()
-        .map_err(|error| format!("could not start Node.js planner parser: {error}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("planner refresh exited with status {status}"))
     }
 }
 
@@ -542,6 +662,9 @@ fn print_usage() {
         "GatorGuide deterministic automation\n\n\
          Usage:\n\
            cargo run --manifest-path automation/Cargo.toml -- refresh-planner\n\
+           cargo run --manifest-path automation/Cargo.toml -- build-source-fingerprints [--check-sources-first] [--parse-requirements-first]\n\
+           cargo run --manifest-path automation/Cargo.toml -- probe-owner-source-links --target-plan-id <id> [checks]\n\
+           cargo run --manifest-path automation/Cargo.toml -- spot-check-planner-major [--list | --commands | --target-plan-id <id> [checks]]\n\
            cargo run --manifest-path automation/Cargo.toml -- discover-grc-materials [--refresh] [--cache-only]\n\
            cargo run --manifest-path automation/Cargo.toml -- refresh-deadlines\n\
            cargo run --manifest-path automation/Cargo.toml -- ingest-uw-catalog [--cache-only]\n\
@@ -559,9 +682,15 @@ fn print_usage() {
            cargo run --manifest-path automation/Cargo.toml -- render-transfer-equivalency-catalog-typescript < rules.json\n\
            cargo run --manifest-path automation/Cargo.toml -- synthesize-uw-grc-derived-rules < derived-input.json\n\
            cargo run --manifest-path automation/Cargo.toml -- build-equivalency-guide-report < report-input.json\n\
-           cargo run --manifest-path automation/Cargo.toml -- collect-opportunities --category scholarships --output <path>\n\n\
+           cargo run --manifest-path automation/Cargo.toml -- collect-opportunities --category scholarships --output <path>\n\
+           cargo run --manifest-path automation/Cargo.toml -- audit-planner-publish-readiness [--mode <mode>] [--run-checks]\n\
+           cargo run --manifest-path automation/Cargo.toml -- audit-source-backed-coverage [--mapping-only | --generated-registry-only] [--report-only] [--target-plan-id <id>] [--protected-only] --context-stdin\n\
+           cargo run --manifest-path automation/Cargo.toml -- verify-source-pipeline-core [--target-plan-id <id>] < validation-context.json\n\n\
          discover-grc-materials parses Green River's official catalog archive and annual-schedule links.\n\
          refresh-deadlines fetches the configured official deadline sources and updates the opportunity catalog.\n\
+         build-source-fingerprints writes source and requirement fingerprints, classification reports, and the generated registry; missing prerequisite reports are produced by their maintained Node scripts.\n\
+         probe-owner-source-links checks supplemental document links for a selected planner source owner; TypeScript planner registry data is loaded from the canonical source modules.\n\
+         spot-check-planner-major lists planner majors, prints targeted commands, or runs selected existing Node checks from Rust orchestration.\n\
          ingest-uw-catalog fetches UW catalog pages and writes a deterministic source report.\n\
          parse-equivalency-guide-rows parses an {{html, grcCourseTitles}} JSON object on stdin and emits generated rules.\n\
          parse-grc-catalog-page-numbers parses an {{html}} pager fragment and emits a contiguous sorted page-number array.\n\
@@ -577,6 +706,9 @@ fn print_usage() {
          render-transfer-equivalency-catalog-typescript projects accepted, non-obsolete category rows into the lightweight catalog module.\n\
          synthesize-uw-grc-derived-rules emits derived rules from officialRules, optional structuredRules, and items containing a spec plus supportRuleSelectors.\n\
          build-equivalency-guide-report emits the deterministic report object and Markdown from parsed rows and rules.\n\
-         collect-opportunities fetches only source URLs already listed in starter-opportunities.json and emits a review-only report; it never edits the catalog."
+         collect-opportunities fetches only source URLs already listed in starter-opportunities.json and emits a review-only report; it never edits the catalog.\n\
+         audit-planner-publish-readiness writes one of the four transfer-planner publish-readiness audits; --run-checks executes the release-readiness command sequence.\n\
+         audit-source-backed-coverage scores the planner context JSON on stdin and writes the source-backed coverage, generated-registry, or mapping audit. The CJS launcher remains the npm entry point because it supplies the TypeScript planner runtime.\n\
+         verify-source-pipeline-core reads a JSON context from stdin; sourceRoot loads existing reports, and loadCanonicalRegistry=true reads planner TypeScript registries through the read-only Node adapter. It emits report JSON and Markdown in a JSON envelope and never writes generated report files."
     );
 }
