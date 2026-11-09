@@ -30,7 +30,7 @@ const ResourcesPage = require("@/components/pages/ResourcesPage").default;
 Module._load = originalModuleLoad;
 
 const DISCLAIMER =
-  "Use everything in this database at your own discretion. Unofficial tool for Green River College students).";
+  "Use everything in this database at your own discretion. Unofficial tool for Green River College students.";
 
 async function flushStorageRead() {
   await act(async () => {

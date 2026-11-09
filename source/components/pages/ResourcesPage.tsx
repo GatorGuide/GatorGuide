@@ -33,7 +33,7 @@ import { localStorageService } from "@/services/storage/local-storage.service";
 import type { MatchedOpportunity } from "@/services/opportunities/opportunity-matching.service";
 
 const FIRST_USE_DISCLAIMER =
-  "Use everything in this database at your own discretion. Unofficial tool for Green River College students).";
+  "Use everything in this database at your own discretion. Unofficial tool for Green River College students.";
 
 export default function ResourcesPage() {
   const styles = useThemeStyles();
