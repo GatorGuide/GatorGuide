@@ -79,6 +79,42 @@ function makeOpportunity({ opportunityId, title, type }) {
   };
 }
 
+function visibleTextOrder(renderer) {
+  return renderer.root
+    .findAll((node) => node.type === "Text")
+    .map((node) => node.props.children)
+    .filter((value) => typeof value === "string");
+}
+
+test("Resources places Deadlines before Career Links and AI Resources below STEM Clubs @ GRC", () => {
+  resetReactNativeTestState();
+  setTranslations({ "resources.deadlines": "Deadlines" });
+  setOpportunities({
+    isHydrated: true,
+    matchedOpportunities: [
+      makeOpportunity({
+        opportunityId: "grc-deadline",
+        title: "GRC enrollment deadline",
+        type: "college_deadline",
+      }),
+    ],
+    refreshOpportunitiesIfNeeded: createSpy(async () => undefined),
+    setOpportunityDone: createSpy(async () => undefined),
+  });
+
+  const renderer = render(React.createElement(ResourcesPage));
+  const labels = visibleTextOrder(renderer);
+  const deadlinesIndex = labels.indexOf("Deadlines");
+  const stemClubsIndex = labels.indexOf("STEM Clubs @ GRC");
+  const aiResourcesIndex = labels.indexOf("AI Resources");
+  const careerLinksIndex = labels.indexOf("Career Links");
+
+  assert.ok(deadlinesIndex >= 0 && deadlinesIndex < careerLinksIndex);
+  assert.ok(stemClubsIndex >= 0 && stemClubsIndex < aiResourcesIndex);
+
+  unmount(renderer);
+});
+
 test("Resources combines college and academic dates under GRC Deadlines", () => {
   resetReactNativeTestState();
   setTranslations({
