@@ -372,6 +372,15 @@ test("TransferEquivalencyCatalogPage filters visible catalog rows and clears sea
     ["University of Washington"]
   );
 
+  const campusSelector = renderer.root
+    .findAllByType(SearchableSelect)
+    .find((selector) => selector.props.value === "UW Seattle");
+  assert.ok(campusSelector);
+  assert.deepEqual(
+    campusSelector.props.options.map((option) => option.id),
+    ["uw-seattle"]
+  );
+
   changeTextByPlaceholder(renderer, "Search courses", "BIOL");
   assert.equal(hasText(renderer, "BIOL 100"), true);
 

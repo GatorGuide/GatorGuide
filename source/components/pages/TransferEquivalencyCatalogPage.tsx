@@ -149,11 +149,13 @@ export default function TransferEquivalencyCatalogPage() {
 
   const campusOptions = useMemo<SearchableSelectOption[]>(
     () =>
-      campuses.map((campus) => ({
-        id: campus.id,
-        label: campus.title,
-        description: campus.summary ?? undefined,
-      })),
+      campuses
+        .filter((campus) => campus.id !== "uw-bothell" && campus.id !== "uw-tacoma")
+        .map((campus) => ({
+          id: campus.id,
+          label: campus.title,
+          description: campus.summary ?? undefined,
+        })),
     [campuses]
   );
 
